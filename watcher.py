@@ -50,6 +50,13 @@ class Config:
     # 1m cadence once ARMED
     poll_seconds_1m: int = 60
 
+    # fast cadence inside ARMED (seconds)
+    poll_seconds_fast: int = 15
+
+    # fast entry thresholds (recent-trade)
+    delta_ratio_30s_max: float = -0.12
+    delta_ratio_fast_late_max: float = -0.18
+
     # 1m entry thresholds
     delta_ratio_1m_max: float = -0.05
     break_low_lookback: int = 3
@@ -59,7 +66,7 @@ class Config:
     stop_on: str = "ANY"
 
     # Outcome tracking after ENTRY_OK
-    outcome_watch_minutes: int = 60
+    outcome_watch_minutes: int = 120
     outcome_poll_seconds: int = 60
 
     # Different TP/SL
@@ -163,6 +170,11 @@ def get_recent_trades(cfg: Config, limit: int = 1000) -> pd.DataFrame:
     if not qcol:
         raise RuntimeError(f"Unexpected trades schema (no size/qty): {df.columns.tolist()}")
     df["qty"] = df[qcol].astype(float)
+
+    # keep trade price (for fast loop current price)
+    pcol = "price" if "price" in df.columns else ("p" if "p" in df.columns else None)
+    if pcol:
+        df["price"] = df[pcol].astype(float)
 
     df["side"] = df["side"].astype(str)
     return df.sort_values("ts").reset_index(drop=True)
@@ -348,6 +360,8 @@ def decide_entry_1m(cfg: Config,
     dr1 = delta_ratio(trades, now_ts - pd.Timedelta(minutes=1))
     dr3 = delta_ratio(trades, now_ts - pd.Timedelta(minutes=3))
 
+    dr30 = delta_ratio(trades, now_ts - pd.Timedelta(seconds=30))
+
     delta_ok = (dr1 <= cfg.delta_ratio_1m_max) or (dr3 <= cfg.delta_ratio_1m_max)
 
     m = cfg.no_new_high_lookback
@@ -383,6 +397,8 @@ def decide_entry_1m(cfg: Config,
         "dist_to_peak_pct": dist_pct,
         "delta_ratio_1m": dr1,
         "delta_ratio_3m": dr3,
+        "delta_ratio_30s": dr30,
+        "entry_source": "1m",
         "need": need,
         "hit": hit,
         "flags": flags,
@@ -390,7 +406,64 @@ def decide_entry_1m(cfg: Config,
         "context_parts": ctx_parts,
         "late_mode": dist_pct > cfg.late_dist_pct,
     }
+
+
+# =========================
+# Fast entry decision (recent-trade, 10-15s cadence inside ARMED)
+# =========================
+def decide_entry_fast(cfg: Config,
+                      trades: pd.DataFrame,
+                      context_score: float,
+                      ctx_parts: Dict[str, Any],
+                      peak_price_5m: float) -> Tuple[bool, Dict[str, Any]]:
+    if trades.empty:
+        return False, {"reason": "no_trades"}
+
+    now_ts = pd.Timestamp.now(tz="UTC")
+
+    # current price from most recent trade
+    price = float(trades.iloc[-1].get("price", np.nan))
+    if math.isnan(price):
+        return False, {"reason": "no_trade_price"}
+
+    dist_to_peak = (peak_price_5m - price) / peak_price_5m if peak_price_5m > 0 else 0.0
+    dist_pct = dist_to_peak * 100.0
+    near_top = dist_to_peak <= cfg.dist_to_peak_max_pct
+
+    dr30 = delta_ratio(trades, now_ts - pd.Timedelta(seconds=30))
+    dr60 = delta_ratio(trades, now_ts - pd.Timedelta(seconds=60))
+
+    # base threshold for fast path (stronger than 1m)
+    delta_ok = (dr30 <= cfg.delta_ratio_30s_max) or (dr60 <= cfg.delta_ratio_30s_max)
+
+    # late penalty: require even stronger selling aggression
+    if dist_pct > cfg.late_dist_pct:
+        strong_delta = (dr30 <= cfg.delta_ratio_fast_late_max) or (dr60 <= cfg.delta_ratio_fast_late_max)
+        if not strong_delta:
+            delta_ok = False
+
+    # fast path requires good context + near top + strong selling pressure
+    entry_ok = (context_score >= 0.65) and near_top and delta_ok
+
+    dbg = {
+        "time_utc": str(now_ts),
+        "price": price,
+        "dist_to_peak_pct": dist_pct,
+        "delta_ratio_1m": None,
+        "delta_ratio_3m": None,
+        "delta_ratio_30s": dr30,
+        "need": None,
+        "hit": None,
+        "flags": {"break_low": False, "delta_ok": delta_ok, "no_new_high": False, "near_top": near_top},
+        "context_score": context_score,
+        "context_parts": ctx_parts,
+        "late_mode": dist_pct > cfg.late_dist_pct,
+        "entry_source": "fast",
+    }
     return entry_ok, dbg
+
+
+
 
 
 # =========================
@@ -454,12 +527,29 @@ def track_outcome_short(cfg: Config,
     if hit_ts is not None:
         minutes_to_hit = (pd.Timestamp(hit_ts).to_pydatetime() - entry_ts_utc.to_pydatetime()).total_seconds() / 60.0
 
+    timeout_exit_price = None
+    timeout_pnl_pct = None
+    if outcome == "TIMEOUT":
+        # take the last available close at/after the watch window as synthetic exit
+        try:
+            candles_1m = get_klines_1m(cfg, limit=300)
+            if not candles_1m.empty:
+                sub = candles_1m[candles_1m["ts"] <= end_ts]
+                if not sub.empty:
+                    last_close = float(sub["close"].iloc[-1])
+                    timeout_exit_price = last_close
+                    timeout_pnl_pct = (entry_price - last_close) / entry_price * 100.0
+        except Exception:
+            pass
+
     return {
         "outcome": outcome,
         "hit_time_utc": str(hit_ts) if hit_ts is not None else None,
         "minutes_to_hit": minutes_to_hit,
         "mfe_pct": mfe * 100.0,
         "mae_pct": mae * 100.0,
+        "timeout_exit_price": timeout_exit_price,
+        "timeout_pnl_pct": timeout_pnl_pct,
     }
 
 
@@ -475,6 +565,8 @@ def run_watch_for_symbol(symbol: str, run_id: str, meta: Dict[str, Any]) -> Dict
 
     st = StructureState()
     armed_once = False
+    cached_1m: Optional[pd.DataFrame] = None
+    last_1m_fetch: float = 0.0
 
     # ✅ уникальные имена файлов
     log_5m = f"mvp_log_{cfg.symbol}_{run_id}.csv"
@@ -521,8 +613,15 @@ def run_watch_for_symbol(symbol: str, run_id: str, meta: Dict[str, Any]) -> Dict
                 armed_once = True
 
             if armed_once:
-                candles_1m = get_klines_1m(cfg, limit=300)
+                # fast loop: fetch trades often, klines_1m only once per minute (reduces API load)
                 trades_1m = get_recent_trades(cfg, limit=1000)
+
+                now_epoch = time.time()
+                if (cached_1m is None) or (now_epoch - last_1m_fetch >= cfg.poll_seconds_1m):
+                    cached_1m = get_klines_1m(cfg, limit=300)
+                    last_1m_fetch = now_epoch
+
+                candles_1m = cached_1m
 
                 entry_ok, dbg1 = decide_entry_1m(
                     cfg=cfg,
@@ -532,6 +631,19 @@ def run_watch_for_symbol(symbol: str, run_id: str, meta: Dict[str, Any]) -> Dict
                     ctx_parts=ctx_parts,
                     peak_price_5m=float(dbg5["peak_price"])
                 )
+
+                # fast path: allow earlier signal on strong selling pressure before 1m candle closes
+                if not entry_ok:
+                    entry_ok_fast, dbg_fast = decide_entry_fast(
+                        cfg=cfg,
+                        trades=trades_1m,
+                        context_score=context_score,
+                        ctx_parts=ctx_parts,
+                        peak_price_5m=float(dbg5["peak_price"])
+                    )
+                    if entry_ok_fast and "reason" not in dbg_fast:
+                        entry_ok = True
+                        dbg1 = dbg_fast
 
                 if "reason" not in dbg1:
                     entry_type = None
@@ -546,10 +658,12 @@ def run_watch_for_symbol(symbol: str, run_id: str, meta: Dict[str, Any]) -> Dict
                         "entry_type": entry_type,
                         "price": dbg1["price"],
                         "dist_to_peak_pct": dbg1["dist_to_peak_pct"],
-                        "delta_ratio_1m": dbg1["delta_ratio_1m"],
-                        "delta_ratio_3m": dbg1["delta_ratio_3m"],
-                        "need": dbg1["need"],
-                        "hit": dbg1["hit"],
+                        "delta_ratio_1m": dbg1.get("delta_ratio_1m"),
+                        "delta_ratio_3m": dbg1.get("delta_ratio_3m"),
+                        "delta_ratio_30s": dbg1.get("delta_ratio_30s"),
+                        "entry_source": dbg1.get("entry_source", "1m"),
+                        "need": dbg1.get("need"),
+                        "hit": dbg1.get("hit"),
                         "break_low": dbg1["flags"]["break_low"],
                         "delta_ok": dbg1["flags"]["delta_ok"],
                         "no_new_high": dbg1["flags"]["no_new_high"],
@@ -611,15 +725,38 @@ def run_watch_for_symbol(symbol: str, run_id: str, meta: Dict[str, Any]) -> Dict
                             "minutes_to_hit": out["minutes_to_hit"],
                             "mfe_pct": out["mfe_pct"],
                             "mae_pct": out["mae_pct"],
+                            "timeout_exit_price": out.get("timeout_exit_price"),
+                            "timeout_pnl_pct": out.get("timeout_pnl_pct"),
+                            "entry_source": dbg1.get("entry_source", "1m"),
+                            "delta_ratio_30s": dbg1.get("delta_ratio_30s"),
                             "context_parts": json.dumps(ctx_parts, ensure_ascii=False),
                         })
 
                         if TG_SEND_OUTCOME:
-                            send_telegram(
-                                f"📌 OUTCOME {cfg.symbol}\n"
-                                f"{out['outcome']} | min_to_hit={out['minutes_to_hit']}\n"
-                                f"MFE={out['mfe_pct']:.2f}% MAE={out['mae_pct']:.2f}%"
-                            )
+                            lines = [
+                                f"📌 OUTCOME {cfg.symbol}",
+                                f"result: {out.get('outcome')}",
+                            ]
+
+                            mins = out.get("minutes_to_hit")
+                            if isinstance(mins, (int, float)):
+                                lines.append(f"minutes_to_hit: {mins:.1f}")
+
+                            mfe = out.get("mfe_pct")
+                            mae = out.get("mae_pct")
+                            if isinstance(mfe, (int, float)) and isinstance(mae, (int, float)):
+                                lines.append(f"MFE={mfe:.2f}% | MAE={mae:.2f}%")
+
+                            if out.get("outcome") == "TIMEOUT":
+                                exit_px = out.get("timeout_exit_price")
+                                if isinstance(exit_px, (int, float)):
+                                    lines.append(f"timeout_exit_price: {exit_px:.6g}")
+
+                                tpnl = out.get("timeout_pnl_pct")
+                                if isinstance(tpnl, (int, float)):
+                                    lines.append(f"timeout_pnl_pct: {tpnl:.2f}%")
+
+                            send_telegram("\n".join(lines))
 
                         return {
                             "run_id": run_id,
@@ -639,11 +776,15 @@ def run_watch_for_symbol(symbol: str, run_id: str, meta: Dict[str, Any]) -> Dict
                             "minutes_to_hit": out["minutes_to_hit"],
                             "mfe_pct": out["mfe_pct"],
                             "mae_pct": out["mae_pct"],
+                            "timeout_exit_price": out.get("timeout_exit_price"),
+                            "timeout_pnl_pct": out.get("timeout_pnl_pct"),
+                            "entry_source": dbg1.get("entry_source", "1m"),
+                            "delta_ratio_30s": dbg1.get("delta_ratio_30s"),
                             "log_5m": log_5m,
                             "log_1m": log_1m,
                         }
 
-                time.sleep(cfg.poll_seconds_1m)
+                time.sleep(cfg.poll_seconds_fast)
             else:
                 time.sleep(cfg.poll_seconds)
 
@@ -671,6 +812,10 @@ def run_watch_for_symbol(symbol: str, run_id: str, meta: Dict[str, Any]) -> Dict
         "minutes_to_hit": None,
         "mfe_pct": None,
         "mae_pct": None,
+        "timeout_exit_price": None,
+        "timeout_pnl_pct": None,
+        "entry_source": None,
+        "delta_ratio_30s": None,
         "context_parts": None,
     })
 
