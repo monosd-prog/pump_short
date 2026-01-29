@@ -38,6 +38,7 @@ class Job:
     started_at_utc: str
     meta: Dict[str, Any]
 
+
 active: Dict[str, Job] = {}
 last_started: Dict[str, float] = {}
 done_recent: Dict[str, Dict[str, Any]] = {}
@@ -83,6 +84,7 @@ async def status():
         "done_recent": list(done_recent.values())[-20:],
     }
 
+
 @app.post("/pump")
 async def pump(evt: PumpEvent):
     symbol = evt.symbol.strip().upper()
@@ -90,7 +92,7 @@ async def pump(evt: PumpEvent):
         raise HTTPException(status_code=400, detail="symbol must be XXXUSDT")
 
     # ---------------------
-    # FILTERS (важно!)
+    # FILTERS
     # ---------------------
 
     exchange = (evt.exchange or "bybit").lower()
@@ -181,8 +183,8 @@ async def pump(evt: PumpEvent):
                 result = await asyncio.to_thread(
                     run_watch_for_symbol,
                     symbol,
-                    job.meta,
                     run_id,
+                    job.meta,
                 )
                 done_recent[run_id] = {
                     "run_id": run_id,
