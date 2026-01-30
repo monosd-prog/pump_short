@@ -16,6 +16,20 @@ def track_outcome_short(
     tp_price: float,
     sl_price: float,
 ) -> Dict[str, Any]:
+    # Validate inputs
+    if entry_price <= 0 or tp_price <= 0 or sl_price <= 0:
+        logger.error(f"Invalid outcome parameters: entry_price={entry_price}, tp_price={tp_price}, sl_price={sl_price}")
+        return {
+            "outcome": "ERROR",
+            "end_reason": "INVALID_PARAMS",
+            "hit_time_utc": None,
+            "minutes_to_hit": None,
+            "mfe_pct": 0.0,
+            "mae_pct": 0.0,
+            "timeout_exit_price": None,
+            "timeout_pnl_pct": None,
+        }
+    
     end_ts = entry_ts_utc + pd.Timedelta(minutes=cfg.outcome_watch_minutes)
 
     mfe = 0.0
@@ -52,8 +66,10 @@ def track_outcome_short(
             tp_hit = (lo <= tp_price)
             sl_hit = (hi >= sl_price)
 
+            # Deterministic rule for BOTH_SAME_CANDLE: for SHORT, SL is more critical (conservative)
+            # If both hit in same candle, prioritize SL (risk management)
             if tp_hit and sl_hit:
-                outcome = "BOTH_SAME_CANDLE"
+                outcome = "SL_hit"  # Conservative: SL takes precedence for SHORT positions
                 hit_ts = ts
                 break
             if sl_hit:
@@ -88,12 +104,20 @@ def track_outcome_short(
         except Exception as e:
             log_exception(logger, "Error calculating timeout exit price", symbol=cfg.symbol, step="OUTCOME_TIMEOUT", extra={"outcome": outcome})
 
-    return {
-        "outcome": outcome,
+    # Ensure outcome is never None
+    if outcome is None or outcome == "":
+        outcome = "TIMEOUT"
+    
+    # Ensure all numeric fields are valid
+    result = {
+        "outcome": str(outcome),
+        "end_reason": str(outcome),  # For compatibility
         "hit_time_utc": str(hit_ts) if hit_ts is not None else None,
-        "minutes_to_hit": minutes_to_hit,
-        "mfe_pct": mfe * 100.0,
-        "mae_pct": mae * 100.0,
-        "timeout_exit_price": timeout_exit_price,
-        "timeout_pnl_pct": timeout_pnl_pct,
+        "minutes_to_hit": float(minutes_to_hit) if minutes_to_hit is not None else None,
+        "mfe_pct": float(mfe * 100.0),
+        "mae_pct": float(mae * 100.0),
+        "timeout_exit_price": float(timeout_exit_price) if timeout_exit_price is not None else None,
+        "timeout_pnl_pct": float(timeout_pnl_pct) if timeout_pnl_pct is not None else None,
     }
+    
+    return result

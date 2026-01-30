@@ -1,6 +1,7 @@
 # features.py
 from __future__ import annotations
 
+from typing import Optional
 import pandas as pd
 
 
@@ -67,3 +68,71 @@ def atr_pct(df: pd.DataFrame, period: int = 14) -> float:
     if last_close == 0:
         return None
     return float(a / last_close)
+
+
+def oi_change_pct(oi_df: pd.DataFrame, lookback_minutes: int = 5) -> Optional[float]:
+    """
+    Calculate OI change percentage over lookback period.
+    
+    Args:
+        oi_df: DataFrame with columns: ts, openInterest (or similar)
+        lookback_minutes: Lookback period in minutes
+    
+    Returns:
+        Percentage change (e.g., -2.5 for -2.5%) or None if insufficient data
+    """
+    if oi_df is None or oi_df.empty:
+        return None
+    
+    if "openInterest" not in oi_df.columns:
+        return None
+    
+    if len(oi_df) < 2:
+        return None
+    
+    # Get current and lookback OI
+    now_ts = oi_df["ts"].iloc[-1]
+    lookback_ts = now_ts - pd.Timedelta(minutes=lookback_minutes)
+    
+    # Find OI at lookback time
+    past_oi_rows = oi_df[oi_df["ts"] <= lookback_ts]
+    if past_oi_rows.empty:
+        # Use first available row if lookback is too far
+        if len(oi_df) >= 2:
+            past_oi = float(oi_df["openInterest"].iloc[0])
+        else:
+            return None
+    else:
+        past_oi = float(past_oi_rows["openInterest"].iloc[-1])
+    
+    current_oi = float(oi_df["openInterest"].iloc[-1])
+    
+    if past_oi == 0:
+        return None
+    
+    change_pct = ((current_oi - past_oi) / past_oi) * 100.0
+    return float(change_pct)
+
+
+def oi_divergence_5m(oi_change_5m_pct: Optional[float], dist_to_peak_pct: float) -> bool:
+    """
+    Detect OI divergence for 5m context.
+    Divergence: price near top (dist <= 3.5%) AND OI is falling (negative change).
+    
+    Args:
+        oi_change_5m_pct: OI change percentage over 5m (can be None)
+        dist_to_peak_pct: Distance to peak in percentage
+    
+    Returns:
+        True if divergence detected, False otherwise
+    """
+    if oi_change_5m_pct is None:
+        return False
+    
+    # Price near top (within 3.5% of peak)
+    near_top = dist_to_peak_pct <= 3.5
+    
+    # OI is falling (negative change)
+    oi_falling = oi_change_5m_pct < 0
+    
+    return near_top and oi_falling

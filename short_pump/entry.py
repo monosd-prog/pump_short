@@ -7,12 +7,13 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pandas as pd
 
-from short_pump.features import delta_ratio
+from short_pump.features import delta_ratio, oi_change_pct
 
 
 def decide_entry_1m(cfg,
                     candles_1m: pd.DataFrame,
                     trades: pd.DataFrame,
+                    oi_1m: pd.DataFrame,
                     context_score: float,
                     ctx_parts: Dict[str, Any],
                     peak_price_5m: float) -> Tuple[bool, Dict[str, Any]]:
@@ -55,6 +56,11 @@ def decide_entry_1m(cfg,
     else:
         need = 4
 
+    # Calculate OI change for 1m (lookback 3 minutes)
+    oi_change_1m_pct = None
+    if oi_1m is not None and not oi_1m.empty:
+        oi_change_1m_pct = oi_change_pct(oi_1m, lookback_minutes=3)
+
     flags = {"break_low": break_low, "delta_ok": delta_ok, "no_new_high": no_new_high, "near_top": near_top}
     hit = sum(1 for v in flags.values() if v)
 
@@ -67,6 +73,7 @@ def decide_entry_1m(cfg,
         "delta_ratio_1m": dr1,
         "delta_ratio_3m": dr3,
         "delta_ratio_30s": dr30,
+        "oi_change_1m_pct": oi_change_1m_pct,
         "entry_source": "1m",
         "need": need,
         "hit": hit,
@@ -81,6 +88,7 @@ def decide_entry_1m(cfg,
 
 def decide_entry_fast(cfg,
                       trades: pd.DataFrame,
+                      oi_fast: pd.DataFrame,
                       context_score: float,
                       ctx_parts: Dict[str, Any],
                       peak_price_5m: float) -> Tuple[bool, Dict[str, Any]]:
@@ -107,6 +115,11 @@ def decide_entry_fast(cfg,
         if not strong_delta:
             delta_ok = False
 
+    # Calculate OI change for fast (lookback 3 minutes)
+    oi_change_fast_pct = None
+    if oi_fast is not None and not oi_fast.empty:
+        oi_change_fast_pct = oi_change_pct(oi_fast, lookback_minutes=3)
+
     entry_ok = (context_score >= 0.65) and near_top and delta_ok
 
     dbg = {
@@ -116,6 +129,7 @@ def decide_entry_fast(cfg,
         "delta_ratio_1m": None,
         "delta_ratio_3m": None,
         "delta_ratio_30s": dr30,
+        "oi_change_fast_pct": oi_change_fast_pct,
         "need": None,
         "hit": None,
         "flags": {"break_low": False, "delta_ok": delta_ok, "no_new_high": False, "near_top": near_top},

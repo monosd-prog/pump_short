@@ -21,8 +21,9 @@ from short_pump.context5m import (
     update_structure,
 )
 from short_pump.entry import decide_entry_fast, decide_entry_1m
+from short_pump.features import oi_change_pct
 from short_pump.io_csv import append_csv
-from short_pump.logging_utils import get_logger, log_exception, log_info
+from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
 
@@ -106,8 +107,21 @@ def run_watch_for_symbol(
                 candles_5m_list = candles_5m.to_dict("records") if candles_5m is not None and not candles_5m.empty else []
                 oi_dict = None
                 if oi is not None and not oi.empty:
-                    # Convert OI DataFrame to dict (take last row or aggregate)
-                    oi_dict = oi.iloc[-1].to_dict() if len(oi) > 0 else None
+                    # Pass OI DataFrame for calculation
+                    oi_dict = {"oi_df": oi}
+                    # Log OI missing warning once per run
+                    if not hasattr(run_watch_for_symbol, "_oi_warned"):
+                        run_watch_for_symbol._oi_warned = set()
+                    if run_id not in run_watch_for_symbol._oi_warned:
+                        log_info(logger, "OI data available", symbol=cfg.symbol, run_id=run_id, step="FETCH_5M", extra={"oi_rows": len(oi)})
+                        run_watch_for_symbol._oi_warned.add(run_id)
+                else:
+                    # Log OI missing warning once per run
+                    if not hasattr(run_watch_for_symbol, "_oi_warned"):
+                        run_watch_for_symbol._oi_warned = set()
+                    if run_id not in run_watch_for_symbol._oi_warned:
+                        log_warning(logger, "OI missing", symbol=cfg.symbol, run_id=run_id, step="FETCH_5M")
+                        run_watch_for_symbol._oi_warned.add(run_id)
                 trades_list = trades.to_dict("records") if trades is not None and not trades.empty else []
 
                 dbg5 = build_dbg5(cfg, candles_5m_list, oi_dict, trades_list, st)
@@ -131,8 +145,8 @@ def run_watch_for_symbol(
                                 "price": dbg5["price"],
                                 "peak_price": dbg5["peak_price"],
                                 "dist_to_peak_pct": dbg5["dist_to_peak_pct"],
-                                "oi_change_15m_pct": dbg5.get("oi_change_15m_pct"),
-                                "oi_divergence": dbg5.get("oi_divergence"),
+                                "oi_change_5m_pct": dbg5.get("oi_change_5m_pct"),
+                                "oi_divergence_5m": dbg5.get("oi_divergence_5m"),
                                 "vol_z": dbg5.get("vol_z"),
                                 "atr_14_5m_pct": dbg5.get("atr_14_5m_pct"),
                                 "context_score": context_score,
@@ -173,10 +187,11 @@ def run_watch_for_symbol(
                 try:
                     candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=250)
                     if candles_1m is not None and not candles_1m.empty and (time.time() - last_1m_wall_write >= 3):
-                        # Get trades for decide_entry_1m
+                        # Get trades and OI for decide_entry_1m
                         trades_1m = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
+                        oi_1m = get_open_interest(cfg.category, cfg.symbol, limit=20)  # 1m needs shorter lookback
                         entry_ok, entry_payload = decide_entry_1m(
-                            cfg, candles_1m, trades_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
+                            cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                         )
                         try:
                             append_csv(
@@ -186,10 +201,11 @@ def run_watch_for_symbol(
                                     "symbol": cfg.symbol,
                                     "time_utc": str(candles_1m.iloc[-1]["ts"]),
                                     "price": float(candles_1m.iloc[-1]["close"]),
-                                    "entry_ok": bool(entry_ok),
-                                    "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
-                                },
-                            )
+                                "entry_ok": bool(entry_ok),
+                                "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
+                                "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
+                            },
+                        )
                             last_1m_wall_write = time.time()
                         except Exception as e:
                             log_exception(logger, "CSV_WRITE failed for 1m log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_1m})
@@ -199,8 +215,9 @@ def run_watch_for_symbol(
                 # fast polling inside ARMED
                 try:
                     trades_fast = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
+                    oi_fast = get_open_interest(cfg.category, cfg.symbol, limit=20)  # Fast needs shorter lookback
                     ok_fast, payload_fast = decide_entry_fast(
-                        cfg, trades_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
+                        cfg, trades_fast, oi_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                     )
                     try:
                         append_csv(
@@ -210,6 +227,7 @@ def run_watch_for_symbol(
                                 "symbol": cfg.symbol,
                                 "wall_time_utc": _utc_now_str(),
                                 "entry_ok": bool(ok_fast),
+                                "oi_change_fast_pct": payload_fast.get("oi_change_fast_pct"),
                                 "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
                             },
                         )

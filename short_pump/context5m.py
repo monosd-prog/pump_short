@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from short_pump.logging_utils import get_logger, log_exception
+from short_pump.features import oi_change_pct, oi_divergence_5m
+from short_pump.logging_utils import get_logger, log_exception, log_warning
 
 logger = get_logger(__name__)
 
@@ -202,11 +203,23 @@ def build_dbg5(
 
     dist_to_peak_pct = (peak - price) / peak * 100.0 if peak > 0 else 0.0
 
-    oi_change_15m_pct = None
-    oi_divergence = False
-    if isinstance(oi, dict):
-        oi_change_15m_pct = oi.get("oi_change_15m_pct")
-        oi_divergence = bool(oi.get("oi_divergence", False))
+    # Calculate OI metrics for 5m context
+    oi_change_5m_pct = None
+    oi_divergence_5m_val = False
+    oi_present = False
+    oi_rows = 0
+    
+    if isinstance(oi, dict) and oi.get("oi_df") is not None:
+        oi_df = oi["oi_df"]
+        oi_present = True
+        oi_rows = len(oi_df) if hasattr(oi_df, "__len__") else 0
+        
+        if oi_rows > 0:
+            oi_change_5m_pct = oi_change_pct(oi_df, lookback_minutes=5)
+            oi_divergence_5m_val = oi_divergence_5m(oi_change_5m_pct, dist_to_peak_pct)
+    elif oi is None:
+        # Log warning once per run_id (we'll track this in watcher)
+        pass
 
     vol_z = _volume_z(candles_5m)
     atr_14_5m_pct = _atr_pct_14(candles_5m)
@@ -219,8 +232,10 @@ def build_dbg5(
         "price": price,
         "peak_price": peak,
         "dist_to_peak_pct": dist_to_peak_pct,
-        "oi_change_15m_pct": oi_change_15m_pct,
-        "oi_divergence": oi_divergence,
+        "oi_change_5m_pct": oi_change_5m_pct,
+        "oi_divergence_5m": oi_divergence_5m_val,
+        "oi_present": oi_present,
+        "oi_rows": oi_rows,
         "vol_z": vol_z,
         "atr_14_5m_pct": atr_14_5m_pct,
     }
@@ -266,9 +281,12 @@ def compute_context_score_5m(dbg5: Dict[str, Any]) -> Tuple[float, Dict[str, flo
     else:
         parts["near_top"] = 0.0
 
-    # oi divergence: boolean computed upstream
-    if bool(dbg5.get("oi_divergence", False)):
-        parts["oi"] = 0.25
+    # oi divergence 5m: boolean computed upstream
+    oi_change_5m = dbg5.get("oi_change_5m_pct")
+    if dbg5.get("oi_divergence_5m", False):
+        parts["oi"] = 0.20
+    elif oi_change_5m is not None and oi_change_5m < -1.0:  # OI falling significantly
+        parts["oi"] = 0.10
 
     # volume spike
     vol_z = float(dbg5.get("vol_z") or 0.0)
