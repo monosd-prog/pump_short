@@ -41,10 +41,13 @@ def _pct(a: float, b: float) -> float:
     return (a - b) / b * 100.0
 
 
-def update_structure(cfg: Any, st: StructureState, last_price: float, peak_price: float) -> None:
+def update_structure(cfg: Any, st: StructureState, last_price: float, peak_price: float) -> StructureState:
     """Update structure stage on each 5m tick.
 
     Defensive: getattr(...) with defaults so it won't crash if cfg lacks thresholds.
+    
+    Returns:
+        StructureState: Updated structure state (same object, modified in-place).
     """
 
     # --- thresholds (defaults tuned to match your logs) ---
@@ -119,6 +122,7 @@ def update_structure(cfg: Any, st: StructureState, last_price: float, peak_price
                 st.armed_since_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # stage 4 is ARMED: we stay there until watcher finishes
+    return st
 
 
 # -----------------------------
