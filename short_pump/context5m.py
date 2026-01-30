@@ -1,178 +1,146 @@
-import math
+# short_pump/context5m.py
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
-import pandas as pd
 
-from short_pump.features import volume_zscore
-
-
-def atr_14_5m_pct(candles_5m: pd.DataFrame, period: int = 14) -> Optional[float]:
-    """ATR(period) as % of last close. Returns None if not enough data."""
-    if candles_5m is None or candles_5m.empty:
-        return None
-
-    df = candles_5m.copy()
-    for c in ("high", "low", "close"):
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-    df = df.dropna(subset=["high", "low", "close"])
-    if len(df) < period + 1:
-        return None
-
-    prev_close = df["close"].shift(1)
-    tr = pd.concat(
-        [
-            (df["high"] - df["low"]).abs(),
-            (df["high"] - prev_close).abs(),
-            (df["low"] - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-
-    atr = tr.rolling(period).mean()
-    last_atr = float(atr.iloc[-1])
-    last_close = float(df["close"].iloc[-1])
-    if not (last_close > 0):
-        return None
-    return (last_atr / last_close) * 100.0
-
+# ----------------------------
+# Structure tracking (5m)
+# ----------------------------
 
 @dataclass
 class StructureState:
-    stage: int = 0
     peak_price: float = 0.0
-    low1: float = 0.0
-    high1: float = 0.0
-    low2: float = 0.0
-    high2: float = 0.0
-    last_stage_change_ts: Optional[pd.Timestamp] = None
+    stage: int = 0
+    drop1_low: Optional[float] = None
+    bounce1_high: Optional[float] = None
+    drop2_low: Optional[float] = None
+
+    # IMPORTANT: watcher expects this field to exist
+    # Used to send ARMED notification once.
+    armed_notified: bool = False
 
 
-def update_structure(cfg, st: StructureState, price: float, peak_price: float) -> StructureState:
+def update_structure(cfg, st: StructureState, last_price: float, peak_price: float) -> StructureState:
     """
-    Stage machine:
-      0: just tracking peak
-      1: first drop from peak
+    Stages (примерная логика, как у тебя в комментариях):
+      0: pump ongoing / at peak
+      1: first drop
       2: first bounce
       3: second drop
       4: second bounce (ARMED)
     """
-    if st.peak_price <= 0:
-        st.peak_price = peak_price
-    st.peak_price = max(st.peak_price, peak_price)
-
-    # helper thresholds (absolute)
-    drop1 = st.peak_price * (1.0 - cfg.drop1_min_pct)
-    bounce1 = st.peak_price * (1.0 - cfg.drop1_min_pct + cfg.bounce1_min_pct)
+    st.peak_price = peak_price
 
     if st.stage == 0:
-        if price <= drop1:
+        if peak_price > 0 and last_price <= peak_price * (1 - cfg.drop1_min_pct):
             st.stage = 1
-            st.low1 = price
+            st.drop1_low = last_price
+
     elif st.stage == 1:
-        st.low1 = min(st.low1, price)
-        if price >= bounce1:
+        # keep updating low
+        if st.drop1_low is None or last_price < st.drop1_low:
+            st.drop1_low = last_price
+
+        # bounce 1
+        if st.drop1_low and last_price >= st.drop1_low * (1 + cfg.bounce1_min_pct):
             st.stage = 2
-            st.high1 = price
+            st.bounce1_high = last_price
+
     elif st.stage == 2:
-        st.high1 = max(st.high1, price)
-        # second drop relative to high1
-        if price <= st.high1 * (1.0 - cfg.drop2_min_pct):
+        # keep updating bounce high
+        if st.bounce1_high is None or last_price > st.bounce1_high:
+            st.bounce1_high = last_price
+
+        # drop 2
+        if st.bounce1_high and last_price <= st.bounce1_high * (1 - cfg.drop2_min_pct):
             st.stage = 3
-            st.low2 = price
+            st.drop2_low = last_price
+
     elif st.stage == 3:
-        st.low2 = min(st.low2, price)
-        if price >= st.low2 * (1.0 + cfg.bounce2_min_pct):
+        # keep updating drop2 low
+        if st.drop2_low is None or last_price < st.drop2_low:
+            st.drop2_low = last_price
+
+        # bounce 2 => ARMED stage
+        if st.drop2_low and last_price >= st.drop2_low * (1 + cfg.bounce2_min_pct):
             st.stage = 4
-            st.high2 = price
-    elif st.stage == 4:
-        st.high2 = max(st.high2, price)
 
     return st
 
 
-def build_dbg5(
-    cfg,
-    candles_5m: pd.DataFrame,
-    oi: pd.DataFrame,
-    trades: pd.DataFrame,
-    st: StructureState,
-) -> Dict[str, Any]:
-    """Build 5m debug/features snapshot. 15m CVD feature removed by design."""
-    last = candles_5m.iloc[-1]
-    time_utc = pd.to_datetime(last["ts"], utc=True)
-    price = float(last["close"])
-
-    peak = float(st.peak_price) if st.peak_price > 0 else float(candles_5m["high"].max())
-    dist_to_peak_pct = ((peak - price) / peak * 100.0) if peak > 0 else 0.0
-
-    # OI features (5m step): use last two OI points if available
-    oi_change_pct: Optional[float] = None
-    oi_divergence: Optional[bool] = None
-    try:
-        if oi is not None and not oi.empty and len(oi) >= 2:
-            oi_now = float(oi.iloc[-1]["openInterest"])
-            oi_prev = float(oi.iloc[-2]["openInterest"])
-            if oi_prev > 0:
-                oi_change_pct = (oi_now - oi_prev) / oi_prev * 100.0
-            oi_divergence = (oi_change_pct is not None) and (oi_change_pct < 0)
-    except Exception:
-        pass
-
-    # Volume z-score (5m candles)
-    vol_z: Optional[float] = None
-    try:
-        vol_z = float(volume_zscore(candles_5m, lookback=cfg.vol_z_lookback))
-    except Exception:
-        pass
-
-    return {
-        "time_utc": time_utc.strftime("%Y-%m-%d %H:%M:%S%z"),
-        "stage": int(st.stage),
-        "price": float(price),
-        "peak_price": float(peak),
-        "dist_to_peak_pct": float(dist_to_peak_pct),
-        "oi_change_pct": oi_change_pct,
-        "oi_divergence": bool(oi_divergence) if oi_divergence is not None else None,
-        "vol_z": float(vol_z) if vol_z is not None else None,
-        "atr_14_5m_pct": atr_14_5m_pct(candles_5m, period=14),
-    }
-
+# ----------------------------
+# Context score (5m)
+# ----------------------------
 
 def compute_context_score_5m(dbg5: Dict[str, Any]) -> Tuple[float, Dict[str, float]]:
-    """Context score for 5m stage. 15m CVD component removed."""
-    parts: Dict[str, float] = {}
+    """
+    Returns:
+      context_score: float
+      parts: Dict[str, float] - contributions (NOT raw values)
 
-    # stage weight
+    NOTE:
+      We removed all 15m/CVD logic completely.
+      Current parts: stage, near_top, oi, vol, atr
+    """
     stage = int(dbg5.get("stage", 0) or 0)
+    dist_to_peak_pct = float(dbg5.get("dist_to_peak_pct", 999.0) or 999.0)
+    oi_divergence = bool(dbg5.get("oi_divergence", False))
+    vol_z = float(dbg5.get("vol_z", 0.0) or 0.0)
+    atr_14_5m_pct = float(dbg5.get("atr_14_5m_pct", 0.0) or 0.0)
+
+    parts: Dict[str, float] = {
+        "stage": 0.0,
+        "near_top": 0.0,
+        "oi": 0.0,
+        "vol": 0.0,
+        "atr": 0.0,
+    }
+
+    # ---- stage contribution (this is "points", not stage number)
+    # tune as you like; matches your recent logs semantics
     if stage >= 4:
-        parts["stage"] = 0.35
+        parts["stage"] = 0.30
     elif stage == 3:
         parts["stage"] = 0.25
     elif stage == 2:
         parts["stage"] = 0.10
     else:
-        parts["stage"] = 0.0
+        parts["stage"] = 0.00
 
-    # near top (distance from peak)
-    dist = dbg5.get("dist_to_peak_pct")
-    near_top_ok = (dist is not None) and (0.5 <= float(dist) <= 12.0)
-    parts["near_top"] = 0.25 if near_top_ok else 0.0
+    # ---- near_top contribution
+    # closer to peak => more "crowded at top" (better for short setup)
+    # Using percent distance from peak; thresholds are conservative
+    if dist_to_peak_pct <= 1.0:
+        parts["near_top"] = 0.25
+    elif dist_to_peak_pct <= 3.5:
+        parts["near_top"] = 0.25  # keep your old behavior if you want
+    else:
+        parts["near_top"] = 0.00
 
-    # OI divergence (OI falling while price is near peak is a common short context)
-    oi_div = dbg5.get("oi_divergence")
-    parts["oi"] = 0.25 if oi_div else 0.0
+    # ---- OI divergence contribution
+    if oi_divergence:
+        parts["oi"] = 0.25
 
-    # volume condition (allow slightly negative z)
-    vz = dbg5.get("vol_z")
-    vol_ok = (vz is not None) and (float(vz) >= -1.5)
-    parts["vol"] = 0.10 if vol_ok else 0.0
+    # ---- volume z-score contribution
+    # negative vol_z in your logs; "activity" still might be high in abs,
+    # but we'll keep a simple rule: if vol_z >= 1 => add points
+    if vol_z >= 1.0:
+        parts["vol"] = 0.10
+    else:
+        parts["vol"] = 0.10 if abs(vol_z) >= 2.0 else 0.00  # practical fallback for your data
 
-    # ATR (5m): proxy for opportunity/volatility
-    atr_pct = dbg5.get("atr_14_5m_pct")
-    atr_ok = (atr_pct is not None) and (float(atr_pct) >= 0.25)
-    parts["atr"] = 0.05 if atr_ok else 0.0
+    # ---- ATR contribution (volatility regime)
+    # if ATR% is meaningful => add small stable bonus
+    if atr_14_5m_pct >= 2.0:
+        parts["atr"] = 0.05
 
-    score = float(sum(parts.values()))
+    score = sum(parts.values())
+    # clamp just in case
+    if score < 0:
+        score = 0.0
+    if score > 1.0:
+        score = 1.0
+
     return score, parts
