@@ -193,6 +193,9 @@ def run_watch_for_symbol(
                         entry_ok, entry_payload = decide_entry_1m(
                             cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                         )
+                        # Update context_score with CVD if available
+                        context_score_with_cvd = entry_payload.get("context_score", context_score)
+                        ctx_parts = entry_payload.get("context_parts", ctx_parts)
                         try:
                             append_csv(
                                 log_1m,
@@ -203,6 +206,9 @@ def run_watch_for_symbol(
                                     "price": float(candles_1m.iloc[-1]["close"]),
                                 "entry_ok": bool(entry_ok),
                                 "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
+                                "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
+                                "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
+                                "cvd_part": entry_payload.get("cvd_part"),
                                 "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
                             },
                         )
@@ -219,6 +225,9 @@ def run_watch_for_symbol(
                     ok_fast, payload_fast = decide_entry_fast(
                         cfg, trades_fast, oi_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                     )
+                    # Update context_score with CVD if available
+                    context_score_with_cvd = payload_fast.get("context_score", context_score)
+                    ctx_parts = payload_fast.get("context_parts", ctx_parts)
                     try:
                         append_csv(
                             log_fast,
@@ -228,6 +237,9 @@ def run_watch_for_symbol(
                                 "wall_time_utc": _utc_now_str(),
                                 "entry_ok": bool(ok_fast),
                                 "oi_change_fast_pct": payload_fast.get("oi_change_fast_pct"),
+                                "cvd_delta_ratio_30s": payload_fast.get("cvd_delta_ratio_30s"),
+                                "cvd_delta_ratio_1m": payload_fast.get("cvd_delta_ratio_1m"),
+                                "cvd_part": payload_fast.get("cvd_part"),
                                 "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
                             },
                         )
@@ -243,10 +255,11 @@ def run_watch_for_symbol(
             # ENTRY OK → OUTCOME
             # =====================
             if entry_ok:
-                log_info(logger, "ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ENTRY_DECISION", extra={"entry_payload": entry_payload})
+                entry_type = entry_payload.get("entry_type", "UNKNOWN")
+                log_info(logger, "ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ENTRY_DECISION", extra={"entry_type": entry_type, "entry_payload": entry_payload})
                 try:
                     send_telegram(
-                        f"✅ ENTRY OK: {cfg.symbol}\n"
+                        f"✅ ENTRY OK ({entry_type}): {cfg.symbol}\n"
                         f"run_id={run_id}\n"
                         f"{json.dumps(entry_payload, ensure_ascii=False)}"
                     )
@@ -255,6 +268,8 @@ def run_watch_for_symbol(
 
                 # Extract entry parameters from entry_payload
                 entry_price = float(entry_payload.get("price", 0.0))
+                entry_source = entry_payload.get("entry_source", "unknown")
+                entry_type = entry_payload.get("entry_type", "unknown")
                 entry_ts_str = entry_payload.get("time_utc", "")
                 try:
                     entry_ts_utc = pd.Timestamp(entry_ts_str)
@@ -266,10 +281,16 @@ def run_watch_for_symbol(
                     log_exception(logger, "Failed to parse entry_ts_utc, using now()", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ENTRY_DECISION", extra={"time_utc": entry_ts_str})
                     entry_ts_utc = pd.Timestamp.now(tz="UTC")
                 
-                # Calculate TP/SL from config
-                peak_price_5m = float(entry_payload.get("dist_to_peak_pct", 0.0)) / 100.0 * entry_price + entry_price if entry_payload.get("dist_to_peak_pct") else dbg5.get("peak_price", entry_price)
-                tp_price = entry_price * (1.0 - cfg.tp_pct_confirm)
-                sl_price = entry_price * (1.0 + cfg.sl_pct_confirm)
+                # Calculate TP/SL from config based on entry_type
+                if entry_type == "CONFIRM":
+                    tp_price = entry_price * (1.0 - cfg.tp_pct_confirm)
+                    sl_price = entry_price * (1.0 + cfg.sl_pct_confirm)
+                elif entry_type == "EARLY":
+                    tp_price = entry_price * (1.0 - cfg.tp_pct_early)
+                    sl_price = entry_price * (1.0 + cfg.sl_pct_early)
+                else:  # FAST or unknown
+                    tp_price = entry_price * (1.0 - cfg.tp_pct_confirm)
+                    sl_price = entry_price * (1.0 + cfg.sl_pct_confirm)
                 
                 try:
                     summary = track_outcome_short(
@@ -278,9 +299,11 @@ def run_watch_for_symbol(
                         entry_price=entry_price,
                         tp_price=tp_price,
                         sl_price=sl_price,
+                        entry_source=entry_source,
+                        entry_type=entry_type,
+                        run_id=run_id,
+                        symbol=cfg.symbol,
                     )
-                    summary["run_id"] = run_id
-                    summary["symbol"] = cfg.symbol
                     log_info(logger, "OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME", extra={"outcome": summary.get("outcome"), "end_reason": summary.get("end_reason")})
                     try:
                         append_csv(log_summary, summary)

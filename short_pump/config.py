@@ -93,6 +93,11 @@ class Config:
     late_dist_pct: float = 8.0
     delta_ratio_early_late_max: float = -0.12
 
+    # ===== CVD (Cumulative Volume Delta) =====
+    cvd_delta_ratio_30s_max: float = -0.12
+    cvd_delta_ratio_1m_max: float = -0.05
+    cvd_weight: float = 0.2
+
     @classmethod
     def from_env(cls) -> "Config":
         c = cls()
@@ -120,5 +125,10 @@ class Config:
         # outcome
         c.outcome_watch_minutes = _get_int("OUTCOME_WATCH_MINUTES", c.outcome_watch_minutes)
         c.outcome_poll_seconds = _get_int("OUTCOME_POLL_SECONDS", c.outcome_poll_seconds)
+
+        # CVD
+        c.cvd_delta_ratio_30s_max = _get_float("CVD_DELTA_RATIO_30S_MAX", c.cvd_delta_ratio_30s_max)
+        c.cvd_delta_ratio_1m_max = _get_float("CVD_DELTA_RATIO_1M_MAX", c.cvd_delta_ratio_1m_max)
+        c.cvd_weight = _get_float("CVD_WEIGHT", c.cvd_weight)
 
         return c

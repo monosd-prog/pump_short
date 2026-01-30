@@ -136,3 +136,62 @@ def oi_divergence_5m(oi_change_5m_pct: Optional[float], dist_to_peak_pct: float)
     oi_falling = oi_change_5m_pct < 0
     
     return near_top and oi_falling
+
+
+def cvd_delta_ratio(trades: pd.DataFrame, since_ts: pd.Timestamp) -> Optional[float]:
+    """
+    Calculate CVD delta ratio (same as delta_ratio but returns None if insufficient data).
+    Used for CVD features in ARMED/FAST modes.
+    
+    Args:
+        trades: DataFrame with columns: ts, side, qty
+        since_ts: Timestamp to look back from
+    
+    Returns:
+        Delta ratio (buy - sell) / (buy + sell) or None if insufficient data
+    """
+    if trades is None or trades.empty:
+        return None
+    
+    x = trades[trades["ts"] >= since_ts]
+    if x is None or x.empty:
+        return None
+    
+    buy = x.loc[x["side"].str.lower() == "buy", "qty"].sum()
+    sell = x.loc[x["side"].str.lower() == "sell", "qty"].sum()
+    total = buy + sell
+    
+    if total <= 0:
+        return None
+    
+    return float((buy - sell) / total)
+
+
+def compute_cvd_part(
+    cvd_30s: Optional[float],
+    cvd_1m: Optional[float],
+    cvd_30s_max: float,
+    cvd_1m_max: float,
+    cvd_weight: float,
+) -> float:
+    """
+    Compute CVD contribution to context_score.
+    
+    Args:
+        cvd_30s: CVD delta ratio for 30s (can be None)
+        cvd_1m: CVD delta ratio for 1m (can be None)
+        cvd_30s_max: Threshold for 30s (e.g., -0.12)
+        cvd_1m_max: Threshold for 1m (e.g., -0.05)
+        cvd_weight: Weight to apply if conditions met (e.g., 0.2)
+    
+    Returns:
+        CVD part (0.0 to cvd_weight) or 0.0 if invalid
+    """
+    if cvd_30s is None or cvd_1m is None:
+        return 0.0
+    
+    # Both must pass thresholds (for SHORT: negative delta is good)
+    if cvd_30s <= cvd_30s_max and cvd_1m <= cvd_1m_max:
+        return float(cvd_weight)
+    
+    return 0.0

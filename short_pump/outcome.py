@@ -15,26 +15,51 @@ def track_outcome_short(
     entry_price: float,
     tp_price: float,
     sl_price: float,
+    entry_source: str = "unknown",
+    entry_type: str = "unknown",
+    run_id: str = "",
+    symbol: str = "",
 ) -> Dict[str, Any]:
+    """
+    Track outcome for SHORT position. Returns ideal dataset row for ML.
+    
+    Args:
+        cfg: Config instance
+        entry_ts_utc: Entry timestamp (UTC)
+        entry_price: Entry price
+        tp_price: Take profit price
+        sl_price: Stop loss price
+        entry_source: "1m" or "fast"
+        entry_type: "EARLY", "CONFIRM", or "FAST"
+        run_id: Run identifier
+        symbol: Trading symbol
+    
+    Returns:
+        Dict with all required fields for ML dataset (no None values where possible)
+    """
     # Validate inputs
     if entry_price <= 0 or tp_price <= 0 or sl_price <= 0:
-        logger.error(f"Invalid outcome parameters: entry_price={entry_price}, tp_price={tp_price}, sl_price={sl_price}")
-        return {
-            "outcome": "ERROR",
-            "end_reason": "INVALID_PARAMS",
-            "hit_time_utc": None,
-            "minutes_to_hit": None,
-            "mfe_pct": 0.0,
-            "mae_pct": 0.0,
-            "timeout_exit_price": None,
-            "timeout_pnl_pct": None,
-        }
+        log_exception(logger, "Invalid outcome parameters", symbol=symbol, run_id=run_id, step="OUTCOME_VALIDATE", extra={
+            "entry_price": entry_price,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
+        })
+        return _create_error_outcome(entry_price, tp_price, sl_price, entry_source, entry_type, run_id, symbol, entry_ts_utc, "INVALID_PARAMS")
+    
+    # Validate entry_ts_utc
+    if entry_ts_utc is None:
+        log_exception(logger, "entry_ts_utc is None", symbol=symbol, run_id=run_id, step="OUTCOME_VALIDATE")
+        return _create_error_outcome(entry_price, tp_price, sl_price, entry_source, entry_type, run_id, symbol, pd.Timestamp.now(tz="UTC"), "INVALID_ENTRY_TS")
+    
+    # Calculate TP/SL percentages
+    tp_pct = ((entry_price - tp_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+    sl_pct = ((sl_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
     
     end_ts = entry_ts_utc + pd.Timedelta(minutes=cfg.outcome_watch_minutes)
 
     mfe = 0.0
     mae = 0.0
-    outcome = "TIMEOUT"
+    end_reason = "TIMEOUT"
     hit_ts = None
 
     while pd.Timestamp.now(tz="UTC") < end_ts:
@@ -49,7 +74,7 @@ def track_outcome_short(
                 time.sleep(cfg.outcome_poll_seconds)
                 continue
         except Exception as e:
-            log_exception(logger, "Error fetching candles in outcome tracking", symbol=cfg.symbol, step="OUTCOME_FETCH", extra={"outcome": outcome})
+            log_exception(logger, "Error fetching candles in outcome tracking", symbol=symbol, run_id=run_id, step="OUTCOME_FETCH", extra={"end_reason": end_reason})
             time.sleep(5)
             continue
 
@@ -69,19 +94,19 @@ def track_outcome_short(
             # Deterministic rule for BOTH_SAME_CANDLE: for SHORT, SL is more critical (conservative)
             # If both hit in same candle, prioritize SL (risk management)
             if tp_hit and sl_hit:
-                outcome = "SL_hit"  # Conservative: SL takes precedence for SHORT positions
+                end_reason = "SL_hit"  # Conservative: SL takes precedence for SHORT positions
                 hit_ts = ts
                 break
             if sl_hit:
-                outcome = "SL_hit"
+                end_reason = "SL_hit"
                 hit_ts = ts
                 break
             if tp_hit:
-                outcome = "TP_hit"
+                end_reason = "TP_hit"
                 hit_ts = ts
                 break
 
-        if outcome != "TIMEOUT":
+        if end_reason != "TIMEOUT":
             break
 
         time.sleep(cfg.outcome_poll_seconds)
@@ -90,11 +115,11 @@ def track_outcome_short(
     if hit_ts is not None:
         minutes_to_hit = (pd.Timestamp(hit_ts).to_pydatetime() - entry_ts_utc.to_pydatetime()).total_seconds() / 60.0
 
-    timeout_exit_price = None
-    timeout_pnl_pct = None
-    if outcome == "TIMEOUT":
+    timeout_exit_price = 0.0
+    timeout_pnl_pct = 0.0
+    if end_reason == "TIMEOUT":
         try:
-            candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=300)
+            candles_1m = get_klines_1m(cfg.category, symbol, limit=300)
             if candles_1m is not None and not candles_1m.empty:
                 sub = candles_1m[candles_1m["ts"] <= end_ts].copy()
                 if sub is not None and not sub.empty:
@@ -102,22 +127,85 @@ def track_outcome_short(
                     timeout_exit_price = last_close
                     timeout_pnl_pct = (entry_price - last_close) / entry_price * 100.0
         except Exception as e:
-            log_exception(logger, "Error calculating timeout exit price", symbol=cfg.symbol, step="OUTCOME_TIMEOUT", extra={"outcome": outcome})
+            log_exception(logger, "Error calculating timeout exit price", symbol=symbol, run_id=run_id, step="OUTCOME_TIMEOUT", extra={"end_reason": end_reason})
+            # Fail-safe: use entry_price as timeout_exit_price
+            timeout_exit_price = entry_price
+            timeout_pnl_pct = 0.0
 
-    # Ensure outcome is never None
-    if outcome is None or outcome == "":
-        outcome = "TIMEOUT"
+    # Ensure end_reason is never None
+    if end_reason is None or end_reason == "":
+        end_reason = "TIMEOUT"
     
-    # Ensure all numeric fields are valid
+    # Format entry_time_utc as ISO string
+    entry_time_utc_str = entry_ts_utc.isoformat() if hasattr(entry_ts_utc, "isoformat") else str(entry_ts_utc)
+    
+    # Format hit_time_utc
+    hit_time_utc_str = ""
+    if hit_ts is not None:
+        if isinstance(hit_ts, pd.Timestamp):
+            hit_time_utc_str = hit_ts.isoformat()
+        else:
+            hit_time_utc_str = str(hit_ts)
+    
+    # Ensure all numeric fields are valid (no None for ML dataset)
     result = {
-        "outcome": str(outcome),
-        "end_reason": str(outcome),  # For compatibility
-        "hit_time_utc": str(hit_ts) if hit_ts is not None else None,
-        "minutes_to_hit": float(minutes_to_hit) if minutes_to_hit is not None else None,
+        "run_id": str(run_id) if run_id else "",
+        "symbol": str(symbol) if symbol else "",
+        "entry_time_utc": entry_time_utc_str,
+        "entry_price": float(entry_price),
+        "entry_source": str(entry_source) if entry_source else "unknown",
+        "entry_type": str(entry_type) if entry_type else "unknown",
+        "tp_price": float(tp_price),
+        "sl_price": float(sl_price),
+        "tp_pct": float(tp_pct),
+        "sl_pct": float(sl_pct),
+        "end_reason": str(end_reason),
+        "outcome": str(end_reason),  # For backward compatibility
+        "hit_time_utc": hit_time_utc_str,
+        "minutes_to_hit": float(minutes_to_hit) if minutes_to_hit is not None else 0.0,
         "mfe_pct": float(mfe * 100.0),
         "mae_pct": float(mae * 100.0),
-        "timeout_exit_price": float(timeout_exit_price) if timeout_exit_price is not None else None,
-        "timeout_pnl_pct": float(timeout_pnl_pct) if timeout_pnl_pct is not None else None,
+        "timeout_exit_price": float(timeout_exit_price),
+        "timeout_pnl_pct": float(timeout_pnl_pct),
     }
     
     return result
+
+
+def _create_error_outcome(
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    entry_source: str,
+    entry_type: str,
+    run_id: str,
+    symbol: str,
+    entry_ts_utc: pd.Timestamp,
+    error_reason: str,
+) -> Dict[str, Any]:
+    """Create error outcome with all required fields."""
+    tp_pct = ((entry_price - tp_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+    sl_pct = ((sl_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+    
+    entry_time_utc_str = entry_ts_utc.isoformat() if hasattr(entry_ts_utc, "isoformat") else str(entry_ts_utc)
+    
+    return {
+        "run_id": str(run_id) if run_id else "",
+        "symbol": str(symbol) if symbol else "",
+        "entry_time_utc": entry_time_utc_str,
+        "entry_price": float(entry_price) if entry_price > 0 else 0.0,
+        "entry_source": str(entry_source) if entry_source else "unknown",
+        "entry_type": str(entry_type) if entry_type else "unknown",
+        "tp_price": float(tp_price) if tp_price > 0 else 0.0,
+        "sl_price": float(sl_price) if sl_price > 0 else 0.0,
+        "tp_pct": float(tp_pct),
+        "sl_pct": float(sl_pct),
+        "end_reason": f"ERROR_{error_reason}",
+        "outcome": f"ERROR_{error_reason}",
+        "hit_time_utc": "",
+        "minutes_to_hit": 0.0,
+        "mfe_pct": 0.0,
+        "mae_pct": 0.0,
+        "timeout_exit_price": 0.0,
+        "timeout_pnl_pct": 0.0,
+    }
