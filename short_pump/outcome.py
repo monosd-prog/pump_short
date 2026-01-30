@@ -4,6 +4,9 @@ import pandas as pd
 
 from short_pump.bybit_api import get_klines_1m
 from short_pump.config import Config
+from short_pump.logging_utils import get_logger, log_exception
+
+logger = get_logger(__name__)
 
 
 def track_outcome_short(
@@ -21,14 +24,19 @@ def track_outcome_short(
     hit_ts = None
 
     while pd.Timestamp.now(tz="UTC") < end_ts:
-        candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=300)
-        if candles_1m.empty:
-            time.sleep(5)
-            continue
+        try:
+            candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=300)
+            if candles_1m is None or candles_1m.empty:
+                time.sleep(5)
+                continue
 
-        future = candles_1m[candles_1m["ts"] >= entry_ts_utc].copy()
-        if future.empty:
-            time.sleep(cfg.outcome_poll_seconds)
+            future = candles_1m[candles_1m["ts"] >= entry_ts_utc].copy()
+            if future is None or future.empty:
+                time.sleep(cfg.outcome_poll_seconds)
+                continue
+        except Exception as e:
+            log_exception(logger, "Error fetching candles in outcome tracking", symbol=cfg.symbol, step="OUTCOME_FETCH", extra={"outcome": outcome})
+            time.sleep(5)
             continue
 
         min_low = float(future["low"].min())
@@ -71,14 +79,14 @@ def track_outcome_short(
     if outcome == "TIMEOUT":
         try:
             candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=300)
-            if not candles_1m.empty:
-                sub = candles_1m[candles_1m["ts"] <= end_ts]
-                if not sub.empty:
+            if candles_1m is not None and not candles_1m.empty:
+                sub = candles_1m[candles_1m["ts"] <= end_ts].copy()
+                if sub is not None and not sub.empty:
                     last_close = float(sub["close"].iloc[-1])
                     timeout_exit_price = last_close
                     timeout_pnl_pct = (entry_price - last_close) / entry_price * 100.0
-        except Exception:
-            pass
+        except Exception as e:
+            log_exception(logger, "Error calculating timeout exit price", symbol=cfg.symbol, step="OUTCOME_TIMEOUT", extra={"outcome": outcome})
 
     return {
         "outcome": outcome,

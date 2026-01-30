@@ -9,7 +9,10 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from short_pump.config import Config
+from short_pump.logging_utils import get_logger, log_exception
 from short_pump.watcher import run_watch_for_symbol
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -79,7 +82,8 @@ class Runtime:
         if pump_pct is not None:
             try:
                 pp = float(pump_pct)
-            except Exception:
+            except Exception as e:
+                log_exception(logger, "Failed to parse pump_pct", symbol=symbol, step="FILTER", extra={"pump_pct": pump_pct})
                 pp = None
 
             if pp is not None and pp < self.cfg.min_pump_pct:
@@ -165,8 +169,22 @@ class Runtime:
                         "status": "done",
                         "result": result,
                     }
+                except Exception as e:
+                    log_exception(logger, "Fatal error in watcher runner task", symbol=symbol, run_id=run_id, step="RUNNER_TASK")
+                    self.done_recent[run_id] = {
+                        "run_id": run_id,
+                        "symbol": symbol,
+                        "status": "error",
+                        "error": str(e),
+                    }
+                    raise
                 finally:
                     self.active.pop(symbol, None)
 
-            asyncio.create_task(runner())
+            def task_done_callback(task: asyncio.Task) -> None:
+                if task.exception():
+                    log_exception(logger, "Watcher task completed with exception", symbol=symbol, run_id=run_id, step="RUNNER_TASK")
+            
+            task = asyncio.create_task(runner())
+            task.add_done_callback(task_done_callback)
             return {"status": "accepted", "symbol": symbol, "run_id": run_id}

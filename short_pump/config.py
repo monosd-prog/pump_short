@@ -1,6 +1,10 @@
 import os
 from dataclasses import dataclass
 
+from short_pump.logging_utils import get_logger, log_exception
+
+logger = get_logger(__name__)
+
 
 def _get_bool(name: str, default: bool) -> bool:
     v = os.getenv(name)
@@ -15,7 +19,8 @@ def _get_int(name: str, default: int) -> int:
         return default
     try:
         return int(v)
-    except Exception:
+    except Exception as e:
+        log_exception(logger, f"Failed to parse int env var {name}", step="CONFIG", extra={"value": v, "default": default})
         return default
 
 
@@ -25,7 +30,8 @@ def _get_float(name: str, default: float) -> float:
         return default
     try:
         return float(v)
-    except Exception:
+    except Exception as e:
+        log_exception(logger, f"Failed to parse float env var {name}", step="CONFIG", extra={"value": v, "default": default})
         return default
 
 

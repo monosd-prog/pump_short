@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from short_pump.logging_utils import get_logger, log_exception
+
+logger = get_logger(__name__)
+
 # -----------------------------
 # State (shared between ticks)
 # -----------------------------
@@ -185,7 +189,8 @@ def build_dbg5(
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-        except Exception:
+        except Exception as e:
+            log_exception(logger, "Failed to parse timestamp in build_dbg5", step="CONTEXT_5M", extra={"ts": ts})
             dt = datetime.now(timezone.utc)
     else:
         dt = datetime.now(timezone.utc)

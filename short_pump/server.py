@@ -7,7 +7,11 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from short_pump.config import Config
+from short_pump.logging_utils import get_logger
 from short_pump.runtime import Runtime
+
+# Initialize logging early
+logger = get_logger(__name__)
 
 app = FastAPI(title="Pump → Short Watcher")
 
@@ -30,20 +34,24 @@ async def status():
 
 @app.post("/pump")
 async def pump(evt: PumpEvent):
-    ignored = rt.apply_filters(
-        symbol=evt.symbol,
-        exchange=evt.exchange,
-        pump_pct=evt.pump_pct,
-        pump_ts=evt.pump_ts,
-        extra=evt.extra,
-    )
-    if ignored is not None:
-        return ignored
+    try:
+        ignored = rt.apply_filters(
+            symbol=evt.symbol,
+            exchange=evt.exchange,
+            pump_pct=evt.pump_pct,
+            pump_ts=evt.pump_ts,
+            extra=evt.extra,
+        )
+        if ignored is not None:
+            return ignored
 
-    return await rt.start_watch(
-        symbol=evt.symbol,
-        exchange=evt.exchange,
-        pump_pct=evt.pump_pct,
-        pump_ts=evt.pump_ts,
-        extra=evt.extra,
-    )
+        return await rt.start_watch(
+            symbol=evt.symbol,
+            exchange=evt.exchange,
+            pump_pct=evt.pump_pct,
+            pump_ts=evt.pump_ts,
+            extra=evt.extra,
+        )
+    except Exception as e:
+        logger.exception(f"Error in /pump endpoint | symbol={evt.symbol}", exc_info=True)
+        raise

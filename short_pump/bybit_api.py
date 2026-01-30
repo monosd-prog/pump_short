@@ -6,6 +6,10 @@ import requests
 import pandas as pd
 import numpy as np
 
+from short_pump.logging_utils import get_logger, log_exception
+
+logger = get_logger(__name__)
+
 BYBIT_REST = "https://api.bybit.com"
 
 
@@ -24,9 +28,13 @@ def _norm_symbol(symbol: str) -> str:
 
 
 def _get_json(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    r = requests.get(BYBIT_REST + path, params=params, timeout=15)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.get(BYBIT_REST + path, params=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        log_exception(logger, f"Bybit API request failed", step="BYBIT_API", extra={"path": path, "params": params})
+        raise
 
 
 def _klines(category: str, symbol: str, interval: str, limit: int) -> pd.DataFrame:
@@ -43,7 +51,9 @@ def _klines(category: str, symbol: str, interval: str, limit: int) -> pd.DataFra
         },
     )
     if j.get("retCode") != 0:
-        raise RuntimeError(f"Bybit kline({interval}) error: {j}")
+        error_msg = f"Bybit kline({interval}) error: {j}"
+        log_exception(logger, error_msg, step="BYBIT_API", extra={"category": category, "symbol": symbol, "interval": interval, "response": j})
+        raise RuntimeError(error_msg)
 
     lst = j["result"]["list"]
     df = pd.DataFrame(
@@ -77,7 +87,9 @@ def get_open_interest(category: str, symbol: str, limit: int = 80) -> pd.DataFra
         },
     )
     if j.get("retCode") != 0:
-        raise RuntimeError(f"Bybit OI error: {j}")
+        error_msg = f"Bybit OI error: {j}"
+        log_exception(logger, error_msg, step="BYBIT_API", extra={"category": category, "symbol": symbol, "response": j})
+        raise RuntimeError(error_msg)
 
     df = pd.DataFrame(j["result"]["list"])
     if df.empty:
@@ -109,7 +121,9 @@ def get_recent_trades(category: str, symbol: str, limit: int = 1000) -> pd.DataF
         },
     )
     if j.get("retCode") != 0:
-        raise RuntimeError(f"Bybit recent-trade error: {j}")
+        error_msg = f"Bybit recent-trade error: {j}"
+        log_exception(logger, error_msg, step="BYBIT_API", extra={"category": category, "symbol": symbol, "response": j})
+        raise RuntimeError(error_msg)
 
     df = pd.DataFrame(j["result"]["list"])
     if df.empty:
@@ -121,13 +135,17 @@ def get_recent_trades(category: str, symbol: str, limit: int = 1000) -> pd.DataF
         else ("timestamp" if "timestamp" in df.columns else None)
     )
     if not tcol:
-        raise RuntimeError(f"Unexpected trades schema: {df.columns.tolist()}")
+        error_msg = f"Unexpected trades schema: {df.columns.tolist()}"
+        log_exception(logger, error_msg, step="BYBIT_API", extra={"category": category, "symbol": symbol, "columns": df.columns.tolist()})
+        raise RuntimeError(error_msg)
 
     df["ts"] = pd.to_datetime(df[tcol].astype(np.int64), unit="ms", utc=True)
 
     qcol = "size" if "size" in df.columns else ("qty" if "qty" in df.columns else None)
     if not qcol:
-        raise RuntimeError(f"Unexpected trades schema (no size/qty): {df.columns.tolist()}")
+        error_msg = f"Unexpected trades schema (no size/qty): {df.columns.tolist()}"
+        log_exception(logger, error_msg, step="BYBIT_API", extra={"category": category, "symbol": symbol, "columns": df.columns.tolist()})
+        raise RuntimeError(error_msg)
 
     df["qty"] = df[qcol].astype(float)
 
