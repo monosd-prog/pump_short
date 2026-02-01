@@ -141,7 +141,18 @@ def decide_entry_fast(cfg,
     dr30 = delta_ratio(trades, now_ts - pd.Timedelta(seconds=30))
     dr60 = delta_ratio(trades, now_ts - pd.Timedelta(seconds=60))
 
-    delta_ok = (dr30 <= cfg.delta_ratio_30s_max) or (dr60 <= cfg.delta_ratio_30s_max)
+    delta_ok = True
+    if cfg.delta_ratio_30s_max is not None:
+        delta_ok = delta_ok and (dr30 <= cfg.delta_ratio_30s_max or dr60 <= cfg.delta_ratio_30s_max)
+
+    # Manual corridor for delta_ratio_30s
+    corridor_ok = True
+    if cfg.delta_ratio_30s_min is not None:
+        corridor_ok = corridor_ok and (dr30 >= cfg.delta_ratio_30s_min)
+    if cfg.delta_ratio_30s_max is not None:
+        corridor_ok = corridor_ok and (dr30 <= cfg.delta_ratio_30s_max)
+    if not corridor_ok:
+        delta_ok = False
 
     if dist_pct > cfg.late_dist_pct:
         strong_delta = (dr30 <= cfg.delta_ratio_fast_late_max) or (dr60 <= cfg.delta_ratio_fast_late_max)
@@ -183,6 +194,7 @@ def decide_entry_fast(cfg,
         "delta_ratio_1m": None,
         "delta_ratio_3m": None,
         "delta_ratio_30s": dr30,
+        "delta_30s_corridor_ok": corridor_ok,
         "oi_change_fast_pct": oi_change_fast_pct,
         "cvd_delta_ratio_30s": cvd_delta_ratio_30s,
         "cvd_delta_ratio_1m": cvd_delta_ratio_1m,

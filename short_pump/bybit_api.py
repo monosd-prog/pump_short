@@ -1,7 +1,8 @@
 # short_pump/bybit_api.py
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+import time
 import requests
 import pandas as pd
 import numpy as np
@@ -9,6 +10,9 @@ import numpy as np
 from short_pump.logging_utils import get_logger, log_exception
 
 logger = get_logger(__name__)
+
+_funding_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_funding_ttl_sec = 60.0
 
 BYBIT_REST = "https://api.bybit.com"
 
@@ -158,3 +162,52 @@ def get_recent_trades(category: str, symbol: str, limit: int = 1000) -> pd.DataF
         df["price"] = df["price"].astype(float)
 
     return df.sort_values("ts").reset_index(drop=True)
+
+
+def get_funding_rate(category: str, symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch current funding rate for a symbol with TTL cache.
+    Returns raw payload dict or None on failure.
+    """
+    category = _norm_category(category)
+    symbol = _norm_symbol(symbol)
+    cache_key = f"{category}:{symbol}"
+    now = time.monotonic()
+
+    cached = _funding_cache.get(cache_key)
+    if cached and (now - cached[0]) <= _funding_ttl_sec:
+        return cached[1]
+
+    try:
+        j = _get_json(
+            "/v5/market/tickers",
+            {
+                "category": category,
+                "symbol": symbol,
+            },
+        )
+        if j.get("retCode") != 0:
+            error_msg = f"Bybit tickers error: {j}"
+            log_exception(
+                logger,
+                error_msg,
+                step="BYBIT_API",
+                extra={"category": category, "symbol": symbol, "response": j},
+            )
+            return None
+
+        result = j.get("result", {})
+        lst = result.get("list") or []
+        if not lst:
+            return None
+        payload = lst[0]
+        _funding_cache[cache_key] = (now, payload)
+        return payload
+    except Exception:
+        log_exception(
+            logger,
+            "Failed to fetch funding rate",
+            step="BYBIT_API",
+            extra={"category": category, "symbol": symbol},
+        )
+        return None

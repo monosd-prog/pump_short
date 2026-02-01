@@ -195,3 +195,40 @@ def compute_cvd_part(
         return float(cvd_weight)
     
     return 0.0
+
+
+def normalize_funding(payload: Optional[dict]) -> tuple[Optional[float], Optional[str]]:
+    """
+    Normalize funding payload to (funding_rate, funding_rate_ts_utc).
+    Returns (None, None) if not available.
+    """
+    if not payload:
+        return None, None
+
+    rate = None
+    ts_utc = None
+
+    if "fundingRate" in payload:
+        try:
+            rate = float(payload.get("fundingRate"))
+        except Exception:
+            rate = None
+    elif "funding_rate" in payload:
+        try:
+            rate = float(payload.get("funding_rate"))
+        except Exception:
+            rate = None
+
+    ts_val = payload.get("nextFundingTime") or payload.get("fundingRateTimestamp") or payload.get("time")
+    if isinstance(ts_val, (int, float)):
+        ts_f = float(ts_val)
+        if ts_f > 10_000_000_000:  # ms
+            ts_f = ts_f / 1000.0
+        try:
+            ts_utc = pd.Timestamp.fromtimestamp(ts_f, tz="UTC").isoformat()
+        except Exception:
+            ts_utc = None
+    elif isinstance(ts_val, str):
+        ts_utc = ts_val
+
+    return rate, ts_utc

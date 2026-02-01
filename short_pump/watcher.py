@@ -12,6 +12,7 @@ from short_pump.bybit_api import (
     get_klines_1m,
     get_open_interest,
     get_recent_trades,
+    get_funding_rate,
 )
 from short_pump.config import Config
 from short_pump.context5m import (
@@ -21,8 +22,9 @@ from short_pump.context5m import (
     update_structure,
 )
 from short_pump.entry import decide_entry_fast, decide_entry_1m
-from short_pump.features import oi_change_pct
+from short_pump.features import normalize_funding, oi_change_pct
 from short_pump.io_csv import append_csv
+from short_pump.liquidations import get_liq_stats
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
@@ -45,7 +47,14 @@ def run_watch_for_symbol(
     meta = meta or {}
     run_id = run_id or time.strftime("%Y%m%d_%H%M%S")
 
-    log_info(logger, "WATCH_START", symbol=cfg.symbol, run_id=run_id, step="WATCH_START", extra={"meta": meta})
+    log_info(
+        logger,
+        "WATCH_START",
+        symbol=cfg.symbol,
+        run_id=run_id,
+        step="WATCH_START",
+        extra={"meta": meta, "entry_mode": cfg.entry_mode},
+    )
 
     log_5m = f"logs/{run_id}_{cfg.symbol}_5m.csv"
     log_1m = f"logs/{run_id}_{cfg.symbol}_1m.csv"
@@ -102,6 +111,9 @@ def run_watch_for_symbol(
 
                 oi = get_open_interest(cfg.category, cfg.symbol, limit=80)
                 trades = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
+                funding_payload = get_funding_rate(cfg.category, cfg.symbol)
+                funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
+                funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
 
                 # Convert DataFrame to list of dicts for build_dbg5
                 candles_5m_list = candles_5m.to_dict("records") if candles_5m is not None and not candles_5m.empty else []
@@ -149,6 +161,9 @@ def run_watch_for_symbol(
                                 "oi_divergence_5m": dbg5.get("oi_divergence_5m"),
                                 "vol_z": dbg5.get("vol_z"),
                                 "atr_14_5m_pct": dbg5.get("atr_14_5m_pct"),
+                                "funding_rate": funding_rate,
+                                "funding_rate_ts_utc": funding_rate_ts_utc,
+                                "funding_rate_abs": funding_rate_abs,
                                 "context_score": context_score,
                                 "wall_time_utc": _utc_now_str(),
                                 "candle_lag_sec": lag_sec,
@@ -183,51 +198,93 @@ def run_watch_for_symbol(
                     except Exception as e:
                         log_exception(logger, "TELEGRAM_SEND failed for ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
-                # 1m polling
-                try:
-                    candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=250)
-                    if candles_1m is not None and not candles_1m.empty and (time.time() - last_1m_wall_write >= 3):
-                        # Get trades and OI for decide_entry_1m
-                        trades_1m = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
-                        oi_1m = get_open_interest(cfg.category, cfg.symbol, limit=20)  # 1m needs shorter lookback
-                        entry_ok, entry_payload = decide_entry_1m(
-                            cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
-                        )
-                        # Update context_score with CVD if available
-                        context_score_with_cvd = entry_payload.get("context_score", context_score)
-                        ctx_parts = entry_payload.get("context_parts", ctx_parts)
-                        try:
-                            append_csv(
-                                log_1m,
-                                {
-                                    "run_id": run_id,
-                                    "symbol": cfg.symbol,
-                                    "time_utc": str(candles_1m.iloc[-1]["ts"]),
-                                    "price": float(candles_1m.iloc[-1]["close"]),
-                                "entry_ok": bool(entry_ok),
-                                "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
-                                "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
-                                "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
-                                "cvd_part": entry_payload.get("cvd_part"),
-                                "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
-                            },
-                        )
-                            last_1m_wall_write = time.time()
-                        except Exception as e:
-                            log_exception(logger, "CSV_WRITE failed for 1m log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_1m})
-                except Exception as e:
-                    log_exception(logger, "Error in 1m polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FETCH_1M")
+                # 1m polling (skip in FAST_ONLY)
+                if cfg.entry_mode != "FAST_ONLY":
+                    try:
+                        candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=250)
+                        if candles_1m is not None and not candles_1m.empty and (time.time() - last_1m_wall_write >= 3):
+                            # Get trades and OI for decide_entry_1m
+                            trades_1m = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
+                            oi_1m = get_open_interest(cfg.category, cfg.symbol, limit=20)  # 1m needs shorter lookback
+                            funding_payload = get_funding_rate(cfg.category, cfg.symbol)
+                            funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
+                            funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
+
+                            entry_ok, entry_payload = decide_entry_1m(
+                                cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
+                            )
+                            # Update context_score with CVD if available
+                            context_score_with_cvd = entry_payload.get("context_score", context_score)
+                            ctx_parts = entry_payload.get("context_parts", ctx_parts)
+
+                            # Liquidation stats (shorts)
+                            liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30)
+                            liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60)
+                            entry_payload.update({
+                                "liq_short_count_30s": liq_short_count_30s,
+                                "liq_short_usd_30s": liq_short_usd_30s,
+                                "liq_short_count_1m": liq_short_count_1m,
+                                "liq_short_usd_1m": liq_short_usd_1m,
+                                "funding_rate": funding_rate,
+                                "funding_rate_ts_utc": funding_rate_ts_utc,
+                                "funding_rate_abs": funding_rate_abs,
+                            })
+
+                            try:
+                                append_csv(
+                                    log_1m,
+                                    {
+                                        "run_id": run_id,
+                                        "symbol": cfg.symbol,
+                                        "time_utc": str(candles_1m.iloc[-1]["ts"]),
+                                        "price": float(candles_1m.iloc[-1]["close"]),
+                                        "entry_ok": bool(entry_ok),
+                                        "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
+                                        "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
+                                        "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
+                                        "cvd_part": entry_payload.get("cvd_part"),
+                                        "funding_rate": funding_rate,
+                                        "funding_rate_ts_utc": funding_rate_ts_utc,
+                                        "funding_rate_abs": funding_rate_abs,
+                                        "liq_short_count_30s": liq_short_count_30s,
+                                        "liq_short_usd_30s": liq_short_usd_30s,
+                                        "liq_short_count_1m": liq_short_count_1m,
+                                        "liq_short_usd_1m": liq_short_usd_1m,
+                                        "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
+                                    },
+                                )
+                                last_1m_wall_write = time.time()
+                            except Exception as e:
+                                log_exception(logger, "CSV_WRITE failed for 1m log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_1m})
+                    except Exception as e:
+                        log_exception(logger, "Error in 1m polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FETCH_1M")
 
                 # fast polling inside ARMED
                 try:
                     trades_fast = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
                     oi_fast = get_open_interest(cfg.category, cfg.symbol, limit=20)  # Fast needs shorter lookback
+                    funding_payload = get_funding_rate(cfg.category, cfg.symbol)
+                    funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
+                    funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
                     ok_fast, payload_fast = decide_entry_fast(
                         cfg, trades_fast, oi_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                     )
                     # Update context_score with CVD if available
                     context_score_with_cvd = payload_fast.get("context_score", context_score)
                     ctx_parts = payload_fast.get("context_parts", ctx_parts)
+
+                    # Liquidation stats (shorts)
+                    liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30)
+                    liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60)
+                    payload_fast.update({
+                        "liq_short_count_30s": liq_short_count_30s,
+                        "liq_short_usd_30s": liq_short_usd_30s,
+                        "liq_short_count_1m": liq_short_count_1m,
+                        "liq_short_usd_1m": liq_short_usd_1m,
+                        "funding_rate": funding_rate,
+                        "funding_rate_ts_utc": funding_rate_ts_utc,
+                        "funding_rate_abs": funding_rate_abs,
+                    })
                     try:
                         append_csv(
                             log_fast,
@@ -240,6 +297,13 @@ def run_watch_for_symbol(
                                 "cvd_delta_ratio_30s": payload_fast.get("cvd_delta_ratio_30s"),
                                 "cvd_delta_ratio_1m": payload_fast.get("cvd_delta_ratio_1m"),
                                 "cvd_part": payload_fast.get("cvd_part"),
+                                "funding_rate": funding_rate,
+                                "funding_rate_ts_utc": funding_rate_ts_utc,
+                                "funding_rate_abs": funding_rate_abs,
+                                "liq_short_count_30s": liq_short_count_30s,
+                                "liq_short_usd_30s": liq_short_usd_30s,
+                                "liq_short_count_1m": liq_short_count_1m,
+                                "liq_short_usd_1m": liq_short_usd_1m,
                                 "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
                             },
                         )
@@ -304,6 +368,9 @@ def run_watch_for_symbol(
                         run_id=run_id,
                         symbol=cfg.symbol,
                     )
+                    summary["funding_rate"] = entry_payload.get("funding_rate")
+                    summary["funding_rate_ts_utc"] = entry_payload.get("funding_rate_ts_utc")
+                    summary["funding_rate_abs"] = entry_payload.get("funding_rate_abs")
                     log_info(logger, "OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME", extra={"outcome": summary.get("outcome"), "end_reason": summary.get("end_reason")})
                     try:
                         append_csv(log_summary, summary)

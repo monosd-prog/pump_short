@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass
+from typing import Optional
 
 from short_pump.logging_utils import get_logger, log_exception
 
@@ -35,6 +36,17 @@ def _get_float(name: str, default: float) -> float:
         return default
 
 
+def _get_optional_float(name: str, default: Optional[float]) -> Optional[float]:
+    v = os.getenv(name)
+    if v is None or v == "":
+        return default
+    try:
+        return float(v)
+    except Exception as e:
+        log_exception(logger, f"Failed to parse optional float env var {name}", step="CONFIG", extra={"value": v, "default": default})
+        return default
+
+
 def _get_str(name: str, default: str) -> str:
     v = os.getenv(name)
     return default if v is None else v
@@ -54,6 +66,9 @@ class Config:
     max_concurrent: int = 3
     cooldown_minutes: int = 45
 
+    # ===== Entry mode =====
+    entry_mode: str = "HYBRID"  # HYBRID or FAST_ONLY
+
     # ===== Pump filter (server) =====
     min_pump_pct: float = 8.0
     require_10m_window: bool = False
@@ -70,7 +85,8 @@ class Config:
     poll_seconds_fast: int = 15
 
     # ===== Entry thresholds =====
-    delta_ratio_30s_max: float = -0.12
+    delta_ratio_30s_min: Optional[float] = None
+    delta_ratio_30s_max: Optional[float] = -0.12
     delta_ratio_fast_late_max: float = -0.18
     delta_ratio_1m_max: float = -0.05
 
@@ -113,6 +129,7 @@ class Config:
         # server
         c.max_concurrent = _get_int("MAX_CONCURRENT", c.max_concurrent)
         c.cooldown_minutes = _get_int("COOLDOWN_MINUTES", c.cooldown_minutes)
+        c.entry_mode = _get_str("ENTRY_MODE", c.entry_mode).strip().upper()
 
         # pump filter
         c.min_pump_pct = _get_float("MIN_PUMP_PCT", c.min_pump_pct)
@@ -121,6 +138,10 @@ class Config:
         # cadence
         c.poll_seconds_1m = _get_int("POLL_SECONDS_1M", c.poll_seconds_1m)
         c.poll_seconds_fast = _get_int("POLL_SECONDS_FAST", c.poll_seconds_fast)
+
+        # entry thresholds
+        c.delta_ratio_30s_min = _get_optional_float("DELTA_RATIO_30S_MIN", c.delta_ratio_30s_min)
+        c.delta_ratio_30s_max = _get_optional_float("DELTA_RATIO_30S_MAX", c.delta_ratio_30s_max)
 
         # outcome
         c.outcome_watch_minutes = _get_int("OUTCOME_WATCH_MINUTES", c.outcome_watch_minutes)
