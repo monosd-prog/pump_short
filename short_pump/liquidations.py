@@ -5,7 +5,7 @@ import json
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict, Tuple
+from typing import Deque, Dict, Set, Tuple
 
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 
@@ -13,14 +13,21 @@ logger = get_logger(__name__)
 
 try:
     import websocket  # type: ignore
+    from websocket import WebSocketTimeoutException, WebSocketConnectionClosedException  # type: ignore
 except Exception:  # pragma: no cover - runtime optional
     websocket = None
+    WebSocketTimeoutException = Exception  # type: ignore
+    WebSocketConnectionClosedException = Exception  # type: ignore
 
 
 _lock = threading.Lock()
-_events: Dict[str, Deque[Tuple[float, float]]] = defaultdict(deque)
+_events_short: Dict[str, Deque[Tuple[float, float]]] = defaultdict(deque)
+_events_long: Dict[str, Deque[Tuple[float, float]]] = defaultdict(deque)
 _started = False
 _max_age_sec = 600.0  # keep up to 10 minutes
+_subscribed_symbols: Set[str] = set()
+_pending_symbols: Set[str] = set()
+_last_heartbeat = 0.0
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -38,31 +45,35 @@ def _endpoint_for_category(category: str) -> str:
     return "wss://stream.bybit.com/v5/public/linear"
 
 
-def _add_event(symbol: str, ts: float, usd: float) -> None:
+def _add_event(symbol: str, ts: float, usd: float, side: str) -> None:
     if not symbol or usd <= 0:
         return
     sym = _normalize_symbol(symbol)
     with _lock:
-        _events[sym].append((ts, usd))
+        if side == "short":
+            _events_short[sym].append((ts, usd))
+        elif side == "long":
+            _events_long[sym].append((ts, usd))
         _purge_locked(sym, now=ts)
 
 
 def _purge_locked(symbol: str, now: float) -> None:
-    q = _events.get(symbol)
-    if not q:
-        return
+    q_short = _events_short.get(symbol)
+    q_long = _events_long.get(symbol)
     cutoff = now - _max_age_sec
-    while q and q[0][0] < cutoff:
-        q.popleft()
+    while q_short and q_short[0][0] < cutoff:
+        q_short.popleft()
+    while q_long and q_long[0][0] < cutoff:
+        q_long.popleft()
 
 
-def get_liq_stats(symbol: str, window_seconds: int) -> Tuple[int, float]:
-    """Return (count, usd_sum) for short liquidations over window_seconds."""
+def get_liq_stats(symbol: str, window_seconds: int, side: str = "short") -> Tuple[int, float]:
+    """Return (count, usd_sum) for liquidations over window_seconds."""
     sym = _normalize_symbol(symbol)
     now = time.time()
     with _lock:
         _purge_locked(sym, now=now)
-        q = _events.get(sym)
+        q = _events_short.get(sym) if side == "short" else _events_long.get(sym)
         if not q:
             return 0, 0.0
         cutoff = now - float(window_seconds)
@@ -73,6 +84,16 @@ def get_liq_stats(symbol: str, window_seconds: int) -> Tuple[int, float]:
                 count += 1
                 usd_sum += usd
         return count, float(usd_sum)
+
+
+def register_symbol(symbol: str) -> None:
+    sym = _normalize_symbol(symbol)
+    if not sym:
+        return
+    with _lock:
+        if sym in _subscribed_symbols:
+            return
+        _pending_symbols.add(sym)
 
 
 def start_liquidation_listener(category: str) -> None:
@@ -89,16 +110,31 @@ def start_liquidation_listener(category: str) -> None:
     log_info(logger, "Starting liquidation listener", step="LIQ_WS", extra={"url": url})
 
     def _run() -> None:
+        global _last_heartbeat
         backoff = 1.0
         while True:
             try:
                 ws = websocket.WebSocket()
                 ws.connect(url, timeout=10)
-                sub_msg = {"op": "subscribe", "args": ["all-liquidation"]}
-                ws.send(json.dumps(sub_msg))
+                ws.settimeout(10)
+                log_info(logger, "WS connected", step="LIQ_WS", extra={"url": url})
 
                 backoff = 1.0
                 while True:
+                    # subscribe to new symbols
+                    args = []
+                    with _lock:
+                        if _pending_symbols:
+                            for sym in list(_pending_symbols):
+                                topic = f"allLiquidation.{sym}"
+                                args.append(topic)
+                                _subscribed_symbols.add(sym)
+                                _pending_symbols.remove(sym)
+                    if args:
+                        sub_msg = {"op": "subscribe", "args": args}
+                        ws.send(json.dumps(sub_msg))
+                        log_info(logger, "WS subscribed", step="LIQ_WS", extra={"url": url, "args": args})
+
                     raw = ws.recv()
                     if not raw:
                         continue
@@ -120,8 +156,8 @@ def start_liquidation_listener(category: str) -> None:
                             continue
                         symbol = item.get("symbol") or item.get("s")
                         side = (item.get("side") or item.get("S") or "").lower()
-                        # For Bybit, liquidation side "Buy" indicates short liquidation.
-                        if side != "buy":
+                        # For Bybit: Buy = liquidation of LONG, Sell = liquidation of SHORT
+                        if side not in ("buy", "sell"):
                             continue
 
                         price = item.get("price") or item.get("p")
@@ -142,8 +178,20 @@ def start_liquidation_listener(category: str) -> None:
                         else:
                             ts_f = time.time()
 
-                        _add_event(str(symbol), ts_f, usd)
+                        liq_side = "long" if side == "buy" else "short"
+                        _add_event(str(symbol), ts_f, usd, liq_side)
 
+            except (WebSocketTimeoutException, TimeoutError):
+                now = time.time()
+                if now - _last_heartbeat >= 60:
+                    log_info(logger, "WS heartbeat (timeout)", step="LIQ_WS", extra={"url": url})
+                    _last_heartbeat = now
+                continue
+            except WebSocketConnectionClosedException:
+                log_exception(logger, "WS disconnected; reconnecting", step="LIQ_WS")
+                time.sleep(backoff)
+                backoff = min(backoff * 2.0, 30.0)
+                continue
             except Exception:
                 log_exception(logger, "Liquidation listener error; reconnecting", step="LIQ_WS")
                 time.sleep(backoff)

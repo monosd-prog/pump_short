@@ -24,7 +24,7 @@ from short_pump.context5m import (
 from short_pump.entry import decide_entry_fast, decide_entry_1m
 from short_pump.features import normalize_funding, oi_change_pct
 from short_pump.io_csv import append_csv
-from short_pump.liquidations import get_liq_stats
+from short_pump.liquidations import get_liq_stats, register_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
@@ -55,6 +55,7 @@ def run_watch_for_symbol(
         step="WATCH_START",
         extra={"meta": meta, "entry_mode": cfg.entry_mode},
     )
+    register_symbol(cfg.symbol)
 
     log_5m = f"logs/{run_id}_{cfg.symbol}_5m.csv"
     log_1m = f"logs/{run_id}_{cfg.symbol}_1m.csv"
@@ -217,14 +218,20 @@ def run_watch_for_symbol(
                             context_score_with_cvd = entry_payload.get("context_score", context_score)
                             ctx_parts = entry_payload.get("context_parts", ctx_parts)
 
-                            # Liquidation stats (shorts)
-                            liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30)
-                            liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60)
+                            # Liquidation stats
+                            liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30, side="short")
+                            liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60, side="short")
+                            liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, 30, side="long")
+                            liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, 60, side="long")
                             entry_payload.update({
                                 "liq_short_count_30s": liq_short_count_30s,
                                 "liq_short_usd_30s": liq_short_usd_30s,
                                 "liq_short_count_1m": liq_short_count_1m,
                                 "liq_short_usd_1m": liq_short_usd_1m,
+                                "liq_long_count_30s": liq_long_count_30s,
+                                "liq_long_usd_30s": liq_long_usd_30s,
+                                "liq_long_count_1m": liq_long_count_1m,
+                                "liq_long_usd_1m": liq_long_usd_1m,
                                 "funding_rate": funding_rate,
                                 "funding_rate_ts_utc": funding_rate_ts_utc,
                                 "funding_rate_abs": funding_rate_abs,
@@ -250,6 +257,10 @@ def run_watch_for_symbol(
                                         "liq_short_usd_30s": liq_short_usd_30s,
                                         "liq_short_count_1m": liq_short_count_1m,
                                         "liq_short_usd_1m": liq_short_usd_1m,
+                                        "liq_long_count_30s": liq_long_count_30s,
+                                        "liq_long_usd_30s": liq_long_usd_30s,
+                                        "liq_long_count_1m": liq_long_count_1m,
+                                        "liq_long_usd_1m": liq_long_usd_1m,
                                         "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
                                     },
                                 )
@@ -273,14 +284,20 @@ def run_watch_for_symbol(
                     context_score_with_cvd = payload_fast.get("context_score", context_score)
                     ctx_parts = payload_fast.get("context_parts", ctx_parts)
 
-                    # Liquidation stats (shorts)
-                    liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30)
-                    liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60)
+                    # Liquidation stats
+                    liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30, side="short")
+                    liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60, side="short")
+                    liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, 30, side="long")
+                    liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, 60, side="long")
                     payload_fast.update({
                         "liq_short_count_30s": liq_short_count_30s,
                         "liq_short_usd_30s": liq_short_usd_30s,
                         "liq_short_count_1m": liq_short_count_1m,
                         "liq_short_usd_1m": liq_short_usd_1m,
+                        "liq_long_count_30s": liq_long_count_30s,
+                        "liq_long_usd_30s": liq_long_usd_30s,
+                        "liq_long_count_1m": liq_long_count_1m,
+                        "liq_long_usd_1m": liq_long_usd_1m,
                         "funding_rate": funding_rate,
                         "funding_rate_ts_utc": funding_rate_ts_utc,
                         "funding_rate_abs": funding_rate_abs,
@@ -304,6 +321,10 @@ def run_watch_for_symbol(
                                 "liq_short_usd_30s": liq_short_usd_30s,
                                 "liq_short_count_1m": liq_short_count_1m,
                                 "liq_short_usd_1m": liq_short_usd_1m,
+                                "liq_long_count_30s": liq_long_count_30s,
+                                "liq_long_usd_30s": liq_long_usd_30s,
+                                "liq_long_count_1m": liq_long_count_1m,
+                                "liq_long_usd_1m": liq_long_usd_1m,
                                 "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
                             },
                         )
