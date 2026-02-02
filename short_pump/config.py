@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
-from short_pump.logging_utils import get_logger, log_exception
+from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 
 logger = get_logger(__name__)
 
@@ -48,7 +48,7 @@ def _get_optional_float(name: str, default: Optional[float]) -> Optional[float]:
 
 
 def _get_str(name: str, default: str) -> str:
-    v = os.getenv(name)
+    v = os.environ.get(name)
     return default if v is None else v
 
 
@@ -129,7 +129,28 @@ class Config:
         # server
         c.max_concurrent = _get_int("MAX_CONCURRENT", c.max_concurrent)
         c.cooldown_minutes = _get_int("COOLDOWN_MINUTES", c.cooldown_minutes)
-        c.entry_mode = _get_str("ENTRY_MODE", c.entry_mode).strip().upper()
+        raw_entry_mode = os.environ.get("ENTRY_MODE")
+        get_str_entry_mode = _get_str("ENTRY_MODE", c.entry_mode)
+        normalized_entry_mode = get_str_entry_mode.strip().upper()
+        if normalized_entry_mode not in ("FAST_ONLY", "HYBRID"):
+            log_warning(
+                logger,
+                "Invalid ENTRY_MODE, falling back to HYBRID",
+                step="CONFIG",
+                extra={"raw_env_entry_mode": raw_entry_mode, "get_str_entry_mode": get_str_entry_mode},
+            )
+            normalized_entry_mode = "HYBRID"
+        c.entry_mode = normalized_entry_mode
+        log_info(
+            logger,
+            "ENTRY_MODE resolved",
+            step="CONFIG",
+            extra={
+                "raw_env_entry_mode": raw_entry_mode,
+                "get_str_entry_mode": get_str_entry_mode,
+                "final_entry_mode": c.entry_mode,
+            },
+        )
 
         # pump filter
         c.min_pump_pct = _get_float("MIN_PUMP_PCT", c.min_pump_pct)
