@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -164,11 +165,13 @@ class Runtime:
 
             async def runner():
                 try:
+                    cfg_copy = copy.deepcopy(self.cfg)
                     result = await asyncio.to_thread(
                         run_watch_for_symbol,
                         symbol,
                         run_id,
                         job.meta,
+                        cfg_copy,
                     )
                     self.done_recent[run_id] = {
                         "run_id": run_id,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -42,7 +43,7 @@ def run_watch_for_symbol(
     meta: Optional[Dict[str, Any]] = None,
     cfg: Optional[Config] = None,
 ) -> Dict[str, Any]:
-    cfg = cfg or Config()
+    cfg = cfg or Config.from_env()
     cfg.symbol = symbol.strip().upper()
     meta = meta or {}
     run_id = run_id or time.strftime("%Y%m%d_%H%M%S")
@@ -58,6 +59,8 @@ def run_watch_for_symbol(
             "entry_mode": cfg.entry_mode,
             "entry_1m_enabled": cfg.entry_mode != "FAST_ONLY",
             "entry_fast_enabled": True,
+            "env_entry_mode": os.environ.get("ENTRY_MODE"),
+            "cfg_id": id(cfg),
         },
     )
     register_symbol(cfg.symbol)
