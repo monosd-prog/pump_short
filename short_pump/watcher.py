@@ -53,7 +53,12 @@ def run_watch_for_symbol(
         symbol=cfg.symbol,
         run_id=run_id,
         step="WATCH_START",
-        extra={"meta": meta, "entry_mode": cfg.entry_mode},
+        extra={
+            "meta": meta,
+            "entry_mode": cfg.entry_mode,
+            "entry_1m_enabled": cfg.entry_mode != "FAST_ONLY",
+            "entry_fast_enabled": True,
+        },
     )
     register_symbol(cfg.symbol)
 
@@ -331,8 +336,19 @@ def run_watch_for_symbol(
                     except Exception as e:
                         log_exception(logger, "CSV_WRITE failed for fast log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_fast})
                     if ok_fast:
-                        entry_ok = True
-                        entry_payload = payload_fast
+                        if cfg.entry_mode == "FAST_ONLY" and payload_fast.get("entry_source") != "fast":
+                            log_warning(
+                                logger,
+                                "FAST_ONLY: non-fast entry suppressed",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="FAST",
+                                extra={"entry_source": payload_fast.get("entry_source")},
+                            )
+                        else:
+                            entry_ok = True
+                            entry_payload = payload_fast
                 except Exception as e:
                     log_exception(logger, "Error in fast polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FAST")
 
@@ -341,6 +357,19 @@ def run_watch_for_symbol(
             # =====================
             if entry_ok:
                 entry_type = entry_payload.get("entry_type", "UNKNOWN")
+                if cfg.entry_mode == "FAST_ONLY" and entry_type != "FAST":
+                    log_warning(
+                        logger,
+                        "FAST_ONLY: ENTRY_OK suppressed due to non-FAST entry_type",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="ENTRY_DECISION",
+                        extra={"entry_type": entry_type, "entry_source": entry_payload.get("entry_source")},
+                    )
+                    entry_ok = False
+                    entry_payload = {}
+                    continue
                 log_info(logger, "ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ENTRY_DECISION", extra={"entry_type": entry_type, "entry_payload": entry_payload})
                 try:
                     send_telegram(
