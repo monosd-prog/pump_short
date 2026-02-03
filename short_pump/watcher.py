@@ -156,7 +156,6 @@ def run_watch_for_symbol(
 
                 # write 5m log ~ once per 5m candle
                 if time.time() - last_5m_wall_write >= 5:
-                    try:
                     append_csv(
                         log_5m,
                         {
@@ -167,13 +166,13 @@ def run_watch_for_symbol(
                             "price": dbg5["price"],
                             "peak_price": dbg5["peak_price"],
                             "dist_to_peak_pct": dbg5["dist_to_peak_pct"],
-                                "oi_change_5m_pct": dbg5.get("oi_change_5m_pct"),
-                                "oi_divergence_5m": dbg5.get("oi_divergence_5m"),
+                            "oi_change_5m_pct": dbg5.get("oi_change_5m_pct"),
+                            "oi_divergence_5m": dbg5.get("oi_divergence_5m"),
                             "vol_z": dbg5.get("vol_z"),
                             "atr_14_5m_pct": dbg5.get("atr_14_5m_pct"),
-                                "funding_rate": funding_rate,
-                                "funding_rate_ts_utc": funding_rate_ts_utc,
-                                "funding_rate_abs": funding_rate_abs,
+                            "funding_rate": funding_rate,
+                            "funding_rate_ts_utc": funding_rate_ts_utc,
+                            "funding_rate_abs": funding_rate_abs,
                             "context_score": context_score,
                             "wall_time_utc": _utc_now_str(),
                             "candle_lag_sec": lag_sec,
@@ -181,8 +180,6 @@ def run_watch_for_symbol(
                         },
                     )
                     last_5m_wall_write = time.time()
-                    except Exception as e:
-                        log_exception(logger, "CSV_WRITE failed for 5m log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_5m})
 
             except Exception as e:
                 log_exception(logger, "Error in 5m context loop", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FETCH_5M")
