@@ -181,12 +181,12 @@ def start_liquidation_listener(category: str) -> None:
                         log_info(
                             logger,
                             "LIQ_WS_RAW",
+                            symbol=_last_symbol,
                             step="LIQ_WS",
                             extra={
                                 "conn_id": conn_id,
                                 "msg_idx": msg_idx,
                                 "len": len(raw_text),
-                                "symbol": _last_symbol,
                                 "raw": raw_text[:500],
                             },
                         )
