@@ -130,4 +130,8 @@ def _write_event(
         "context_score": context_score,
         "context_parts": json.dumps(parts, ensure_ascii=False),
     }
-    write_event_row(row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=row["wall_time_utc"])
+    # DEBUG: touch dataset dir
+    try:
+        write_event_row(row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=row["wall_time_utc"])
+    except Exception as e:
+        raise RuntimeError(f"write_event_row failed: {e}") from e

@@ -84,6 +84,12 @@ def run_watch_for_symbol(
                         ctx_parts=ctx_parts,
                         mode=mode,
                     )
+                    logger.info(
+                        "LONG_ENTRY_CHECK | symbol=%s | entry_ok=%s | payload_keys=%s",
+                        symbol,
+                        entry_ok,
+                        list(entry_payload.keys()) if isinstance(entry_payload, dict) else type(entry_payload),
+                    )
 
                     try:
                         append_csv(
