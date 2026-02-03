@@ -121,6 +121,7 @@ def _write_event(
         "wall_time_utc": wall_time_utc(),
         "strategy": cfg.strategy_name,
         "mode": mode,
+        "side": "LONG",
         "stage": "",
         "feature_schema_version": cfg.feature_schema_version,
         "code_version": code_version(),
@@ -129,9 +130,13 @@ def _write_event(
         "entry_payload": json.dumps(payload, ensure_ascii=False),
         "context_score": context_score,
         "context_parts": json.dumps(parts, ensure_ascii=False),
+        "time_utc": payload.get("time_utc", ""),
+        "price": payload.get("price", ""),
+        "cvd_delta_ratio_30s": payload.get("cvd_delta_ratio_30s", ""),
+        "cvd_delta_ratio_1m": payload.get("cvd_delta_ratio_1m", ""),
+        "oi_change_1m_pct": payload.get("oi_change_1m_pct", ""),
     }
-    # DEBUG: touch dataset dir
     try:
-        write_event_row(row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=row["wall_time_utc"])
+        write_event_row(row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=row["wall_time_utc"], schema_version=2)
     except Exception as e:
         raise RuntimeError(f"write_event_row failed: {e}") from e

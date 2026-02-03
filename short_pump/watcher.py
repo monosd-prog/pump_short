@@ -29,12 +29,124 @@ from short_pump.liquidations import get_liq_health, get_liq_stats, register_symb
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
+from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
+from common.runtime import wall_time_utc
 
 logger = get_logger(__name__)
 
 
 def _utc_now_str() -> str:
     return pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M:%S%z")
+
+
+def _ds_event(
+    *,
+    run_id: str,
+    symbol: str,
+    event_id: str,
+    stage: int,
+    entry_ok: bool,
+    skip_reasons: str,
+    context_score: float | None,
+    payload: Dict[str, Any] | None,
+    extra: Dict[str, Any] | None = None,
+) -> None:
+    row = {
+        "run_id": run_id,
+        "event_id": event_id,
+        "symbol": symbol,
+        "strategy": "short_pump",
+        "mode": "live",
+        "side": "SHORT",
+        "wall_time_utc": wall_time_utc(),
+        "time_utc": (payload or {}).get("time_utc", ""),
+        "stage": stage,
+        "entry_ok": int(bool(entry_ok)),
+        "skip_reasons": skip_reasons,
+        "context_score": context_score if context_score is not None else "",
+        "price": (payload or {}).get("price", ""),
+        "dist_to_peak_pct": (payload or {}).get("dist_to_peak_pct", ""),
+        "cvd_delta_ratio_30s": (payload or {}).get("cvd_delta_ratio_30s", ""),
+        "cvd_delta_ratio_1m": (payload or {}).get("cvd_delta_ratio_1m", ""),
+        "oi_change_5m_pct": (extra or {}).get("oi_change_5m_pct", ""),
+        "oi_change_1m_pct": (payload or {}).get("oi_change_1m_pct", ""),
+        "oi_change_fast_pct": (payload or {}).get("oi_change_fast_pct", ""),
+        "funding_rate": (payload or {}).get("funding_rate", ""),
+        "funding_rate_abs": (payload or {}).get("funding_rate_abs", ""),
+        "liq_short_count_30s": (payload or {}).get("liq_short_count_30s", ""),
+        "liq_short_usd_30s": (payload or {}).get("liq_short_usd_30s", ""),
+        "liq_long_count_30s": (payload or {}).get("liq_long_count_30s", ""),
+        "liq_long_usd_30s": (payload or {}).get("liq_long_usd_30s", ""),
+        "payload_json": json.dumps(payload or {}, ensure_ascii=False),
+    }
+    if extra:
+        row.update(extra)
+    try:
+        write_event_row(row, strategy="short_pump", mode="live", wall_time_utc=row["wall_time_utc"], schema_version=2)
+    except Exception as e:
+        log_exception(logger, "SHORT_DATASET_WRITE_ERROR | event", symbol=symbol, run_id=run_id, step="DATASET", extra={"event_id": event_id, "error": str(e)})
+
+
+def _ds_trade(
+    *,
+    run_id: str,
+    symbol: str,
+    trade_id: str,
+    event_id: str,
+    entry_time_utc: str,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    trade_type: str,
+) -> None:
+    row = {
+        "trade_id": trade_id,
+        "event_id": event_id,
+        "run_id": run_id,
+        "symbol": symbol,
+        "strategy": "short_pump",
+        "mode": "live",
+        "side": "SHORT",
+        "entry_time_utc": entry_time_utc,
+        "entry_price": entry_price,
+        "tp_price": tp_price,
+        "sl_price": sl_price,
+        "trade_type": trade_type,
+    }
+    try:
+        write_trade_row(row, strategy="short_pump", mode="live", wall_time_utc=entry_time_utc, schema_version=2)
+    except Exception as e:
+        log_exception(logger, "SHORT_DATASET_WRITE_ERROR | trade", symbol=symbol, run_id=run_id, step="DATASET", extra={"trade_id": trade_id, "error": str(e)})
+
+
+def _ds_outcome(
+    *,
+    run_id: str,
+    symbol: str,
+    trade_id: str,
+    event_id: str,
+    outcome_time_utc: str,
+    outcome: str,
+    pnl_pct: float,
+    details_json: str,
+) -> None:
+    row = {
+        "trade_id": trade_id,
+        "event_id": event_id,
+        "run_id": run_id,
+        "symbol": symbol,
+        "strategy": "short_pump",
+        "mode": "live",
+        "side": "SHORT",
+        "outcome_time_utc": outcome_time_utc,
+        "outcome": outcome,
+        "pnl_pct": pnl_pct,
+        "details_json": details_json,
+    }
+    try:
+        write_outcome_row(row, strategy="short_pump", mode="live", wall_time_utc=outcome_time_utc, schema_version=2)
+    except Exception as e:
+        log_exception(logger, "SHORT_DATASET_WRITE_ERROR | outcome", symbol=symbol, run_id=run_id, step="DATASET", extra={"trade_id": trade_id, "error": str(e)})
 
 
 def run_watch_for_symbol(
@@ -72,6 +184,17 @@ def run_watch_for_symbol(
     log_summary = f"logs/{run_id}_{cfg.symbol}_summary.csv"
 
     st = StructureState()
+    _ds_event(
+        run_id=run_id,
+        symbol=cfg.symbol,
+        event_id=f"{run_id}_watch_start",
+        stage=st.stage,
+        entry_ok=False,
+        skip_reasons="watch_start",
+        context_score=None,
+        payload={"time_utc": meta.get("pump_ts", ""), "price": ""},
+        extra=None,
+    )
     start_ts = pd.Timestamp.now(tz="UTC")
     end_ts = start_ts + pd.Timedelta(minutes=cfg.watch_minutes)
 
@@ -212,6 +335,21 @@ def run_watch_for_symbol(
                 if not st.armed_notified:
                     st.armed_notified = True
                     log_info(logger, "ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ARMED", extra={"context_score": context_score, "dist_to_peak_pct": dbg5.get('dist_to_peak_pct')})
+                    _ds_event(
+                        run_id=run_id,
+                        symbol=cfg.symbol,
+                        event_id=f"{run_id}_armed",
+                        stage=st.stage,
+                        entry_ok=True,
+                        skip_reasons="armed",
+                        context_score=context_score,
+                        payload={
+                            "time_utc": dbg5.get("time_utc"),
+                            "price": dbg5.get("price"),
+                            "dist_to_peak_pct": dbg5.get("dist_to_peak_pct"),
+                        },
+                        extra={"oi_change_5m_pct": dbg5.get("oi_change_5m_pct")},
+                    )
                     send_telegram(
                         f"ARMED: {cfg.symbol}\n"
                         f"run_id={run_id}\n"
@@ -462,11 +600,34 @@ def run_watch_for_symbol(
                         "trade_type": "PAPER" if os.getenv("PAPER_MODE", "1") == "1" else "LIVE",
                     }
                 )
+                event_id = entry_payload.get("event_id") or f"{run_id}_entry_{entry_source}"
+                trade_id = f"{event_id}_trade"
+                _ds_event(
+                    run_id=run_id,
+                    symbol=cfg.symbol,
+                    event_id=str(event_id),
+                    stage=st.stage,
+                    entry_ok=True,
+                    skip_reasons=f"entry_ok_{entry_source}",
+                    context_score=entry_payload.get("context_score", context_score),
+                    payload=entry_payload,
+                    extra=None,
+                )
+                _ds_trade(
+                    run_id=run_id,
+                    symbol=cfg.symbol,
+                    trade_id=str(trade_id),
+                    event_id=str(event_id),
+                    entry_time_utc=entry_ts_utc.isoformat(),
+                    entry_price=entry_price,
+                    tp_price=tp_price,
+                    sl_price=sl_price,
+                    trade_type=entry_payload.get("trade_type", ""),
+                )
 
                 try:
                     entry_source = entry_payload.get("entry_source", "unknown")
                     mode = "FAST" if entry_source == "fast" else "ARMED"
-                    event_id = entry_payload.get("event_id") or run_id
                     context_score_msg = entry_payload.get("context_score", context_score)
                     send_telegram(
                         f"ENTRY OK ({entry_type}): {cfg.symbol}\n"
@@ -500,6 +661,16 @@ def run_watch_for_symbol(
                     summary["funding_rate_ts_utc"] = entry_payload.get("funding_rate_ts_utc")
                     summary["funding_rate_abs"] = entry_payload.get("funding_rate_abs")
                     log_info(logger, "OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME", extra={"outcome": summary.get("outcome"), "end_reason": summary.get("end_reason")})
+                    _ds_outcome(
+                        run_id=run_id,
+                        symbol=cfg.symbol,
+                        trade_id=str(trade_id),
+                        event_id=str(event_id),
+                        outcome_time_utc=summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc(),
+                        outcome=summary.get("outcome") or summary.get("end_reason") or "UNKNOWN",
+                        pnl_pct=summary.get("pnl_pct") or 0.0,
+                        details_json=summary.get("details_payload") or "",
+                    )
                     try:
                         append_csv(log_summary, summary)
                     except Exception as e:

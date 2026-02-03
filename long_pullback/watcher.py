@@ -67,14 +67,16 @@ def run_watch_for_symbol(
                         "wall_time_utc": wall_time_utc(),
                         "strategy": cfg.strategy_name,
                         "mode": mode,
+                        "side": "LONG",
                         "stage": st.stage,
                         "context_score": context_score,
                         "context_parts": json.dumps(ctx_parts, ensure_ascii=False),
                         "entry_ok": False,
                         "skip_reasons": "stage_lt_2" if st.stage < 2 else "",
                         "entry_payload": "",
+                        "time_utc": str(last_ts),
                     }
-                    write_event_row(event_row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=event_row["wall_time_utc"])
+                    write_event_row(event_row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=event_row["wall_time_utc"], schema_version=2)
 
                 # log 5m
                 try:
