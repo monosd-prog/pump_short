@@ -194,84 +194,79 @@ def run_watch_for_symbol(
                 if not st.armed_notified:
                     st.armed_notified = True
                     log_info(logger, "ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ARMED", extra={"context_score": context_score, "dist_to_peak_pct": dbg5.get('dist_to_peak_pct')})
-                    try:
                     send_telegram(
-                            f"ARMED: {cfg.symbol}\n"
+                        f"ARMED: {cfg.symbol}\n"
                         f"run_id={run_id}\n"
                         f"stage={st.stage}\n"
                         f"context_score={context_score:.2f}\n"
-                            f"dist_to_peak={dbg5.get('dist_to_peak_pct'):.2f}%",
-                            strategy="short_pump",
-                            side="SHORT",
-                            mode="ARMED",
-                            event_id=run_id,
-                            context_score=context_score,
-                            entry_ok=True,
-                            skip_reasons=None,
-                        )
-                    except Exception as e:
-                        log_exception(logger, "TELEGRAM_SEND failed for ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
+                        f"dist_to_peak={dbg5.get('dist_to_peak_pct'):.2f}%",
+                        strategy="short_pump",
+                        side="SHORT",
+                        mode="ARMED",
+                        event_id=run_id,
+                        context_score=context_score,
+                        entry_ok=True,
+                        skip_reasons=None,
+                    )
 
                 # 1m polling (skip in FAST_ONLY)
                 if cfg.entry_mode != "FAST_ONLY":
-                try:
                     candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=250)
-                        if candles_1m is not None and not candles_1m.empty and (time.time() - last_1m_wall_write >= 3):
-                            # Get trades and OI for decide_entry_1m
+                    if candles_1m is not None and not candles_1m.empty and (time.time() - last_1m_wall_write >= 3):
+                        # Get trades and OI for decide_entry_1m
                         trades_1m = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
-                            oi_1m = get_open_interest(cfg.category, cfg.symbol, limit=20)  # 1m needs shorter lookback
-                            funding_payload = get_funding_rate(cfg.category, cfg.symbol)
-                            funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
-                            funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
+                        oi_1m = get_open_interest(cfg.category, cfg.symbol, limit=20)  # 1m needs shorter lookback
+                        funding_payload = get_funding_rate(cfg.category, cfg.symbol)
+                        funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
+                        funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
 
                         entry_ok, entry_payload = decide_entry_1m(
-                                cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
+                            cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
+                        )
+                        # Update context_score with CVD if available
+                        context_score_with_cvd = entry_payload.get("context_score", context_score)
+                        ctx_parts = entry_payload.get("context_parts", ctx_parts)
+
+                        # Liquidation stats
+                        now_ts = time.time()
+                        liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")
+                        liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
+                        liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
+                        liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                        if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
+                            run_watch_for_symbol._liq_sample_warned = set()
+                        if run_id not in run_watch_for_symbol._liq_sample_warned:
+                            health = get_liq_health()
+                            log_info(
+                                logger,
+                                "LIQ_STATS_SAMPLE",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="LIQ_STATS",
+                                extra={
+                                    "liq_short_count_30s": liq_short_count_30s,
+                                    "liq_short_usd_30s": liq_short_usd_30s,
+                                    "liq_long_count_30s": liq_long_count_30s,
+                                    "liq_long_usd_30s": liq_long_usd_30s,
+                                    **health,
+                                },
                             )
-                            # Update context_score with CVD if available
-                            context_score_with_cvd = entry_payload.get("context_score", context_score)
-                            ctx_parts = entry_payload.get("context_parts", ctx_parts)
+                            run_watch_for_symbol._liq_sample_warned.add(run_id)
+                        entry_payload.update({
+                            "liq_short_count_30s": liq_short_count_30s,
+                            "liq_short_usd_30s": liq_short_usd_30s,
+                            "liq_short_count_1m": liq_short_count_1m,
+                            "liq_short_usd_1m": liq_short_usd_1m,
+                            "liq_long_count_30s": liq_long_count_30s,
+                            "liq_long_usd_30s": liq_long_usd_30s,
+                            "liq_long_count_1m": liq_long_count_1m,
+                            "liq_long_usd_1m": liq_long_usd_1m,
+                            "funding_rate": funding_rate,
+                            "funding_rate_ts_utc": funding_rate_ts_utc,
+                            "funding_rate_abs": funding_rate_abs,
+                        })
 
-                            # Liquidation stats
-                            now_ts = time.time()
-                            liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")
-                            liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
-                            liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
-                            liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
-                            if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
-                                run_watch_for_symbol._liq_sample_warned = set()
-                            if run_id not in run_watch_for_symbol._liq_sample_warned:
-                                health = get_liq_health()
-                                log_info(
-                                    logger,
-                                    "LIQ_STATS_SAMPLE",
-                                    symbol=cfg.symbol,
-                                    run_id=run_id,
-                                    stage=st.stage,
-                                    step="LIQ_STATS",
-                                    extra={
-                                        "liq_short_count_30s": liq_short_count_30s,
-                                        "liq_short_usd_30s": liq_short_usd_30s,
-                                        "liq_long_count_30s": liq_long_count_30s,
-                                        "liq_long_usd_30s": liq_long_usd_30s,
-                                        **health,
-                                    },
-                                )
-                                run_watch_for_symbol._liq_sample_warned.add(run_id)
-                            entry_payload.update({
-                                "liq_short_count_30s": liq_short_count_30s,
-                                "liq_short_usd_30s": liq_short_usd_30s,
-                                "liq_short_count_1m": liq_short_count_1m,
-                                "liq_short_usd_1m": liq_short_usd_1m,
-                                "liq_long_count_30s": liq_long_count_30s,
-                                "liq_long_usd_30s": liq_long_usd_30s,
-                                "liq_long_count_1m": liq_long_count_1m,
-                                "liq_long_usd_1m": liq_long_usd_1m,
-                                "funding_rate": funding_rate,
-                                "funding_rate_ts_utc": funding_rate_ts_utc,
-                                "funding_rate_abs": funding_rate_abs,
-                            })
-
-                            try:
                         append_csv(
                             log_1m,
                             {
@@ -280,29 +275,25 @@ def run_watch_for_symbol(
                                 "time_utc": str(candles_1m.iloc[-1]["ts"]),
                                 "price": float(candles_1m.iloc[-1]["close"]),
                                 "entry_ok": bool(entry_ok),
-                                        "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
-                                        "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
-                                        "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
-                                        "cvd_part": entry_payload.get("cvd_part"),
-                                        "funding_rate": funding_rate,
-                                        "funding_rate_ts_utc": funding_rate_ts_utc,
-                                        "funding_rate_abs": funding_rate_abs,
-                                        "liq_short_count_30s": liq_short_count_30s,
-                                        "liq_short_usd_30s": liq_short_usd_30s,
-                                        "liq_short_count_1m": liq_short_count_1m,
-                                        "liq_short_usd_1m": liq_short_usd_1m,
-                                        "liq_long_count_30s": liq_long_count_30s,
-                                        "liq_long_usd_30s": liq_long_usd_30s,
-                                        "liq_long_count_1m": liq_long_count_1m,
-                                        "liq_long_usd_1m": liq_long_usd_1m,
+                                "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
+                                "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
+                                "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
+                                "cvd_part": entry_payload.get("cvd_part"),
+                                "funding_rate": funding_rate,
+                                "funding_rate_ts_utc": funding_rate_ts_utc,
+                                "funding_rate_abs": funding_rate_abs,
+                                "liq_short_count_30s": liq_short_count_30s,
+                                "liq_short_usd_30s": liq_short_usd_30s,
+                                "liq_short_count_1m": liq_short_count_1m,
+                                "liq_short_usd_1m": liq_short_usd_1m,
+                                "liq_long_count_30s": liq_long_count_30s,
+                                "liq_long_usd_30s": liq_long_usd_30s,
+                                "liq_long_count_1m": liq_long_count_1m,
+                                "liq_long_usd_1m": liq_long_usd_1m,
                                 "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
                             },
                         )
                         last_1m_wall_write = time.time()
-                except Exception as e:
-                                log_exception(logger, "CSV_WRITE failed for 1m log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_1m})
-                    except Exception as e:
-                        log_exception(logger, "Error in 1m polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FETCH_1M")
 
                 # fast polling inside ARMED
                 try:
@@ -357,7 +348,6 @@ def run_watch_for_symbol(
                         "funding_rate_ts_utc": funding_rate_ts_utc,
                         "funding_rate_abs": funding_rate_abs,
                     })
-                    try:
                     append_csv(
                         log_fast,
                         {
@@ -365,26 +355,24 @@ def run_watch_for_symbol(
                             "symbol": cfg.symbol,
                             "wall_time_utc": _utc_now_str(),
                             "entry_ok": bool(ok_fast),
-                                "oi_change_fast_pct": payload_fast.get("oi_change_fast_pct"),
-                                "cvd_delta_ratio_30s": payload_fast.get("cvd_delta_ratio_30s"),
-                                "cvd_delta_ratio_1m": payload_fast.get("cvd_delta_ratio_1m"),
-                                "cvd_part": payload_fast.get("cvd_part"),
-                                "funding_rate": funding_rate,
-                                "funding_rate_ts_utc": funding_rate_ts_utc,
-                                "funding_rate_abs": funding_rate_abs,
-                                "liq_short_count_30s": liq_short_count_30s,
-                                "liq_short_usd_30s": liq_short_usd_30s,
-                                "liq_short_count_1m": liq_short_count_1m,
-                                "liq_short_usd_1m": liq_short_usd_1m,
-                                "liq_long_count_30s": liq_long_count_30s,
-                                "liq_long_usd_30s": liq_long_usd_30s,
-                                "liq_long_count_1m": liq_long_count_1m,
-                                "liq_long_usd_1m": liq_long_usd_1m,
+                            "oi_change_fast_pct": payload_fast.get("oi_change_fast_pct"),
+                            "cvd_delta_ratio_30s": payload_fast.get("cvd_delta_ratio_30s"),
+                            "cvd_delta_ratio_1m": payload_fast.get("cvd_delta_ratio_1m"),
+                            "cvd_part": payload_fast.get("cvd_part"),
+                            "funding_rate": funding_rate,
+                            "funding_rate_ts_utc": funding_rate_ts_utc,
+                            "funding_rate_abs": funding_rate_abs,
+                            "liq_short_count_30s": liq_short_count_30s,
+                            "liq_short_usd_30s": liq_short_usd_30s,
+                            "liq_short_count_1m": liq_short_count_1m,
+                            "liq_short_usd_1m": liq_short_usd_1m,
+                            "liq_long_count_30s": liq_long_count_30s,
+                            "liq_long_usd_30s": liq_long_usd_30s,
+                            "liq_long_count_1m": liq_long_count_1m,
+                            "liq_long_usd_1m": liq_long_usd_1m,
                             "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
                         },
                     )
-                    except Exception as e:
-                        log_exception(logger, "CSV_WRITE failed for fast log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_fast})
                     if ok_fast:
                         if cfg.entry_mode == "FAST_ONLY" and payload_fast.get("entry_source") != "fast":
                             log_warning(
@@ -397,8 +385,8 @@ def run_watch_for_symbol(
                                 extra={"entry_source": payload_fast.get("entry_source")},
                             )
                         else:
-                        entry_ok = True
-                        entry_payload = payload_fast
+                            entry_ok = True
+                            entry_payload = payload_fast
                 except Exception as e:
                     log_exception(logger, "Error in fast polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FAST")
 
@@ -411,8 +399,8 @@ def run_watch_for_symbol(
                     log_warning(
                         logger,
                         "FAST_ONLY: ENTRY_OK suppressed due to non-FAST entry_type",
-                    symbol=cfg.symbol,
-                    run_id=run_id,
+                        symbol=cfg.symbol,
+                        run_id=run_id,
                         stage=st.stage,
                         step="ENTRY_DECISION",
                         extra={"entry_type": entry_type, "entry_source": entry_payload.get("entry_source")},
@@ -519,7 +507,7 @@ def run_watch_for_symbol(
                         except Exception as e:
                             log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
-                return summary
+                    return summary
                 except Exception as e:
                     log_exception(logger, "Error in track_outcome_short", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME")
                     raise
@@ -533,10 +521,7 @@ def run_watch_for_symbol(
             "end_reason": f"TIMEOUT_STAGE_{st.stage}",
         }
         log_info(logger, "TIMEOUT", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TIMEOUT")
-        try:
         append_csv(log_summary, summary)
-        except Exception as e:
-            log_exception(logger, "CSV_WRITE failed for timeout summary", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_summary})
         return summary
 
     except KeyboardInterrupt:
@@ -546,10 +531,7 @@ def run_watch_for_symbol(
             "end_reason": "INTERRUPTED",
         }
         log_info(logger, "INTERRUPTED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="INTERRUPTED")
-        try:
         append_csv(log_summary, summary)
-        except Exception as e:
-            log_exception(logger, "CSV_WRITE failed for interrupted summary", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_summary})
         return summary
     except Exception as e:
         log_exception(logger, "Fatal error in run_watch_for_symbol", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FATAL")
