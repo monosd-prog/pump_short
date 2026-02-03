@@ -25,7 +25,7 @@ def run_watch_for_symbol(
     cfg: Optional[Config] = None,
 ) -> Dict[str, Any]:
     cfg = cfg or Config()
-    symbol = symbol.strip().upper()
+    symbol = str(symbol).strip().upper()
     run_id = run_id or gen_run_id()
     logger = get_logger(__name__, strategy="long_pullback", symbol=symbol)
 
@@ -38,6 +38,8 @@ def run_watch_for_symbol(
 
     start_ts = pd.Timestamp.now(tz="UTC")
     end_ts = start_ts + pd.Timedelta(minutes=90)
+
+    logger.info("LONG_WATCH_START | symbol_repr=%r | symbol=%s", symbol, symbol)
 
     while pd.Timestamp.now(tz="UTC") < end_ts:
         candles_5m = get_klines_5m("linear", symbol, limit=250)

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import sys
+import argparse
 
 from long_pullback.watcher import run_watch_for_symbol
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: python scripts/run_watch_long.py SYMBOL")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--symbol", required=False, dest="symbol_opt")
+    parser.add_argument("symbol", nargs="?", default=None)
+    args = parser.parse_args()
+    symbol = args.symbol_opt or args.symbol
+    if not symbol:
+        print("Usage: python scripts/run_watch_long.py --symbol SYMBOL")
         return
-    symbol = sys.argv[1]
     print(run_watch_for_symbol(symbol))
 
 
