@@ -89,6 +89,7 @@ def run_watch_for_symbol(
 
     last_5m_wall_write = 0.0
     last_1m_wall_write = 0.0
+    last_heartbeat_wall = 0.0
 
     entry_ok = False
     entry_payload: Dict[str, Any] = {}
@@ -99,6 +100,23 @@ def run_watch_for_symbol(
             # 5m CONTEXT LOOP
             # =====================
             try:
+                # heartbeat log (once per 60s per run)
+                now_wall = time.time()
+                if now_wall - last_heartbeat_wall >= 60:
+                    cs_val = None
+                    try:
+                        cs_val = context_score  # may be undefined on first tick
+                    except Exception:
+                        cs_val = None
+                    logger.info(
+                        "SHORT_TICK | symbol=%s | run_id=%s | stage=%s | step=HEARTBEAT | context_score=%s",
+                        cfg.symbol,
+                        run_id,
+                        st.stage,
+                        cs_val,
+                    )
+                    last_heartbeat_wall = now_wall
+
                 candles_5m = get_klines_5m(cfg.category, cfg.symbol, limit=250)
                 if candles_5m is None or candles_5m.empty:
                     time.sleep(10)
