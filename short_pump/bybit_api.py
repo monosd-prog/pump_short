@@ -56,7 +56,7 @@ def _klines(category: str, symbol: str, interval: str, limit: int) -> pd.DataFra
     )
     if j.get("retCode") != 0:
         error_msg = f"Bybit kline({interval}) error: {j}"
-        log_exception(logger, error_msg, step="BYBIT_API", extra={"category": category, "symbol": symbol, "interval": interval, "response": j})
+        log_exception(logger, error_msg, step="BYBIT_API", extra={"category": category, "interval": interval, "response": j})
         raise RuntimeError(error_msg)
 
     lst = j["result"]["list"]
