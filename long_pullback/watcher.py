@@ -129,19 +129,31 @@ def run_watch_for_symbol(
                         logger.exception("LONG_APPEND_1M_ERROR | symbol=%s | path=%s", symbol, log_1m)
 
                     if entry_ok:
+                        event_id = str(entry_payload.get("event_id", run_id))
+                        time_utc = entry_payload.get("time_utc")
+                        price = entry_payload.get("price")
+                        ctx_score = entry_payload.get("context_score")
+                        logger.info("LONG_ENTRY_OK_TG | symbol=%s | run_id=%s | event_id=%s", symbol, run_id, event_id)
                         try:
+                            parts = [f"ENTRY OK (LONG_PULLBACK): {symbol}", f"run_id={run_id}", f"event_id={event_id}"]
+                            if time_utc:
+                                parts.append(f"time_utc={time_utc}")
+                            if price is not None:
+                                parts.append(f"price={price}")
+                            if ctx_score is not None:
+                                parts.append(f"context_score={ctx_score}")
                             send_telegram(
-                                f"ENTRY OK: {symbol}\nrun_id={run_id}\n{json.dumps(entry_payload, ensure_ascii=False)}",
+                                "\n".join(parts),
                                 strategy="long_pullback",
                                 side="LONG",
-                                mode="ARMED",
-                                event_id=str(entry_payload.get("event_id", run_id)),
-                                context_score=float(entry_payload.get("context_score", 0.0)),
+                                mode="LIVE",
+                                event_id=event_id,
+                                context_score=float(ctx_score) if ctx_score is not None else None,
                                 entry_ok=True,
                                 skip_reasons=None,
                             )
                         except Exception:
-                            pass
+                            logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
                         entry_ok = False
                         entry_payload = {}
 
