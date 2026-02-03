@@ -45,6 +45,7 @@ def run_watch_for_symbol(
 ) -> Dict[str, Any]:
     cfg = cfg or Config.from_env()
     cfg.symbol = symbol.strip().upper()
+    logger = get_logger(__name__, strategy_name="short_pump", symbol=cfg.symbol)
     meta = meta or {}
     run_id = run_id or time.strftime("%Y%m%d_%H%M%S")
 
@@ -156,30 +157,30 @@ def run_watch_for_symbol(
                 # write 5m log ~ once per 5m candle
                 if time.time() - last_5m_wall_write >= 5:
                     try:
-                        append_csv(
-                            log_5m,
-                            {
-                                "run_id": run_id,
-                                "symbol": cfg.symbol,
-                                "time_utc": dbg5["time_utc"],
-                                "stage": dbg5["stage"],
-                                "price": dbg5["price"],
-                                "peak_price": dbg5["peak_price"],
-                                "dist_to_peak_pct": dbg5["dist_to_peak_pct"],
+                    append_csv(
+                        log_5m,
+                        {
+                            "run_id": run_id,
+                            "symbol": cfg.symbol,
+                            "time_utc": dbg5["time_utc"],
+                            "stage": dbg5["stage"],
+                            "price": dbg5["price"],
+                            "peak_price": dbg5["peak_price"],
+                            "dist_to_peak_pct": dbg5["dist_to_peak_pct"],
                                 "oi_change_5m_pct": dbg5.get("oi_change_5m_pct"),
                                 "oi_divergence_5m": dbg5.get("oi_divergence_5m"),
-                                "vol_z": dbg5.get("vol_z"),
-                                "atr_14_5m_pct": dbg5.get("atr_14_5m_pct"),
+                            "vol_z": dbg5.get("vol_z"),
+                            "atr_14_5m_pct": dbg5.get("atr_14_5m_pct"),
                                 "funding_rate": funding_rate,
                                 "funding_rate_ts_utc": funding_rate_ts_utc,
                                 "funding_rate_abs": funding_rate_abs,
-                                "context_score": context_score,
-                                "wall_time_utc": _utc_now_str(),
-                                "candle_lag_sec": lag_sec,
-                                "context_parts": json.dumps(ctx_parts, ensure_ascii=False),
-                            },
-                        )
-                        last_5m_wall_write = time.time()
+                            "context_score": context_score,
+                            "wall_time_utc": _utc_now_str(),
+                            "candle_lag_sec": lag_sec,
+                            "context_parts": json.dumps(ctx_parts, ensure_ascii=False),
+                        },
+                    )
+                    last_5m_wall_write = time.time()
                     except Exception as e:
                         log_exception(logger, "CSV_WRITE failed for 5m log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_5m})
 
@@ -197,29 +198,36 @@ def run_watch_for_symbol(
                     st.armed_notified = True
                     log_info(logger, "ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ARMED", extra={"context_score": context_score, "dist_to_peak_pct": dbg5.get('dist_to_peak_pct')})
                     try:
-                        send_telegram(
-                            f"🟡 ARMED: {cfg.symbol}\n"
-                            f"run_id={run_id}\n"
-                            f"stage={st.stage}\n"
-                            f"context_score={context_score:.2f}\n"
-                            f"dist_to_peak={dbg5.get('dist_to_peak_pct'):.2f}%"
+                    send_telegram(
+                            f"ARMED: {cfg.symbol}\n"
+                        f"run_id={run_id}\n"
+                        f"stage={st.stage}\n"
+                        f"context_score={context_score:.2f}\n"
+                            f"dist_to_peak={dbg5.get('dist_to_peak_pct'):.2f}%",
+                            strategy="short_pump",
+                            side="SHORT",
+                            mode="ARMED",
+                            event_id=run_id,
+                            context_score=context_score,
+                            entry_ok=True,
+                            skip_reasons=None,
                         )
                     except Exception as e:
                         log_exception(logger, "TELEGRAM_SEND failed for ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
                 # 1m polling (skip in FAST_ONLY)
                 if cfg.entry_mode != "FAST_ONLY":
-                    try:
-                        candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=250)
+                try:
+                    candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=250)
                         if candles_1m is not None and not candles_1m.empty and (time.time() - last_1m_wall_write >= 3):
                             # Get trades and OI for decide_entry_1m
-                            trades_1m = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
+                        trades_1m = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
                             oi_1m = get_open_interest(cfg.category, cfg.symbol, limit=20)  # 1m needs shorter lookback
                             funding_payload = get_funding_rate(cfg.category, cfg.symbol)
                             funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
                             funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
 
-                            entry_ok, entry_payload = decide_entry_1m(
+                        entry_ok, entry_payload = decide_entry_1m(
                                 cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                             )
                             # Update context_score with CVD if available
@@ -267,14 +275,14 @@ def run_watch_for_symbol(
                             })
 
                             try:
-                                append_csv(
-                                    log_1m,
-                                    {
-                                        "run_id": run_id,
-                                        "symbol": cfg.symbol,
-                                        "time_utc": str(candles_1m.iloc[-1]["ts"]),
-                                        "price": float(candles_1m.iloc[-1]["close"]),
-                                        "entry_ok": bool(entry_ok),
+                        append_csv(
+                            log_1m,
+                            {
+                                "run_id": run_id,
+                                "symbol": cfg.symbol,
+                                "time_utc": str(candles_1m.iloc[-1]["ts"]),
+                                "price": float(candles_1m.iloc[-1]["close"]),
+                                "entry_ok": bool(entry_ok),
                                         "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
                                         "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
                                         "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
@@ -290,11 +298,11 @@ def run_watch_for_symbol(
                                         "liq_long_usd_30s": liq_long_usd_30s,
                                         "liq_long_count_1m": liq_long_count_1m,
                                         "liq_long_usd_1m": liq_long_usd_1m,
-                                        "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
-                                    },
-                                )
-                                last_1m_wall_write = time.time()
-                            except Exception as e:
+                                "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
+                            },
+                        )
+                        last_1m_wall_write = time.time()
+                except Exception as e:
                                 log_exception(logger, "CSV_WRITE failed for 1m log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_1m})
                     except Exception as e:
                         log_exception(logger, "Error in 1m polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FETCH_1M")
@@ -353,13 +361,13 @@ def run_watch_for_symbol(
                         "funding_rate_abs": funding_rate_abs,
                     })
                     try:
-                        append_csv(
-                            log_fast,
-                            {
-                                "run_id": run_id,
-                                "symbol": cfg.symbol,
-                                "wall_time_utc": _utc_now_str(),
-                                "entry_ok": bool(ok_fast),
+                    append_csv(
+                        log_fast,
+                        {
+                            "run_id": run_id,
+                            "symbol": cfg.symbol,
+                            "wall_time_utc": _utc_now_str(),
+                            "entry_ok": bool(ok_fast),
                                 "oi_change_fast_pct": payload_fast.get("oi_change_fast_pct"),
                                 "cvd_delta_ratio_30s": payload_fast.get("cvd_delta_ratio_30s"),
                                 "cvd_delta_ratio_1m": payload_fast.get("cvd_delta_ratio_1m"),
@@ -375,9 +383,9 @@ def run_watch_for_symbol(
                                 "liq_long_usd_30s": liq_long_usd_30s,
                                 "liq_long_count_1m": liq_long_count_1m,
                                 "liq_long_usd_1m": liq_long_usd_1m,
-                                "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
-                            },
-                        )
+                            "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
+                        },
+                    )
                     except Exception as e:
                         log_exception(logger, "CSV_WRITE failed for fast log", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_fast})
                     if ok_fast:
@@ -392,8 +400,8 @@ def run_watch_for_symbol(
                                 extra={"entry_source": payload_fast.get("entry_source")},
                             )
                         else:
-                            entry_ok = True
-                            entry_payload = payload_fast
+                        entry_ok = True
+                        entry_payload = payload_fast
                 except Exception as e:
                     log_exception(logger, "Error in fast polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FAST")
 
@@ -406,8 +414,8 @@ def run_watch_for_symbol(
                     log_warning(
                         logger,
                         "FAST_ONLY: ENTRY_OK suppressed due to non-FAST entry_type",
-                        symbol=cfg.symbol,
-                        run_id=run_id,
+                    symbol=cfg.symbol,
+                    run_id=run_id,
                         stage=st.stage,
                         step="ENTRY_DECISION",
                         extra={"entry_type": entry_type, "entry_source": entry_payload.get("entry_source")},
@@ -416,15 +424,6 @@ def run_watch_for_symbol(
                     entry_payload = {}
                     continue
                 log_info(logger, "ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ENTRY_DECISION", extra={"entry_type": entry_type, "entry_payload": entry_payload})
-                try:
-                    send_telegram(
-                        f"✅ ENTRY OK ({entry_type}): {cfg.symbol}\n"
-                        f"run_id={run_id}\n"
-                        f"{json.dumps(entry_payload, ensure_ascii=False)}"
-                    )
-                except Exception as e:
-                    log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
-
                 # Extract entry parameters from entry_payload
                 entry_price = float(entry_payload.get("price", 0.0))
                 entry_source = entry_payload.get("entry_source", "unknown")
@@ -450,6 +449,37 @@ def run_watch_for_symbol(
                 else:  # FAST or unknown
                     tp_price = entry_price * (1.0 - cfg.tp_pct_confirm)
                     sl_price = entry_price * (1.0 + cfg.sl_pct_confirm)
+
+                entry_payload.update(
+                    {
+                        "paper_entry_time_utc": entry_ts_utc.isoformat(),
+                        "paper_entry_price": entry_price,
+                        "paper_tp_price": tp_price,
+                        "paper_sl_price": sl_price,
+                        "trade_type": "PAPER" if os.getenv("PAPER_MODE", "1") == "1" else "LIVE",
+                    }
+                )
+
+                try:
+                    entry_source = entry_payload.get("entry_source", "unknown")
+                    mode = "FAST" if entry_source == "fast" else "ARMED"
+                    event_id = entry_payload.get("event_id") or run_id
+                    context_score_msg = entry_payload.get("context_score", context_score)
+                    send_telegram(
+                        f"ENTRY OK ({entry_type}): {cfg.symbol}\n"
+                        f"run_id={run_id}\n"
+                        f"paper_entry={entry_price} tp={tp_price} sl={sl_price}\n"
+                        f"{json.dumps(entry_payload, ensure_ascii=False)}",
+                        strategy="short_pump",
+                        side="SHORT",
+                        mode=mode,
+                        event_id=str(event_id),
+                        context_score=float(context_score_msg) if context_score_msg is not None else None,
+                        entry_ok=True,
+                        skip_reasons=None,
+                    )
+                except Exception as e:
+                    log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
                 
                 try:
                     summary = track_outcome_short(
@@ -474,15 +504,25 @@ def run_watch_for_symbol(
 
                     if TG_SEND_OUTCOME:
                         try:
+                            event_id = entry_payload.get("event_id") or run_id
+                            context_score_msg = entry_payload.get("context_score", context_score)
                             send_telegram(
-                                f"🏁 OUTCOME: {cfg.symbol}\n"
+                                f"OUTCOME: {cfg.symbol}\n"
                                 f"run_id={run_id}\n"
-                                f"{summary.get('outcome')} | {summary.get('end_reason')}"
+                                f"{summary.get('outcome')} | {summary.get('end_reason')}\n"
+                                f"pnl_pct={summary.get('pnl_pct')} entry={summary.get('entry_price')} exit={summary.get('exit_price')}",
+                                strategy="short_pump",
+                                side="SHORT",
+                                mode="FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
+                                event_id=str(event_id),
+                                context_score=float(context_score_msg) if context_score_msg is not None else None,
+                                entry_ok=True,
+                                skip_reasons=None,
                             )
                         except Exception as e:
                             log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
-                    return summary
+                return summary
                 except Exception as e:
                     log_exception(logger, "Error in track_outcome_short", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME")
                     raise
@@ -497,7 +537,7 @@ def run_watch_for_symbol(
         }
         log_info(logger, "TIMEOUT", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TIMEOUT")
         try:
-            append_csv(log_summary, summary)
+        append_csv(log_summary, summary)
         except Exception as e:
             log_exception(logger, "CSV_WRITE failed for timeout summary", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_summary})
         return summary
@@ -510,7 +550,7 @@ def run_watch_for_symbol(
         }
         log_info(logger, "INTERRUPTED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="INTERRUPTED")
         try:
-            append_csv(log_summary, summary)
+        append_csv(log_summary, summary)
         except Exception as e:
             log_exception(logger, "CSV_WRITE failed for interrupted summary", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_summary})
         return summary

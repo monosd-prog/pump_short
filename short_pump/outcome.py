@@ -1,3 +1,5 @@
+import json
+import os
 import time
 from typing import Dict, Any
 import pandas as pd
@@ -7,6 +9,10 @@ from short_pump.config import Config
 from short_pump.logging_utils import get_logger, log_exception
 
 logger = get_logger(__name__)
+
+PAPER_MODE = os.getenv("PAPER_MODE", "1") == "1"
+OUTCOME_USE_CANDLE_HILO = os.getenv("OUTCOME_USE_CANDLE_HILO", "1") == "1"
+OUTCOME_TP_SL_CONFLICT = os.getenv("OUTCOME_TP_SL_CONFLICT", "SL_FIRST").strip().upper()
 
 
 def track_outcome_short(
@@ -62,6 +68,7 @@ def track_outcome_short(
     end_reason = "TIMEOUT"
     hit_ts = None
 
+    tp_sl_same_candle = False
     while pd.Timestamp.now(tz="UTC") < end_ts:
         try:
             candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=300)
@@ -86,15 +93,22 @@ def track_outcome_short(
         for _, row in future.iterrows():
             hi = float(row["high"])
             lo = float(row["low"])
+            close = float(row["close"])
             ts = row["ts"]
 
-            tp_hit = (lo <= tp_price)
-            sl_hit = (hi >= sl_price)
+            if OUTCOME_USE_CANDLE_HILO:
+                tp_hit = (lo <= tp_price)
+                sl_hit = (hi >= sl_price)
+            else:
+                tp_hit = (close <= tp_price)
+                sl_hit = (close >= sl_price)
 
-            # Deterministic rule for BOTH_SAME_CANDLE: for SHORT, SL is more critical (conservative)
-            # If both hit in same candle, prioritize SL (risk management)
             if tp_hit and sl_hit:
-                end_reason = "SL_hit"  # Conservative: SL takes precedence for SHORT positions
+                tp_sl_same_candle = True
+                if OUTCOME_TP_SL_CONFLICT == "TP_FIRST":
+                    end_reason = "TP_hit"
+                else:
+                    end_reason = "SL_hit"
                 hit_ts = ts
                 break
             if sl_hit:
@@ -146,6 +160,25 @@ def track_outcome_short(
             hit_time_utc_str = hit_ts.isoformat()
         else:
             hit_time_utc_str = str(hit_ts)
+
+    if end_reason in ("TP_hit", "SL_hit"):
+        exit_time_utc = hit_time_utc_str
+        exit_price = tp_price if end_reason == "TP_hit" else sl_price
+    else:
+        exit_time_utc = entry_ts_utc.isoformat()
+        exit_price = timeout_exit_price
+
+    pnl_pct = ((entry_price - exit_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+    risk_pct = ((sl_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
+    r_multiple = (pnl_pct / risk_pct) if risk_pct > 0 else 0.0
+
+    details_payload = {
+        "tp_hit": end_reason == "TP_hit",
+        "sl_hit": end_reason == "SL_hit",
+        "tp_sl_same_candle": 1 if tp_sl_same_candle else 0,
+        "conflict_policy": OUTCOME_TP_SL_CONFLICT,
+        "use_candle_hilo": OUTCOME_USE_CANDLE_HILO,
+    }
     
     # Ensure all numeric fields are valid (no None for ML dataset)
     result = {
@@ -167,6 +200,12 @@ def track_outcome_short(
         "mae_pct": float(mae * 100.0),
         "timeout_exit_price": float(timeout_exit_price),
         "timeout_pnl_pct": float(timeout_pnl_pct),
+        "trade_type": "PAPER" if PAPER_MODE else "LIVE",
+        "exit_time_utc": exit_time_utc,
+        "exit_price": float(exit_price),
+        "pnl_pct": float(pnl_pct),
+        "r_multiple": float(r_multiple),
+        "details_payload": json.dumps(details_payload, ensure_ascii=False),
     }
     
     return result
@@ -208,4 +247,10 @@ def _create_error_outcome(
         "mae_pct": 0.0,
         "timeout_exit_price": 0.0,
         "timeout_pnl_pct": 0.0,
+        "trade_type": "PAPER" if PAPER_MODE else "LIVE",
+        "exit_time_utc": "",
+        "exit_price": 0.0,
+        "pnl_pct": 0.0,
+        "r_multiple": 0.0,
+        "details_payload": json.dumps({"error": error_reason}, ensure_ascii=False),
     }

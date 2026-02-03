@@ -6,7 +6,8 @@ All exceptions are logged with full traceback and context.
 from __future__ import annotations
 
 import logging
-import sys
+import os
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 # Initialize logging once at module import
@@ -14,7 +15,6 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    stream=sys.stderr,  # stderr for systemd journalctl
     force=True,  # Override any existing config
 )
 
@@ -22,9 +22,52 @@ logging.basicConfig(
 _context: Dict[str, Any] = {}
 
 
-def get_logger(name: str) -> logging.Logger:
-    """Get a logger instance for a module."""
-    return logging.getLogger(name)
+def get_logger(
+    name: str,
+    *,
+    strategy_name: Optional[str] = None,
+    logs_subdir: Optional[str] = None,
+    symbol: Optional[str] = None,
+) -> logging.Logger:
+    """
+    Get a logger instance for a module.
+    Writes to {LOG_ROOT}/{LOG_*_SUBDIR}/{YYYY-MM-DD}/{symbol}.log.
+    """
+    logger = logging.getLogger(name)
+
+    if strategy_name:
+        s = strategy_name.strip().lower()
+        is_long = s in ("long", "long_pullback", "long_only")
+    else:
+        is_long = False
+
+    log_root = os.environ.get("LOG_ROOT") or os.environ.get("LOG_DIR") or "logs"
+    short_subdir = os.environ.get("LOG_SHORT_SUBDIR") or "logs_short"
+    long_subdir = os.environ.get("LOG_LONG_SUBDIR") or "logs_long"
+    subdir = logs_subdir or (long_subdir if is_long else short_subdir)
+
+    date_dir = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    sym = (symbol or "app").strip().upper() or "app"
+    log_dir = os.path.join(log_root, subdir, date_dir)
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, f"{sym}.log")
+
+    if not any(
+        isinstance(h, logging.FileHandler) and getattr(h, "baseFilename", "") == log_path
+        for h in logger.handlers
+    ):
+        fh = logging.FileHandler(log_path, encoding="utf-8")
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+        logger.addHandler(fh)
+
+    return logger
+
+
+def demo_logger() -> None:
+    """Example: logs to logs/logs_long/app.log."""
+    long_logger = get_logger("long_strategy", strategy_name="long_pullback", symbol="APP")
+    long_logger.info("demo long strategy log")
 
 
 def bind_context(**kwargs: Any) -> None:

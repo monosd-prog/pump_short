@@ -66,6 +66,11 @@ class Config:
     max_concurrent: int = 3
     cooldown_minutes: int = 45
 
+    # ===== Logging paths =====
+    logs_root: str = "logs"
+    logs_short_dir: str = "logs"
+    logs_long_dir: str = "logs/logs_long"
+
     # ===== Entry mode =====
     entry_mode: str = "HYBRID"  # HYBRID or FAST_ONLY
 

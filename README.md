@@ -120,6 +120,43 @@ POST /pump
 
 ---
 
+## How to run long_pullback
+
+Run a one-off watch:
+
+```
+python -m long_pullback BTCUSDT
+```
+
+Or via script:
+
+```
+python scripts/run_watch_long.py BTCUSDT
+```
+
+Logs for long strategy are written to `logs/logs_long/`.
+Datasets are written under `datasets/date=YYYYMMDD/strategy=long_pullback/`.
+
+---
+
+## Logging paths
+
+Log files are written to:
+
+```
+{LOG_ROOT}/{LOG_SHORT_SUBDIR}/{YYYY-MM-DD}/{SYMBOL}.log
+{LOG_ROOT}/{LOG_LONG_SUBDIR}/{YYYY-MM-DD}/{SYMBOL}.log
+```
+
+Defaults:
+- LOG_ROOT = "logs"
+- LOG_SHORT_SUBDIR = "logs_short"
+- LOG_LONG_SUBDIR = "logs_long"
+
+`LOG_DIR` is supported as a fallback alias for `LOG_ROOT`.
+
+---
+
 ## Telegram-уведомления
 
 Поддерживаются уведомления:
