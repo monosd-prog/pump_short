@@ -19,6 +19,8 @@ class Config:
 
     feature_schema_version: int = 1
 
+    poll_seconds_5m: int = 60
+
     # context weights (v1)
     weight_pump: float = 0.25
     weight_pullback: float = 0.25

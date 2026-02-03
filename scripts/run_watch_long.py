@@ -14,7 +14,7 @@ def main() -> None:
     if not symbol:
         print("Usage: python scripts/run_watch_long.py --symbol SYMBOL")
         return
-    print(run_watch_for_symbol(symbol))
+    run_watch_for_symbol(symbol)
 
 
 if __name__ == "__main__":
