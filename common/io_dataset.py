@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 import os
 from datetime import datetime
 from typing import Any, Dict
@@ -40,6 +41,31 @@ def _write_row(path: str, row: Dict[str, Any], fieldnames: list[str] | None = No
         if not file_exists:
             w.writeheader()
         w.writerow(row)
+
+
+def ensure_dataset_files(strategy: str, mode: str, wall_time_utc: str, schema_version: int = 2) -> None:
+    if schema_version != 2:
+        return
+    base_dir = _dataset_dir(strategy, mode, wall_time_utc)
+    os.makedirs(base_dir, exist_ok=True)
+    targets = [
+        ("events_v2.csv", EVENT_FIELDS_V2),
+        ("trades_v2.csv", TRADE_FIELDS_V2),
+        ("outcomes_v2.csv", OUTCOME_FIELDS_V2),
+    ]
+    for filename, fieldnames in targets:
+        path = os.path.join(base_dir, filename)
+        if os.path.isfile(path):
+            continue
+        with open(path, "a", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+    logging.getLogger(__name__).info(
+        "DATASET_V2_ENSURE_OK | strategy=%s | mode=%s | wall_time_utc=%s",
+        strategy,
+        mode,
+        wall_time_utc,
+    )
 
 
 def write_event_row(

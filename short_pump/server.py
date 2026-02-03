@@ -10,7 +10,8 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from common.runtime import code_version
+from common.runtime import code_version, wall_time_utc
+from common.io_dataset import ensure_dataset_files
 from short_pump.config import Config
 from short_pump.logging_utils import get_logger
 from short_pump.runtime import Runtime
@@ -117,6 +118,10 @@ async def pump(evt: PumpEvent):
         now = time.time()
         _cleanup_short(now)
         _active_short_symbols[symbol] = {"run_id": run_id or "", "started_ts": now}
+        now_utc = wall_time_utc()
+        ensure_dataset_files("short_pump", "live", now_utc, schema_version=2)
+        if start_long:
+            ensure_dataset_files("long_pullback", "live", now_utc, schema_version=2)
 
         logger.info("PUMP_ACCEPTED | symbol=%s | run_id=%s | start_long=%s", symbol, run_id, start_long)
 

@@ -184,6 +184,7 @@ def run_watch_for_symbol(
     log_summary = f"logs/{run_id}_{cfg.symbol}_summary.csv"
 
     st = StructureState()
+    watch_time_utc = wall_time_utc()
     _ds_event(
         run_id=run_id,
         symbol=cfg.symbol,
@@ -192,7 +193,12 @@ def run_watch_for_symbol(
         entry_ok=False,
         skip_reasons="watch_start",
         context_score=None,
-        payload={"time_utc": meta.get("pump_ts", ""), "price": ""},
+        payload={
+            "time_utc": meta.get("pump_ts") or watch_time_utc,
+            "price": "",
+            "pump_pct": meta.get("pump_pct", ""),
+            "source": meta.get("source", ""),
+        },
         extra=None,
     )
     start_ts = pd.Timestamp.now(tz="UTC")
@@ -344,9 +350,11 @@ def run_watch_for_symbol(
                         skip_reasons="armed",
                         context_score=context_score,
                         payload={
-                            "time_utc": dbg5.get("time_utc"),
-                            "price": dbg5.get("price"),
+                            "time_utc": dbg5.get("time_utc") or wall_time_utc(),
+                            "price": dbg5.get("price") or last_price,
                             "dist_to_peak_pct": dbg5.get("dist_to_peak_pct"),
+                            "pump_pct": meta.get("pump_pct", ""),
+                            "source": meta.get("source", ""),
                         },
                         extra={"oi_change_5m_pct": dbg5.get("oi_change_5m_pct")},
                     )

@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
-from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
+_repo_root = Path(__file__).resolve().parents[1]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+try:
+    from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
+except ModuleNotFoundError as e:
+    print("Failed to import project modules. Try:")
+    print(f"  PYTHONPATH={_repo_root} python {Path(__file__).name}")
+    raise
 
 
 def main() -> None:
