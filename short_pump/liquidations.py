@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import threading
 import time
 from collections import defaultdict, deque
@@ -31,13 +32,20 @@ _pending_symbols: Set[str] = set()
 _last_heartbeat = 0.0
 _rx_total = 0
 _rx_json_ok = 0
+_rx_json_fail = 0
 _rx_topic_liq = 0
 _rx_events_total = 0
 _last_raw_ts: Optional[float] = None
+_last_rx_wall_utc: Optional[str] = None
 _last_event_ts_ms: Optional[int] = None
 _last_symbol: Optional[str] = None
 _reconnects_total = 0
 _debug_msg_total = 0
+_conn_id = 0
+_last_exception_type: Optional[str] = None
+_last_exception_repr: Optional[str] = None
+_last_close_code: Optional[int] = None
+_last_close_reason: Optional[str] = None
 
 _LIQ_WS_DEBUG = os.getenv("LIQ_WS_DEBUG", "0") == "1"
 
@@ -104,13 +112,20 @@ def get_liq_health() -> Dict[str, Optional[int]]:
         return {
             "rx_total": _rx_total,
             "rx_json_ok": _rx_json_ok,
+            "rx_json_fail": _rx_json_fail,
             "rx_topic_liq": _rx_topic_liq,
             "rx_events_total": _rx_events_total,
             "last_raw_ts": _last_raw_ts,
+            "last_rx_wall_utc": _last_rx_wall_utc,
             "last_event_ts_ms": _last_event_ts_ms,
             "last_symbol": _last_symbol,
             "subscribed_symbols_count": len(_subscribed_symbols),
+            "conn_id": _conn_id,
             "reconnects_total": _reconnects_total,
+            "last_exception_type": _last_exception_type,
+            "last_exception_repr": _last_exception_repr,
+            "last_close_code": _last_close_code,
+            "last_close_reason": _last_close_reason,
         }
 
 
@@ -139,16 +154,25 @@ def start_liquidation_listener(category: str) -> None:
 
     def _run() -> None:
         global _last_heartbeat
-        global _rx_total, _rx_json_ok, _rx_topic_liq, _rx_events_total, _last_raw_ts, _last_event_ts_ms, _last_symbol, _reconnects_total, _debug_msg_total
+        global _rx_total, _rx_json_ok, _rx_json_fail, _rx_topic_liq, _rx_events_total, _last_raw_ts, _last_rx_wall_utc, _last_event_ts_ms, _last_symbol, _reconnects_total, _debug_msg_total
+        global _conn_id, _last_exception_type, _last_exception_repr, _last_close_code, _last_close_reason
         backoff = 1.0
         conn_id = 0
         while True:
             try:
                 conn_id += 1
+                if conn_id > 1:
+                    _reconnects_total += 1
+                _conn_id = conn_id
                 ws = websocket.WebSocket()
                 ws.connect(url, timeout=10)
-                ws.settimeout(10)
-                log_info(logger, "WS connected", step="LIQ_WS", extra={"url": url, "conn_id": conn_id})
+                ws.settimeout(30)
+                log_info(
+                    logger,
+                    "WS connected",
+                    step="LIQ_WS",
+                    extra={"url": url, "conn_id": conn_id, "subscribed_symbols_count": len(_subscribed_symbols)},
+                )
 
                 backoff = 1.0
                 msg_idx = 0
@@ -165,14 +189,46 @@ def start_liquidation_listener(category: str) -> None:
                     if args:
                         sub_msg = {"op": "subscribe", "args": args}
                         ws.send(json.dumps(sub_msg))
-                        log_info(logger, "WS subscribed", step="LIQ_WS", extra={"url": url, "args": args, "conn_id": conn_id})
+                        log_info(
+                            logger,
+                            "WS subscribed",
+                            step="LIQ_WS",
+                            extra={"url": url, "args": args, "conn_id": conn_id, "subscribed_symbols_count": len(_subscribed_symbols)},
+                        )
 
-                    raw = ws.recv()
+                    try:
+                        raw = ws.recv()
+                    except (WebSocketTimeoutException, socket.timeout, TimeoutError):
+                        now = time.time()
+                        if now - _last_heartbeat >= 60:
+                            health = get_liq_health()
+                            log_info(
+                                logger,
+                                "LIQ_WS_HEALTH",
+                                step="LIQ_WS",
+                                extra={"url": url, **health},
+                            )
+                            _last_heartbeat = now
+                        continue
+                    except WebSocketConnectionClosedException as e:
+                        _last_exception_type = type(e).__name__
+                        _last_exception_repr = repr(e)
+                        _last_close_code = getattr(ws, "close_status", None)
+                        _last_close_reason = getattr(ws, "close_reason", None)
+                        raise
+                    except Exception as e:
+                        _last_exception_type = type(e).__name__
+                        _last_exception_repr = repr(e)
+                        _last_close_code = getattr(ws, "close_status", None)
+                        _last_close_reason = getattr(ws, "close_reason", None)
+                        raise
+
                     msg_idx += 1
-                    _rx_total += 1
                     _last_raw_ts = time.time()
+                    _last_rx_wall_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     if not raw:
                         continue
+                    _rx_total += 1
                     if _LIQ_WS_DEBUG and _debug_msg_total < 10:
                         if isinstance(raw, (bytes, bytearray)):
                             raw_text = raw.decode("utf-8", errors="replace")
@@ -195,6 +251,7 @@ def start_liquidation_listener(category: str) -> None:
                         msg = json.loads(raw)
                         _rx_json_ok += 1
                     except Exception:
+                        _rx_json_fail += 1
                         continue
                     topic = msg.get("topic") or msg.get("op") or ""
                     if isinstance(topic, str) and ("liquidation" in topic.lower() or "allliquidation" in topic.lower()):
@@ -243,29 +300,20 @@ def start_liquidation_listener(category: str) -> None:
                         liq_side = "long" if side == "buy" else "short"
                         _add_event(str(symbol), ts_ms, usd, liq_side)
 
-            except (WebSocketTimeoutException, TimeoutError):
-                now = time.time()
-                if now - _last_heartbeat >= 60:
-                    health = get_liq_health()
-                    log_info(
-                        logger,
-                        "LIQ_WS_HEALTH",
-                        step="LIQ_WS",
-                        extra={"url": url, **health},
-                    )
-                    _last_heartbeat = now
-                continue
             except WebSocketConnectionClosedException as e:
-                _reconnects_total += 1
                 close_code = getattr(ws, "close_status", None)
                 close_reason = getattr(ws, "close_reason", None)
+                _last_exception_type = type(e).__name__
+                _last_exception_repr = repr(e)
+                _last_close_code = close_code
+                _last_close_reason = close_reason
                 log_exception(
                     logger,
                     "WS disconnected; reconnecting",
                     step="LIQ_WS",
                     extra={
-                        "exc_type": type(e).__name__,
-                        "exc_repr": repr(e),
+                        "exc_type": _last_exception_type,
+                        "exc_repr": _last_exception_repr,
                         "close_code": close_code,
                         "close_reason": close_reason,
                         "conn_id": conn_id,
@@ -275,7 +323,6 @@ def start_liquidation_listener(category: str) -> None:
                 backoff = min(backoff * 2.0, 30.0)
                 continue
             except Exception as e:
-                _reconnects_total += 1
                 close_code = None
                 close_reason = None
                 try:
@@ -283,13 +330,17 @@ def start_liquidation_listener(category: str) -> None:
                     close_reason = getattr(ws, "close_reason", None)
                 except Exception:
                     pass
+                _last_exception_type = type(e).__name__
+                _last_exception_repr = repr(e)
+                _last_close_code = close_code
+                _last_close_reason = close_reason
                 log_exception(
                     logger,
                     "Liquidation listener error; reconnecting",
                     step="LIQ_WS",
                     extra={
-                        "exc_type": type(e).__name__,
-                        "exc_repr": repr(e),
+                        "exc_type": _last_exception_type,
+                        "exc_repr": _last_exception_repr,
                         "close_code": close_code,
                         "close_reason": close_reason,
                         "conn_id": conn_id,
