@@ -67,7 +67,7 @@ def run_watch_for_symbol(
                         },
                     )
                 except Exception:
-                    pass
+                    logger.exception("LONG_APPEND_5M_ERROR | symbol=%s | path=%s", symbol, log_5m)
 
                 if st.stage >= 2 and not entry_ok:
                     candles_1m = get_klines_1m("linear", symbol, limit=250)
@@ -103,7 +103,7 @@ def run_watch_for_symbol(
                             },
                         )
                     except Exception:
-                        pass
+                        logger.exception("LONG_APPEND_1M_ERROR | symbol=%s | path=%s", symbol, log_1m)
 
                     if entry_ok:
                         try:
