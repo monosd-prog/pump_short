@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from collections import defaultdict, deque
@@ -29,9 +30,16 @@ _subscribed_symbols: Set[str] = set()
 _pending_symbols: Set[str] = set()
 _last_heartbeat = 0.0
 _rx_total = 0
+_rx_json_ok = 0
+_rx_topic_liq = 0
 _rx_events_total = 0
+_last_raw_ts: Optional[float] = None
 _last_event_ts_ms: Optional[int] = None
 _last_symbol: Optional[str] = None
+_reconnects_total = 0
+_debug_msg_total = 0
+
+_LIQ_WS_DEBUG = os.getenv("LIQ_WS_DEBUG", "0") == "1"
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -95,10 +103,14 @@ def get_liq_health() -> Dict[str, Optional[int]]:
     with _lock:
         return {
             "rx_total": _rx_total,
+            "rx_json_ok": _rx_json_ok,
+            "rx_topic_liq": _rx_topic_liq,
             "rx_events_total": _rx_events_total,
+            "last_raw_ts": _last_raw_ts,
             "last_event_ts_ms": _last_event_ts_ms,
             "last_symbol": _last_symbol,
             "subscribed_symbols_count": len(_subscribed_symbols),
+            "reconnects_total": _reconnects_total,
         }
 
 
@@ -127,16 +139,19 @@ def start_liquidation_listener(category: str) -> None:
 
     def _run() -> None:
         global _last_heartbeat
-        global _rx_total, _rx_events_total, _last_event_ts_ms, _last_symbol
+        global _rx_total, _rx_json_ok, _rx_topic_liq, _rx_events_total, _last_raw_ts, _last_event_ts_ms, _last_symbol, _reconnects_total, _debug_msg_total
         backoff = 1.0
+        conn_id = 0
         while True:
             try:
+                conn_id += 1
                 ws = websocket.WebSocket()
                 ws.connect(url, timeout=10)
                 ws.settimeout(10)
-                log_info(logger, "WS connected", step="LIQ_WS", extra={"url": url})
+                log_info(logger, "WS connected", step="LIQ_WS", extra={"url": url, "conn_id": conn_id})
 
                 backoff = 1.0
+                msg_idx = 0
                 while True:
                     # subscribe to new symbols
                     args = []
@@ -150,16 +165,40 @@ def start_liquidation_listener(category: str) -> None:
                     if args:
                         sub_msg = {"op": "subscribe", "args": args}
                         ws.send(json.dumps(sub_msg))
-                        log_info(logger, "WS subscribed", step="LIQ_WS", extra={"url": url, "args": args})
+                        log_info(logger, "WS subscribed", step="LIQ_WS", extra={"url": url, "args": args, "conn_id": conn_id})
 
                     raw = ws.recv()
+                    msg_idx += 1
                     _rx_total += 1
+                    _last_raw_ts = time.time()
                     if not raw:
                         continue
+                    if _LIQ_WS_DEBUG and _debug_msg_total < 10:
+                        if isinstance(raw, (bytes, bytearray)):
+                            raw_text = raw.decode("utf-8", errors="replace")
+                        else:
+                            raw_text = str(raw)
+                        log_info(
+                            logger,
+                            "LIQ_WS_RAW",
+                            step="LIQ_WS",
+                            extra={
+                                "conn_id": conn_id,
+                                "msg_idx": msg_idx,
+                                "len": len(raw_text),
+                                "symbol": _last_symbol,
+                                "raw": raw_text[:500],
+                            },
+                        )
+                        _debug_msg_total += 1
                     try:
                         msg = json.loads(raw)
+                        _rx_json_ok += 1
                     except Exception:
                         continue
+                    topic = msg.get("topic") or msg.get("op") or ""
+                    if isinstance(topic, str) and ("liquidation" in topic.lower() or "allliquidation" in topic.lower()):
+                        _rx_topic_liq += 1
 
                     data = msg.get("data")
                     if not data:
@@ -216,13 +255,46 @@ def start_liquidation_listener(category: str) -> None:
                     )
                     _last_heartbeat = now
                 continue
-            except WebSocketConnectionClosedException:
-                log_exception(logger, "WS disconnected; reconnecting", step="LIQ_WS")
+            except WebSocketConnectionClosedException as e:
+                _reconnects_total += 1
+                close_code = getattr(ws, "close_status", None)
+                close_reason = getattr(ws, "close_reason", None)
+                log_exception(
+                    logger,
+                    "WS disconnected; reconnecting",
+                    step="LIQ_WS",
+                    extra={
+                        "exc_type": type(e).__name__,
+                        "exc_repr": repr(e),
+                        "close_code": close_code,
+                        "close_reason": close_reason,
+                        "conn_id": conn_id,
+                    },
+                )
                 time.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
                 continue
-            except Exception:
-                log_exception(logger, "Liquidation listener error; reconnecting", step="LIQ_WS")
+            except Exception as e:
+                _reconnects_total += 1
+                close_code = None
+                close_reason = None
+                try:
+                    close_code = getattr(ws, "close_status", None)
+                    close_reason = getattr(ws, "close_reason", None)
+                except Exception:
+                    pass
+                log_exception(
+                    logger,
+                    "Liquidation listener error; reconnecting",
+                    step="LIQ_WS",
+                    extra={
+                        "exc_type": type(e).__name__,
+                        "exc_repr": repr(e),
+                        "close_code": close_code,
+                        "close_reason": close_reason,
+                        "conn_id": conn_id,
+                    },
+                )
                 time.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
 
