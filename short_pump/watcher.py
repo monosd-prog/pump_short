@@ -25,7 +25,7 @@ from short_pump.context5m import (
 from short_pump.entry import decide_entry_fast, decide_entry_1m
 from short_pump.features import normalize_funding, oi_change_pct
 from short_pump.io_csv import append_csv
-from short_pump.liquidations import get_liq_stats, register_symbol
+from short_pump.liquidations import get_liq_health, get_liq_stats, register_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
@@ -227,10 +227,31 @@ def run_watch_for_symbol(
                             ctx_parts = entry_payload.get("context_parts", ctx_parts)
 
                             # Liquidation stats
-                            liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30, side="short")
-                            liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60, side="short")
-                            liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, 30, side="long")
-                            liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, 60, side="long")
+                            now_ts = time.time()
+                            liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")
+                            liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
+                            liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
+                            liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                            if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
+                                run_watch_for_symbol._liq_sample_warned = set()
+                            if run_id not in run_watch_for_symbol._liq_sample_warned:
+                                health = get_liq_health()
+                                log_info(
+                                    logger,
+                                    "LIQ_STATS_SAMPLE",
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    stage=st.stage,
+                                    step="LIQ_STATS",
+                                    extra={
+                                        "liq_short_count_30s": liq_short_count_30s,
+                                        "liq_short_usd_30s": liq_short_usd_30s,
+                                        "liq_long_count_30s": liq_long_count_30s,
+                                        "liq_long_usd_30s": liq_long_usd_30s,
+                                        **health,
+                                    },
+                                )
+                                run_watch_for_symbol._liq_sample_warned.add(run_id)
                             entry_payload.update({
                                 "liq_short_count_30s": liq_short_count_30s,
                                 "liq_short_usd_30s": liq_short_usd_30s,
@@ -293,10 +314,31 @@ def run_watch_for_symbol(
                     ctx_parts = payload_fast.get("context_parts", ctx_parts)
 
                     # Liquidation stats
-                    liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, 30, side="short")
-                    liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, 60, side="short")
-                    liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, 30, side="long")
-                    liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, 60, side="long")
+                    now_ts = time.time()
+                    liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")
+                    liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
+                    liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
+                    liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                    if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
+                        run_watch_for_symbol._liq_sample_warned = set()
+                    if run_id not in run_watch_for_symbol._liq_sample_warned:
+                        health = get_liq_health()
+                        log_info(
+                            logger,
+                            "LIQ_STATS_SAMPLE",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="LIQ_STATS",
+                            extra={
+                                "liq_short_count_30s": liq_short_count_30s,
+                                "liq_short_usd_30s": liq_short_usd_30s,
+                                "liq_long_count_30s": liq_long_count_30s,
+                                "liq_long_usd_30s": liq_long_usd_30s,
+                                **health,
+                            },
+                        )
+                        run_watch_for_symbol._liq_sample_warned.add(run_id)
                     payload_fast.update({
                         "liq_short_count_30s": liq_short_count_30s,
                         "liq_short_usd_30s": liq_short_usd_30s,

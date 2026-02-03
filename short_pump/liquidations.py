@@ -5,7 +5,7 @@ import json
 import threading
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict, Set, Tuple
+from typing import Deque, Dict, Optional, Set, Tuple
 
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 
@@ -28,6 +28,10 @@ _max_age_sec = 600.0  # keep up to 10 minutes
 _subscribed_symbols: Set[str] = set()
 _pending_symbols: Set[str] = set()
 _last_heartbeat = 0.0
+_rx_total = 0
+_rx_events_total = 0
+_last_event_ts_ms: Optional[int] = None
+_last_symbol: Optional[str] = None
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -45,45 +49,57 @@ def _endpoint_for_category(category: str) -> str:
     return "wss://stream.bybit.com/v5/public/linear"
 
 
-def _add_event(symbol: str, ts: float, usd: float, side: str) -> None:
+def _add_event(symbol: str, ts_ms: int, usd: float, side: str) -> None:
     if not symbol or usd <= 0:
         return
     sym = _normalize_symbol(symbol)
     with _lock:
         if side == "short":
-            _events_short[sym].append((ts, usd))
+            _events_short[sym].append((ts_ms, usd))
         elif side == "long":
-            _events_long[sym].append((ts, usd))
-        _purge_locked(sym, now=ts)
+            _events_long[sym].append((ts_ms, usd))
+        _purge_locked(sym, now=ts_ms)
 
 
 def _purge_locked(symbol: str, now: float) -> None:
     q_short = _events_short.get(symbol)
     q_long = _events_long.get(symbol)
-    cutoff = now - _max_age_sec
-    while q_short and q_short[0][0] < cutoff:
+    cutoff_ms = int(now) - int(_max_age_sec * 1000)
+    while q_short and q_short[0][0] < cutoff_ms:
         q_short.popleft()
-    while q_long and q_long[0][0] < cutoff:
+    while q_long and q_long[0][0] < cutoff_ms:
         q_long.popleft()
 
 
-def get_liq_stats(symbol: str, window_seconds: int, side: str = "short") -> Tuple[int, float]:
+def get_liq_stats(symbol: str, now_ts: float, window_seconds: int, side: str = "short") -> Tuple[int, float]:
     """Return (count, usd_sum) for liquidations over window_seconds."""
     sym = _normalize_symbol(symbol)
-    now = time.time()
+    if now_ts < 10**11:
+        now_ms = int(now_ts * 1000)
+    else:
+        now_ms = int(now_ts)
     with _lock:
-        _purge_locked(sym, now=now)
+        _purge_locked(sym, now=now_ms)
         q = _events_short.get(sym) if side == "short" else _events_long.get(sym)
         if not q:
             return 0, 0.0
-        cutoff = now - float(window_seconds)
+        cutoff_ms = now_ms - int(window_seconds * 1000)
         count = 0
         usd_sum = 0.0
-        for ts, usd in q:
-            if ts >= cutoff:
+        for ts_ms, usd in q:
+            if ts_ms >= cutoff_ms:
                 count += 1
                 usd_sum += usd
         return count, float(usd_sum)
+def get_liq_health() -> Dict[str, Optional[int]]:
+    with _lock:
+        return {
+            "rx_total": _rx_total,
+            "rx_events_total": _rx_events_total,
+            "last_event_ts_ms": _last_event_ts_ms,
+            "last_symbol": _last_symbol,
+            "subscribed_symbols_count": len(_subscribed_symbols),
+        }
 
 
 def register_symbol(symbol: str) -> None:
@@ -111,6 +127,7 @@ def start_liquidation_listener(category: str) -> None:
 
     def _run() -> None:
         global _last_heartbeat
+        global _rx_total, _rx_events_total, _last_event_ts_ms, _last_symbol
         backoff = 1.0
         while True:
             try:
@@ -136,6 +153,7 @@ def start_liquidation_listener(category: str) -> None:
                         log_info(logger, "WS subscribed", step="LIQ_WS", extra={"url": url, "args": args})
 
                     raw = ws.recv()
+                    _rx_total += 1
                     if not raw:
                         continue
                     try:
@@ -173,18 +191,29 @@ def start_liquidation_listener(category: str) -> None:
                         usd = price_f * qty_f
                         if isinstance(ts, (int, float)):
                             ts_f = float(ts)
-                            if ts_f > 10_000_000_000:  # ms
-                                ts_f = ts_f / 1000.0
                         else:
                             ts_f = time.time()
+                        if ts_f < 10**11:
+                            ts_ms = int(ts_f * 1000)
+                        else:
+                            ts_ms = int(ts_f)
 
+                        _rx_events_total += 1
+                        _last_event_ts_ms = ts_ms
+                        _last_symbol = str(symbol) if symbol else None
                         liq_side = "long" if side == "buy" else "short"
-                        _add_event(str(symbol), ts_f, usd, liq_side)
+                        _add_event(str(symbol), ts_ms, usd, liq_side)
 
             except (WebSocketTimeoutException, TimeoutError):
                 now = time.time()
                 if now - _last_heartbeat >= 60:
-                    log_info(logger, "WS heartbeat (timeout)", step="LIQ_WS", extra={"url": url})
+                    health = get_liq_health()
+                    log_info(
+                        logger,
+                        "LIQ_WS_HEALTH",
+                        step="LIQ_WS",
+                        extra={"url": url, **health},
+                    )
                     _last_heartbeat = now
                 continue
             except WebSocketConnectionClosedException:
