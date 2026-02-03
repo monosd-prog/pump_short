@@ -7,8 +7,9 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from common.bybit_api import get_klines_1m, get_klines_5m, get_open_interest, get_recent_trades
+from common.io_dataset import write_event_row
 from common.logging_utils import get_logger
-from common.runtime import run_id as gen_run_id
+from common.runtime import run_id as gen_run_id, wall_time_utc
 from long_pullback.config import Config
 from long_pullback.context5m import LongPullbackState, update_context_5m
 from long_pullback.entry import decide_entry_long
@@ -52,6 +53,28 @@ def run_watch_for_symbol(
                 )
                 st, ctx_parts = update_context_5m(cfg, st, candles_5m)
                 context_score = sum(ctx_parts.values())
+
+                # Write tick-event for every new 5m candle
+                last_ts = None
+                if candles_5m is not None and not candles_5m.empty:
+                    last_ts = candles_5m.iloc[-1]["ts"]
+                if last_ts is not None and last_ts != st.last_5m_ts:
+                    st.last_5m_ts = last_ts
+                    event_row = {
+                        "run_id": run_id,
+                        "event_id": str(last_ts),
+                        "symbol": symbol,
+                        "wall_time_utc": wall_time_utc(),
+                        "strategy": cfg.strategy_name,
+                        "mode": mode,
+                        "stage": st.stage,
+                        "context_score": context_score,
+                        "context_parts": json.dumps(ctx_parts, ensure_ascii=False),
+                        "entry_ok": False,
+                        "skip_reasons": "stage_lt_2" if st.stage < 2 else "",
+                        "entry_payload": "",
+                    }
+                    write_event_row(event_row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=event_row["wall_time_utc"])
 
                 # log 5m
                 try:

@@ -14,6 +14,7 @@ class LongPullbackState:
     stage: int = 0
     peak_price: float = 0.0
     peak_ts: pd.Timestamp | None = None
+    last_5m_ts: pd.Timestamp | None = None
 
 
 def update_context_5m(cfg: Config, st: LongPullbackState, candles_5m: pd.DataFrame) -> Tuple[LongPullbackState, Dict[str, float]]:
