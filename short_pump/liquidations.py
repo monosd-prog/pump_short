@@ -185,6 +185,8 @@ def start_liquidation_listener(category: str) -> None:
                             for sym in list(_pending_symbols):
                                 topic = f"allLiquidation.{sym}"
                                 args.append(topic)
+                                if _LIQ_WS_DEBUG:
+                                    args.append(f"tickers.{sym}")
                                 _subscribed_symbols.add(sym)
                                 _pending_symbols.remove(sym)
                     if args:
