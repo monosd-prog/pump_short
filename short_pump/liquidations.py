@@ -46,6 +46,15 @@ _last_exception_type: Optional[str] = None
 _last_exception_repr: Optional[str] = None
 _last_close_code: Optional[int] = None
 _last_close_reason: Optional[str] = None
+_current_conn_id: Optional[int] = None
+_last_disconnect_reason: Optional[str] = None
+_last_disconnect_exc_type: Optional[str] = None
+_last_disconnect_exc_repr: Optional[str] = None
+_last_disconnect_close_code: Optional[int] = None
+_last_disconnect_close_reason: Optional[str] = None
+_last_connect_wall_utc: Optional[str] = None
+_ping_sent_count = 0
+_last_no_data_log_ts = 0.0
 
 _LIQ_WS_DEBUG = os.getenv("LIQ_WS_DEBUG", "0") == "1"
 
@@ -107,7 +116,7 @@ def get_liq_stats(symbol: str, now_ts: float, window_seconds: int, side: str = "
                 count += 1
                 usd_sum += usd
         return count, float(usd_sum)
-def get_liq_health() -> Dict[str, Optional[int]]:
+def get_liq_health() -> Dict[str, Optional[object]]:
     with _lock:
         return {
             "rx_total": _rx_total,
@@ -126,6 +135,13 @@ def get_liq_health() -> Dict[str, Optional[int]]:
             "last_exception_repr": _last_exception_repr,
             "last_close_code": _last_close_code,
             "last_close_reason": _last_close_reason,
+            "current_conn_id": _current_conn_id,
+            "last_disconnect_reason": _last_disconnect_reason,
+            "last_disconnect_exc_type": _last_disconnect_exc_type,
+            "last_disconnect_exc_repr": _last_disconnect_exc_repr,
+            "last_disconnect_close_code": _last_disconnect_close_code,
+            "last_disconnect_close_reason": _last_disconnect_close_reason,
+            "last_connect_wall_utc": _last_connect_wall_utc,
         }
 
 
@@ -156,14 +172,26 @@ def start_liquidation_listener(category: str) -> None:
         global _last_heartbeat
         global _rx_total, _rx_json_ok, _rx_json_fail, _rx_topic_liq, _rx_events_total, _last_raw_ts, _last_rx_wall_utc, _last_event_ts_ms, _last_symbol, _reconnects_total, _debug_msg_total
         global _conn_id, _last_exception_type, _last_exception_repr, _last_close_code, _last_close_reason
+        global _current_conn_id, _last_disconnect_reason, _last_disconnect_exc_type, _last_disconnect_exc_repr
+        global _last_disconnect_close_code, _last_disconnect_close_reason, _last_connect_wall_utc
+        global _ping_sent_count, _last_no_data_log_ts
         backoff = 1.0
         conn_id = 0
         while True:
             try:
                 conn_id += 1
+                reason = "startup" if conn_id == 1 else (_last_disconnect_reason or "unknown")
+                log_info(
+                    logger,
+                    "LIQ_WS_RECONNECTING",
+                    step="LIQ_WS",
+                    extra={"reason": reason, "conn_id": conn_id, "reconnects_total": _reconnects_total},
+                )
                 if conn_id > 1:
                     _reconnects_total += 1
                 _conn_id = conn_id
+                _current_conn_id = conn_id
+                _last_connect_wall_utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 ws = websocket.WebSocket()
                 ws.connect(url, timeout=10)
                 ws.settimeout(30)
@@ -171,11 +199,26 @@ def start_liquidation_listener(category: str) -> None:
                     logger,
                     "WS connected",
                     step="LIQ_WS",
-                    extra={"url": url, "conn_id": conn_id, "subscribed_symbols_count": len(_subscribed_symbols)},
+                    extra={
+                        "url": url,
+                        "conn_id": conn_id,
+                        "subscribed_symbols_count": len(_subscribed_symbols),
+                        "reconnects_total": _reconnects_total,
+                        "last_disconnect_reason": _last_disconnect_reason,
+                    },
                 )
+                if _LIQ_WS_DEBUG:
+                    log_info(
+                        logger,
+                        "LIQ_WS_DEBUG_ON",
+                        step="LIQ_WS",
+                        extra={"conn_id": conn_id, "env": os.getenv("LIQ_WS_DEBUG", "")},
+                    )
 
                 backoff = 1.0
                 msg_idx = 0
+                last_ping_wall = 0.0
+                _ping_sent_count = 0
                 while True:
                     # subscribe to new symbols
                     args = []
@@ -196,9 +239,29 @@ def start_liquidation_listener(category: str) -> None:
                             extra={"url": url, "args": args, "conn_id": conn_id, "subscribed_symbols_count": len(_subscribed_symbols)},
                         )
 
+                    now_wall = time.time()
+                    if now_wall - last_ping_wall >= 25:
+                        try:
+                            if hasattr(ws, "ping"):
+                                ws.ping()
+                            else:
+                                ws.send(json.dumps({"op": "ping", "ts": int(now_wall * 1000)}))
+                            if _LIQ_WS_DEBUG:
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_PING",
+                                    step="LIQ_WS",
+                                    extra={"conn_id": conn_id, "subscribed_symbols_count": len(_subscribed_symbols)},
+                                )
+                        except Exception:
+                            # ignore ping errors; recv loop will handle reconnects if needed
+                            pass
+                        last_ping_wall = now_wall
+                        _ping_sent_count += 1
                     try:
                         raw = ws.recv()
                     except (WebSocketTimeoutException, socket.timeout, TimeoutError):
+                        _last_disconnect_reason = "timeout_continue"
                         now = time.time()
                         if now - _last_heartbeat >= 60:
                             health = get_liq_health()
@@ -209,18 +272,47 @@ def start_liquidation_listener(category: str) -> None:
                                 extra={"url": url, **health},
                             )
                             _last_heartbeat = now
+                        if _LIQ_WS_DEBUG and (now - _last_no_data_log_ts >= 60):
+                            if _last_raw_ts is None or (now - _last_raw_ts >= 60 and _rx_total == 0):
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_NO_DATA_60S",
+                                    step="LIQ_WS",
+                                    extra={
+                                        "conn_id": conn_id,
+                                        "subscribed_symbols_count": len(_subscribed_symbols),
+                                        "ping_sent_count": _ping_sent_count,
+                                    },
+                                )
+                                _last_no_data_log_ts = now
+                        log_info(
+                            logger,
+                            "LIQ_WS_RECONNECTING",
+                            step="LIQ_WS",
+                            extra={"reason": "timeout_continue", "conn_id": conn_id},
+                        )
                         continue
                     except WebSocketConnectionClosedException as e:
                         _last_exception_type = type(e).__name__
                         _last_exception_repr = repr(e)
                         _last_close_code = getattr(ws, "close_status", None)
                         _last_close_reason = getattr(ws, "close_reason", None)
+                        _last_disconnect_reason = "closed"
+                        _last_disconnect_exc_type = _last_exception_type
+                        _last_disconnect_exc_repr = _last_exception_repr
+                        _last_disconnect_close_code = _last_close_code
+                        _last_disconnect_close_reason = _last_close_reason
                         raise
                     except Exception as e:
                         _last_exception_type = type(e).__name__
                         _last_exception_repr = repr(e)
                         _last_close_code = getattr(ws, "close_status", None)
                         _last_close_reason = getattr(ws, "close_reason", None)
+                        _last_disconnect_reason = "exception"
+                        _last_disconnect_exc_type = _last_exception_type
+                        _last_disconnect_exc_repr = _last_exception_repr
+                        _last_disconnect_close_code = _last_close_code
+                        _last_disconnect_close_reason = _last_close_reason
                         raise
 
                     msg_idx += 1
@@ -348,6 +440,8 @@ def start_liquidation_listener(category: str) -> None:
                 )
                 time.sleep(backoff)
                 backoff = min(backoff * 2.0, 30.0)
+            else:
+                _last_disconnect_reason = "loop_exit"
 
     t = threading.Thread(target=_run, name="liq_listener", daemon=True)
     t.start()
