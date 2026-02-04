@@ -44,7 +44,14 @@ _ping_sent_count = 0
 _last_disconnect_reason: Optional[str] = None
 _last_no_data_log_ts = 0.0
 
-_LIQ_WS_DEBUG = os.getenv("LIQ_WS_DEBUG", "0") == "1"
+def _env_flag(name: str, default: bool = False) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return str(v).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+_LIQ_WS_DEBUG = _env_flag("LIQ_WS_DEBUG", False)
 
 
 def _normalize_symbol(symbol: str) -> str:
@@ -158,6 +165,12 @@ def start_liquidation_listener(category: str) -> None:
                 ws.connect(url, timeout=10)
                 ws.settimeout(10)
                 log_info(logger, "WS connected", step="LIQ_WS", extra={"url": url, "conn_id": conn_id})
+                log_info(
+                    logger,
+                    "LIQ_WS_DEBUG_ON",
+                    step="LIQ_WS",
+                    extra={"conn_id": conn_id, "env": os.getenv("LIQ_WS_DEBUG"), "parsed": _LIQ_WS_DEBUG},
+                )
 
                 backoff = 1.0
                 msg_idx = 0
