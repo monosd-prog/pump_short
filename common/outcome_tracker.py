@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from typing import Any, Callable, Dict, Optional
 
@@ -13,6 +14,19 @@ from short_pump.logging_utils import log_exception
 PAPER_MODE = os.getenv("PAPER_MODE", "1") == "1"
 OUTCOME_USE_CANDLE_HILO = os.getenv("OUTCOME_USE_CANDLE_HILO", "1") == "1"
 OUTCOME_TP_SL_CONFLICT = os.getenv("OUTCOME_TP_SL_CONFLICT", "SL_FIRST").strip().upper()
+
+_finalized_trade_ids: set[str] = set()
+_finalized_lock = threading.Lock()
+
+
+def mark_outcome_finalized(trade_id: str) -> bool:
+    if not trade_id:
+        return True
+    with _finalized_lock:
+        if trade_id in _finalized_trade_ids:
+            return False
+        _finalized_trade_ids.add(trade_id)
+        return True
 
 
 def track_outcome(
@@ -261,6 +275,73 @@ def track_outcome(
     }
 
     return result
+
+
+def build_outcome_row(
+    summary: Dict[str, Any],
+    *,
+    trade_id: str,
+    event_id: str,
+    run_id: str,
+    symbol: str,
+    strategy: str,
+    mode: str,
+    side: str,
+    outcome_time_utc: str,
+    entry_snapshot: Optional[Dict[str, Any]] = None,
+    extra_details: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    if not mark_outcome_finalized(trade_id):
+        return None
+    details_payload = summary.get("details_payload")
+    details_payload_obj: Dict[str, Any] = {}
+    if isinstance(details_payload, dict):
+        details_payload_obj = details_payload
+    elif isinstance(details_payload, str) and details_payload:
+        try:
+            details_payload_obj = json.loads(details_payload)
+        except Exception:
+            details_payload_obj = {}
+
+    end_reason = summary.get("end_reason") or summary.get("outcome") or ""
+    details_json_obj: Dict[str, Any] = {
+        "timeout": end_reason == "TIMEOUT",
+        "tp_hit": bool(details_payload_obj.get("tp_hit")) if "tp_hit" in details_payload_obj else end_reason == "TP_hit",
+        "sl_hit": bool(details_payload_obj.get("sl_hit")) if "sl_hit" in details_payload_obj else end_reason == "SL_hit",
+        "entry_price": summary.get("entry_price"),
+        "tp": summary.get("tp_price"),
+        "sl": summary.get("sl_price"),
+        "entry_time_utc": summary.get("entry_time_utc"),
+        "exit_price": summary.get("exit_price"),
+        "mae_pct": summary.get("mae_pct"),
+        "mfe_pct": summary.get("mfe_pct"),
+        "hold_seconds": summary.get("hold_seconds"),
+    }
+    if details_payload:
+        details_json_obj["details_payload"] = details_payload
+    if entry_snapshot is not None:
+        details_json_obj["entry_snapshot"] = entry_snapshot
+    if extra_details:
+        details_json_obj.update(extra_details)
+
+    row = {
+        "trade_id": trade_id,
+        "event_id": event_id,
+        "run_id": run_id,
+        "symbol": symbol,
+        "strategy": strategy,
+        "mode": mode,
+        "side": side,
+        "outcome_time_utc": outcome_time_utc,
+        "outcome": summary.get("outcome") or end_reason or "UNKNOWN",
+        "pnl_pct": summary.get("pnl_pct") or 0.0,
+        "hold_seconds": summary.get("hold_seconds") or 0.0,
+        "mae_pct": summary.get("mae_pct") or 0.0,
+        "mfe_pct": summary.get("mfe_pct") or 0.0,
+        "details_json": json.dumps(details_json_obj, ensure_ascii=False),
+        "trade_type": summary.get("trade_type", ""),
+    }
+    return row
 
 
 def _create_error_outcome(

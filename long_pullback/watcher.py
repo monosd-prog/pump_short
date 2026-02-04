@@ -9,7 +9,7 @@ import pandas as pd
 from common.bybit_api import get_klines_1m, get_klines_5m, get_open_interest, get_recent_trades
 from common.io_dataset import write_event_row, write_outcome_row
 from common.logging_utils import get_logger
-from common.outcome_tracker import track_outcome
+from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import run_id as gen_run_id, wall_time_utc
 from long_pullback.config import Config
 from long_pullback.context5m import LongPullbackState, update_context_5m
@@ -278,31 +278,32 @@ def run_watch_for_symbol(
                                 summary.get("mfe_pct"),
                             )
                             trade_id = entry_payload.get("trade_id") or f"{event_id}_trade"
-                            _ds_outcome(
-                                run_id=run_id,
-                                symbol=symbol,
+                            outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+                            outcome_row = build_outcome_row(
+                                summary,
                                 trade_id=str(trade_id),
                                 event_id=str(event_id),
-                                outcome_time_utc=summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc(),
-                                outcome=summary.get("outcome") or summary.get("end_reason") or "UNKNOWN",
-                                pnl_pct=summary.get("pnl_pct") or 0.0,
-                                details_json=json.dumps(
-                                    {
-                                        "details_payload": summary.get("details_payload"),
-                                        "entry_snapshot": entry_snapshot,
-                                        "entry_mode": mode,
-                                        "context_score": entry_snapshot.get("context_score"),
-                                        "hold_seconds": summary.get("hold_seconds"),
-                                        "mae_pct": summary.get("mae_pct"),
-                                        "mfe_pct": summary.get("mfe_pct"),
-                                        "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
-                                    },
-                                    ensure_ascii=False,
-                                ),
-                                trade_type=summary.get("trade_type", ""),
-                                mode=mode,
+                                run_id=run_id,
+                                symbol=symbol,
                                 strategy=cfg.strategy_name,
+                                mode=mode,
+                                side="LONG",
+                                outcome_time_utc=outcome_time_utc,
+                                entry_snapshot=entry_snapshot,
+                                extra_details={
+                                    "entry_mode": mode,
+                                    "context_score": entry_snapshot.get("context_score"),
+                                    "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
+                                },
                             )
+                            if outcome_row is not None:
+                                write_outcome_row(
+                                    outcome_row,
+                                    strategy=cfg.strategy_name,
+                                    mode=mode,
+                                    wall_time_utc=outcome_time_utc,
+                                    schema_version=2,
+                                )
                         except Exception:
                             logger.exception("LONG_OUTCOME_ERROR | symbol=%s", symbol)
                         entry_ok = False
