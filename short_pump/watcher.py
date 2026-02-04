@@ -608,6 +608,54 @@ def run_watch_for_symbol(
                         "trade_type": "PAPER" if os.getenv("PAPER_MODE", "1") == "1" else "LIVE",
                     }
                 )
+                entry_snapshot = {
+                    "entry_ts_utc": entry_ts_utc.isoformat(),
+                    "entry_price": entry_price,
+                    "tp_pct": float((entry_price - tp_price) / entry_price * 100.0) if entry_price > 0 else 0.0,
+                    "sl_pct": float((sl_price - entry_price) / entry_price * 100.0) if entry_price > 0 else 0.0,
+                    "tp_price": tp_price,
+                    "sl_price": sl_price,
+                    "context_score": entry_payload.get("context_score", context_score),
+                    "context_parts": entry_payload.get("context_parts", ctx_parts),
+                    "stage": st.stage,
+                    "entry_mode": cfg.entry_mode,
+                }
+                try:
+                    now_ts = time.time()
+                    entry_snapshot.update(
+                        {
+                            "liq_short_count_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="short")[0],
+                            "liq_short_usd_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="short")[1],
+                            "liq_short_count_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="short")[0],
+                            "liq_short_usd_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="short")[1],
+                            "liq_short_count_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="short")[0],
+                            "liq_short_usd_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="short")[1],
+                            "liq_long_count_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="long")[0],
+                            "liq_long_usd_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="long")[1],
+                            "liq_long_count_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="long")[0],
+                            "liq_long_usd_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="long")[1],
+                            "liq_long_count_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="long")[0],
+                            "liq_long_usd_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="long")[1],
+                        }
+                    )
+                except Exception:
+                    pass
+
+                log_info(
+                    logger,
+                    "OUTCOME_WATCH_START",
+                    symbol=cfg.symbol,
+                    run_id=run_id,
+                    stage=st.stage,
+                    step="OUTCOME",
+                    extra={
+                        "entry_price": entry_price,
+                        "tp_price": tp_price,
+                        "sl_price": sl_price,
+                        "watch_minutes": cfg.outcome_watch_minutes,
+                        "poll_seconds": cfg.outcome_poll_seconds,
+                    },
+                )
                 event_id = entry_payload.get("event_id") or f"{run_id}_entry_{entry_source}"
                 trade_id = f"{event_id}_trade"
                 _ds_event(
@@ -668,7 +716,34 @@ def run_watch_for_symbol(
                     summary["funding_rate"] = entry_payload.get("funding_rate")
                     summary["funding_rate_ts_utc"] = entry_payload.get("funding_rate_ts_utc")
                     summary["funding_rate_abs"] = entry_payload.get("funding_rate_abs")
+                    summary["entry_mode"] = cfg.entry_mode
+                    summary["context_score"] = entry_snapshot.get("context_score")
+                    summary["context_parts"] = json.dumps(entry_snapshot.get("context_parts"), ensure_ascii=False)
+                    summary["entry_snapshot"] = json.dumps(entry_snapshot, ensure_ascii=False)
+                    try:
+                        exit_ts = pd.Timestamp(summary.get("exit_time_utc") or summary.get("hit_time_utc") or entry_ts_utc)
+                        if exit_ts.tzinfo is None:
+                            exit_ts = exit_ts.tz_localize("UTC")
+                        hold_seconds = (exit_ts - entry_ts_utc).total_seconds()
+                    except Exception:
+                        hold_seconds = 0.0
+                    summary["hold_seconds"] = hold_seconds
                     log_info(logger, "OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME", extra={"outcome": summary.get("outcome"), "end_reason": summary.get("end_reason")})
+                    log_info(
+                        logger,
+                        "OUTCOME_DONE",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="OUTCOME",
+                        extra={
+                            "outcome_type": summary.get("end_reason"),
+                            "hold_seconds": hold_seconds,
+                            "pnl_pct": summary.get("pnl_pct"),
+                            "mae_pct": summary.get("mae_pct"),
+                            "mfe_pct": summary.get("mfe_pct"),
+                        },
+                    )
                     _ds_outcome(
                         run_id=run_id,
                         symbol=cfg.symbol,
@@ -677,7 +752,15 @@ def run_watch_for_symbol(
                         outcome_time_utc=summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc(),
                         outcome=summary.get("outcome") or summary.get("end_reason") or "UNKNOWN",
                         pnl_pct=summary.get("pnl_pct") or 0.0,
-                        details_json=summary.get("details_payload") or "",
+                        details_json=json.dumps(
+                            {
+                                "details_payload": summary.get("details_payload"),
+                                "entry_snapshot": entry_snapshot,
+                                "entry_mode": cfg.entry_mode,
+                                "context_score": entry_snapshot.get("context_score"),
+                            },
+                            ensure_ascii=False,
+                        ),
                     )
                     try:
                         append_csv(log_summary, summary)
