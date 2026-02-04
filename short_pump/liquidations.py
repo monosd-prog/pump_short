@@ -245,7 +245,7 @@ def start_liquidation_listener(category: str) -> None:
                                 "conn_id": conn_id,
                                 "msg_idx": msg_idx,
                                 "len": len(raw_text),
-                                "symbol": _last_symbol,
+                                "liq_symbol": _last_symbol,
                                 "raw": raw_text[:500],
                             },
                         )
