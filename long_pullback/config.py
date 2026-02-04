@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class Config:
     strategy_name: str = "long_pullback"
     logs_root: str = "logs/logs_long"
+    category: str = "linear"
 
     # thresholds
     pullback_min_pct: float = 0.8
@@ -20,6 +21,12 @@ class Config:
     feature_schema_version: int = 1
 
     poll_seconds_5m: int = 60
+
+    # outcome / TP-SL
+    outcome_watch_minutes: int = 120
+    outcome_poll_seconds: int = 60
+    tp_pct: float = 0.006
+    sl_pct: float = 0.004
 
     # context weights (v1)
     weight_pump: float = 0.25

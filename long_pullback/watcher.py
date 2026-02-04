@@ -7,16 +7,49 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from common.bybit_api import get_klines_1m, get_klines_5m, get_open_interest, get_recent_trades
-from common.io_dataset import write_event_row
+from common.io_dataset import write_event_row, write_outcome_row
 from common.logging_utils import get_logger
+from common.outcome_tracker import track_outcome
 from common.runtime import run_id as gen_run_id, wall_time_utc
 from long_pullback.config import Config
 from long_pullback.context5m import LongPullbackState, update_context_5m
 from long_pullback.entry import decide_entry_long
 from long_pullback.telegram import send_telegram
 from short_pump.io_csv import append_csv
+from short_pump.liquidations import get_liq_stats
 
 logger = get_logger(__name__, strategy="long_pullback")
+
+
+def _ds_outcome(
+    *,
+    run_id: str,
+    symbol: str,
+    trade_id: str,
+    event_id: str,
+    outcome_time_utc: str,
+    outcome: str,
+    pnl_pct: float,
+    details_json: str,
+    trade_type: str,
+    mode: str,
+    strategy: str,
+) -> None:
+    row = {
+        "trade_id": trade_id,
+        "event_id": event_id,
+        "run_id": run_id,
+        "symbol": symbol,
+        "strategy": strategy,
+        "mode": mode,
+        "side": "LONG",
+        "outcome_time_utc": outcome_time_utc,
+        "outcome": outcome,
+        "pnl_pct": pnl_pct,
+        "details_json": details_json,
+        "trade_type": trade_type,
+    }
+    write_outcome_row(row, strategy=strategy, mode=mode, wall_time_utc=outcome_time_utc, schema_version=2)
 
 
 def run_watch_for_symbol(
@@ -156,6 +189,122 @@ def run_watch_for_symbol(
                             )
                         except Exception:
                             logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
+
+                        try:
+                            entry_ts_utc = pd.Timestamp(time_utc) if time_utc else pd.Timestamp.now(tz="UTC")
+                            if entry_ts_utc.tzinfo is None:
+                                entry_ts_utc = entry_ts_utc.tz_localize("UTC")
+                        except Exception:
+                            entry_ts_utc = pd.Timestamp.now(tz="UTC")
+                        entry_price = float(price) if price is not None else 0.0
+                        tp_price = float(entry_payload.get("tp_price") or (entry_price * (1.0 + cfg.tp_pct)))
+                        sl_price = float(entry_payload.get("sl_price") or (entry_price * (1.0 - cfg.sl_pct)))
+                        entry_snapshot = {
+                            "entry_ts_utc": entry_ts_utc.isoformat(),
+                            "entry_price": entry_price,
+                            "tp_pct": float(entry_payload.get("tp_pct") or (cfg.tp_pct * 100.0)),
+                            "sl_pct": float(entry_payload.get("sl_pct") or (cfg.sl_pct * 100.0)),
+                            "tp_price": tp_price,
+                            "sl_price": sl_price,
+                            "context_score": entry_payload.get("context_score"),
+                            "context_parts": entry_payload.get("context_parts"),
+                            "stage": st.stage,
+                            "entry_mode": mode,
+                            "entry_source": entry_payload.get("entry_source", "1m"),
+                            "entry_type": entry_payload.get("entry_type", "PULLBACK"),
+                        }
+                        try:
+                            now_ts = time.time()
+                            entry_snapshot.update(
+                                {
+                                    "liq_short_count_30s": get_liq_stats(symbol, now_ts, 30, side="short")[0],
+                                    "liq_short_usd_30s": get_liq_stats(symbol, now_ts, 30, side="short")[1],
+                                    "liq_short_count_60s": get_liq_stats(symbol, now_ts, 60, side="short")[0],
+                                    "liq_short_usd_60s": get_liq_stats(symbol, now_ts, 60, side="short")[1],
+                                    "liq_short_count_5m": get_liq_stats(symbol, now_ts, 300, side="short")[0],
+                                    "liq_short_usd_5m": get_liq_stats(symbol, now_ts, 300, side="short")[1],
+                                    "liq_long_count_30s": get_liq_stats(symbol, now_ts, 30, side="long")[0],
+                                    "liq_long_usd_30s": get_liq_stats(symbol, now_ts, 30, side="long")[1],
+                                    "liq_long_count_60s": get_liq_stats(symbol, now_ts, 60, side="long")[0],
+                                    "liq_long_usd_60s": get_liq_stats(symbol, now_ts, 60, side="long")[1],
+                                    "liq_long_count_5m": get_liq_stats(symbol, now_ts, 300, side="long")[0],
+                                    "liq_long_usd_5m": get_liq_stats(symbol, now_ts, 300, side="long")[1],
+                                }
+                            )
+                        except Exception:
+                            pass
+
+                        logger.info(
+                            "OUTCOME_WATCH_START | symbol=%s | run_id=%s | entry_price=%s | tp_price=%s | sl_price=%s | watch_minutes=%s | poll_seconds=%s",
+                            symbol,
+                            run_id,
+                            entry_price,
+                            tp_price,
+                            sl_price,
+                            cfg.outcome_watch_minutes,
+                            cfg.outcome_poll_seconds,
+                        )
+                        try:
+                            summary = track_outcome(
+                                cfg,
+                                side="long",
+                                entry_ts_utc=entry_ts_utc,
+                                entry_price=entry_price,
+                                tp_price=tp_price,
+                                sl_price=sl_price,
+                                entry_source=entry_payload.get("entry_source", "1m"),
+                                entry_type=entry_payload.get("entry_type", "PULLBACK"),
+                                run_id=run_id,
+                                symbol=symbol,
+                                category=cfg.category,
+                                strategy_name=cfg.strategy_name,
+                            )
+                            try:
+                                exit_ts = pd.Timestamp(summary.get("exit_time_utc") or summary.get("hit_time_utc") or entry_ts_utc)
+                                if exit_ts.tzinfo is None:
+                                    exit_ts = exit_ts.tz_localize("UTC")
+                                hold_seconds = (exit_ts - entry_ts_utc).total_seconds()
+                            except Exception:
+                                hold_seconds = 0.0
+                            summary["hold_seconds"] = hold_seconds
+                            logger.info(
+                                "OUTCOME_DONE | symbol=%s | run_id=%s | outcome_type=%s | hold_seconds=%s | pnl_pct=%s | mae_pct=%s | mfe_pct=%s",
+                                symbol,
+                                run_id,
+                                summary.get("end_reason"),
+                                hold_seconds,
+                                summary.get("pnl_pct"),
+                                summary.get("mae_pct"),
+                                summary.get("mfe_pct"),
+                            )
+                            trade_id = entry_payload.get("trade_id") or f"{event_id}_trade"
+                            _ds_outcome(
+                                run_id=run_id,
+                                symbol=symbol,
+                                trade_id=str(trade_id),
+                                event_id=str(event_id),
+                                outcome_time_utc=summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc(),
+                                outcome=summary.get("outcome") or summary.get("end_reason") or "UNKNOWN",
+                                pnl_pct=summary.get("pnl_pct") or 0.0,
+                                details_json=json.dumps(
+                                    {
+                                        "details_payload": summary.get("details_payload"),
+                                        "entry_snapshot": entry_snapshot,
+                                        "entry_mode": mode,
+                                        "context_score": entry_snapshot.get("context_score"),
+                                        "hold_seconds": summary.get("hold_seconds"),
+                                        "mae_pct": summary.get("mae_pct"),
+                                        "mfe_pct": summary.get("mfe_pct"),
+                                        "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                                trade_type=summary.get("trade_type", ""),
+                                mode=mode,
+                                strategy=cfg.strategy_name,
+                            )
+                        except Exception:
+                            logger.exception("LONG_OUTCOME_ERROR | symbol=%s", symbol)
                         entry_ok = False
                         entry_payload = {}
 

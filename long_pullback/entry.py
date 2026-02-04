@@ -83,19 +83,35 @@ def decide_entry_long(
     _write_event(cfg, run_id, symbol, mode, event_id, entry_ok, skip_reasons, payload, context_score, parts)
 
     if entry_ok:
+        tp_price = price * (1.0 + cfg.tp_pct)
+        sl_price = price * (1.0 - cfg.sl_pct)
+        trade_id = str(uuid.uuid4())
+        payload.update(
+            {
+                "tp_price": tp_price,
+                "sl_price": sl_price,
+                "tp_pct": float(cfg.tp_pct * 100.0),
+                "sl_pct": float(cfg.sl_pct * 100.0),
+                "trade_id": trade_id,
+            }
+        )
         trade_row = {
-            "trade_id": str(uuid.uuid4()),
+            "trade_id": trade_id,
             "event_id": event_id,
             "run_id": run_id,
             "symbol": symbol,
+            "entry_time_utc": str(now_ts),
+            "entry_price": price,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
             "time_utc": str(now_ts),
             "price": price,
             "entry_payload": json.dumps(payload, ensure_ascii=False),
             "trade_type": "PAPER" if os.getenv("PAPER_MODE", "1") == "1" else "LIVE",
             "paper_entry_time_utc": str(now_ts),
             "paper_entry_price": price,
-            "paper_tp_price": "",
-            "paper_sl_price": "",
+            "paper_tp_price": tp_price,
+            "paper_sl_price": sl_price,
         }
         write_trade_row(trade_row, strategy=cfg.strategy_name, mode=mode, wall_time_utc=wall_time_utc())
 
