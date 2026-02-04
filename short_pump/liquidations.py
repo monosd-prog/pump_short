@@ -212,6 +212,15 @@ def start_liquidation_listener(category: str) -> None:
                         if _LIQ_WS_DEBUG:
                             log_info(logger, "LIQ_WS_TIMEOUT_CONTINUE", step="LIQ_WS", extra={"conn_id": conn_id})
                         now = time.time()
+                        if now - _last_heartbeat >= 60:
+                            health = get_liq_health()
+                            log_info(
+                                logger,
+                                "LIQ_WS_HEALTH",
+                                step="LIQ_WS",
+                                extra={"url": url, **health},
+                            )
+                            _last_heartbeat = now
                         if now - _last_rx_wall >= 60 and (now - _last_no_data_log_ts >= 60):
                             log_info(
                                 logger,
