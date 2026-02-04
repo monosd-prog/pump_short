@@ -62,6 +62,9 @@ OUTCOME_FIELDS_V2 = [
     "outcome_time_utc",
     "outcome",
     "pnl_pct",
+    "hold_seconds",
+    "mae_pct",
+    "mfe_pct",
     "details_json",
 ]
 

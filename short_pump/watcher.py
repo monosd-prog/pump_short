@@ -27,6 +27,7 @@ from short_pump.features import normalize_funding, oi_change_pct
 from short_pump.io_csv import append_csv
 from short_pump.liquidations import get_liq_health, get_liq_stats, register_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
+from common.outcome_tracker import build_outcome_row
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
@@ -744,28 +745,32 @@ def run_watch_for_symbol(
                             "mfe_pct": summary.get("mfe_pct"),
                         },
                     )
-                    _ds_outcome(
-                        run_id=run_id,
-                        symbol=cfg.symbol,
+                    outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+                    outcome_row = build_outcome_row(
+                        summary,
                         trade_id=str(trade_id),
                         event_id=str(event_id),
-                        outcome_time_utc=summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc(),
-                        outcome=summary.get("outcome") or summary.get("end_reason") or "UNKNOWN",
-                        pnl_pct=summary.get("pnl_pct") or 0.0,
-                        details_json=json.dumps(
-                            {
-                                "details_payload": summary.get("details_payload"),
-                                "entry_snapshot": entry_snapshot,
-                                "entry_mode": cfg.entry_mode,
-                                "context_score": entry_snapshot.get("context_score"),
-                                "hold_seconds": summary.get("hold_seconds"),
-                                "mae_pct": summary.get("mae_pct"),
-                                "mfe_pct": summary.get("mfe_pct"),
-                                "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
-                            },
-                            ensure_ascii=False,
-                        ),
+                        run_id=run_id,
+                        symbol=cfg.symbol,
+                        strategy="short_pump",
+                        mode="live",
+                        side="SHORT",
+                        outcome_time_utc=outcome_time_utc,
+                        entry_snapshot=entry_snapshot,
+                        extra_details={
+                            "entry_mode": cfg.entry_mode,
+                            "context_score": entry_snapshot.get("context_score"),
+                            "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
+                        },
                     )
+                    if outcome_row is not None:
+                        write_outcome_row(
+                            outcome_row,
+                            strategy="short_pump",
+                            mode="live",
+                            wall_time_utc=outcome_time_utc,
+                            schema_version=2,
+                        )
                     try:
                         append_csv(log_summary, summary)
                     except Exception as e:
