@@ -14,7 +14,8 @@ from common.runtime import run_id as gen_run_id, wall_time_utc
 from long_pullback.config import Config
 from long_pullback.context5m import LongPullbackState, update_context_5m
 from long_pullback.entry import decide_entry_long
-from long_pullback.telegram import send_telegram
+from long_pullback.telegram import TG_SEND_OUTCOME, send_telegram
+from notifications.tg_format import format_entry_ok, format_outcome
 from short_pump.io_csv import append_csv
 from short_pump.liquidations import get_liq_stats
 
@@ -200,15 +201,29 @@ def run_watch_for_symbol(
                         )
                         logger.info("LONG_ENTRY_OK_TG | symbol=%s | run_id=%s | event_id=%s", symbol, run_id, event_id)
                         try:
-                            parts = [f"ENTRY OK (LONG_PULLBACK): {symbol}", f"run_id={run_id}", f"event_id={event_id}"]
-                            if time_utc:
-                                parts.append(f"time_utc={time_utc}")
-                            if price is not None:
-                                parts.append(f"price={price}")
-                            if ctx_score is not None:
-                                parts.append(f"context_score={ctx_score}")
                             send_telegram(
-                                "\n".join(parts),
+                                format_entry_ok(
+                                    strategy=cfg.strategy_name,
+                                    side="LONG",
+                                    symbol=symbol,
+                                    run_id=run_id,
+                                    event_id=str(event_id),
+                                    time_utc=str(time_utc or ""),
+                                    price=price,
+                                    entry_price=float(price) if price is not None else 0.0,
+                                    tp_price=tp_price,
+                                    sl_price=sl_price,
+                                    tp_pct=entry_payload.get("tp_pct") or (cfg.tp_pct * 100.0),
+                                    sl_pct=entry_payload.get("sl_pct") or (cfg.sl_pct * 100.0),
+                                    entry_type=entry_payload.get("entry_type", "PULLBACK"),
+                                    context_score=ctx_score,
+                                    ctx_parts=entry_payload.get("context_parts"),
+                                    liq_short_usd_30s=entry_snapshot.get("liq_short_usd_30s"),
+                                    liq_long_usd_30s=entry_snapshot.get("liq_long_usd_30s"),
+                                    oi_change_fast_pct=None,
+                                    cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
+                                    debug_payload=entry_payload,
+                                ),
                                 strategy="long_pullback",
                                 side="LONG",
                                 mode="LIVE",
@@ -216,6 +231,7 @@ def run_watch_for_symbol(
                                 context_score=float(ctx_score) if ctx_score is not None else None,
                                 entry_ok=True,
                                 skip_reasons=None,
+                                formatted=True,
                             )
                         except Exception:
                             logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
@@ -356,6 +372,40 @@ def run_watch_for_symbol(
                                     wall_time_utc=outcome_time_utc,
                                     schema_version=2,
                                 )
+                            if TG_SEND_OUTCOME:
+                                try:
+                                    send_telegram(
+                                        format_outcome(
+                                            strategy=cfg.strategy_name,
+                                            side="LONG",
+                                            symbol=symbol,
+                                            run_id=run_id,
+                                            event_id=str(event_id),
+                                            outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
+                                            entry_price=entry_snapshot.get("entry_price"),
+                                            tp_price=entry_snapshot.get("tp_price"),
+                                            sl_price=entry_snapshot.get("sl_price"),
+                                            tp_pct=entry_snapshot.get("tp_pct"),
+                                            sl_pct=entry_snapshot.get("sl_pct"),
+                                            pnl_pct=summary.get("pnl_pct"),
+                                            hold_seconds=summary.get("hold_seconds"),
+                                            mae_pct=summary.get("mae_pct"),
+                                            mfe_pct=summary.get("mfe_pct"),
+                                            debug_payload=summary,
+                                        ),
+                                        strategy=cfg.strategy_name,
+                                        side="LONG",
+                                        mode="LIVE",
+                                        event_id=str(event_id),
+                                        context_score=float(entry_snapshot.get("context_score"))
+                                        if entry_snapshot.get("context_score") is not None
+                                        else None,
+                                        entry_ok=True,
+                                        skip_reasons=None,
+                                        formatted=True,
+                                    )
+                                except Exception:
+                                    logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
                         except Exception:
                             logger.exception("LONG_OUTCOME_ERROR | symbol=%s", symbol)
                         entry_ok = False

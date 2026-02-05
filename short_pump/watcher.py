@@ -31,6 +31,7 @@ from short_pump.logging_utils import get_logger, log_exception, log_info, log_wa
 from common.outcome_tracker import build_outcome_row
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
+from notifications.tg_format import format_armed_short, format_entry_ok, format_outcome
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.runtime import wall_time_utc
 
@@ -401,11 +402,15 @@ def run_watch_for_symbol(
                         extra={"oi_change_5m_pct": dbg5.get("oi_change_5m_pct")},
                     )
                     send_telegram(
-                        f"ARMED: {cfg.symbol}\n"
-                        f"run_id={run_id}\n"
-                        f"stage={st.stage}\n"
-                        f"context_score={context_score:.2f}\n"
-                        f"dist_to_peak={dbg5.get('dist_to_peak_pct'):.2f}%",
+                        format_armed_short(
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            event_id=f"{run_id}_armed",
+                            time_utc=dbg5.get("time_utc") or wall_time_utc(),
+                            price=dbg5.get("price") or last_price,
+                            dist_to_peak_pct=armed_dist,
+                            context_score=context_score,
+                        ),
                         strategy="short_pump",
                         side="SHORT",
                         mode="ARMED",
@@ -413,6 +418,7 @@ def run_watch_for_symbol(
                         context_score=context_score,
                         entry_ok=True,
                         skip_reasons=None,
+                        formatted=True,
                     )
 
                 # 1m polling (skip in FAST_ONLY)
@@ -744,10 +750,28 @@ def run_watch_for_symbol(
                     mode = "FAST" if entry_source == "fast" else "ARMED"
                     context_score_msg = entry_payload.get("context_score", context_score)
                     send_telegram(
-                        f"ENTRY OK ({entry_type}): {cfg.symbol}\n"
-                        f"run_id={run_id}\n"
-                        f"paper_entry={entry_price} tp={tp_price} sl={sl_price}\n"
-                        f"{json.dumps(entry_payload, ensure_ascii=False)}",
+                        format_entry_ok(
+                            strategy="short_pump",
+                            side="SHORT",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            event_id=str(event_id),
+                            time_utc=entry_payload.get("time_utc", ""),
+                            price=entry_payload.get("price", entry_price),
+                            entry_price=entry_price,
+                            tp_price=tp_price,
+                            sl_price=sl_price,
+                            tp_pct=entry_snapshot.get("tp_pct"),
+                            sl_pct=entry_snapshot.get("sl_pct"),
+                            entry_type=entry_type,
+                            context_score=context_score_msg,
+                            ctx_parts=entry_payload.get("context_parts"),
+                            liq_short_usd_30s=entry_payload.get("liq_short_usd_30s"),
+                            liq_long_usd_30s=entry_payload.get("liq_long_usd_30s"),
+                            oi_change_fast_pct=entry_payload.get("oi_change_fast_pct"),
+                            cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
+                            debug_payload=entry_payload,
+                        ),
                         strategy="short_pump",
                         side="SHORT",
                         mode=mode,
@@ -755,6 +779,7 @@ def run_watch_for_symbol(
                         context_score=float(context_score_msg) if context_score_msg is not None else None,
                         entry_ok=True,
                         skip_reasons=None,
+                        formatted=True,
                     )
                 except Exception as e:
                     log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
@@ -838,10 +863,24 @@ def run_watch_for_symbol(
                             event_id = entry_payload.get("event_id") or run_id
                             context_score_msg = entry_payload.get("context_score", context_score)
                             send_telegram(
-                                f"OUTCOME: {cfg.symbol}\n"
-                                f"run_id={run_id}\n"
-                                f"{summary.get('outcome')} | {summary.get('end_reason')}\n"
-                                f"pnl_pct={summary.get('pnl_pct')} entry={summary.get('entry_price')} exit={summary.get('exit_price')}",
+                                format_outcome(
+                                    strategy="short_pump",
+                                    side="SHORT",
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    event_id=str(event_id),
+                                    outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
+                                    entry_price=summary.get("entry_price") or entry_snapshot.get("entry_price"),
+                                    tp_price=entry_snapshot.get("tp_price"),
+                                    sl_price=entry_snapshot.get("sl_price"),
+                                    tp_pct=entry_snapshot.get("tp_pct"),
+                                    sl_pct=entry_snapshot.get("sl_pct"),
+                                    pnl_pct=summary.get("pnl_pct"),
+                                    hold_seconds=summary.get("hold_seconds"),
+                                    mae_pct=summary.get("mae_pct"),
+                                    mfe_pct=summary.get("mfe_pct"),
+                                    debug_payload=summary,
+                                ),
                                 strategy="short_pump",
                                 side="SHORT",
                                 mode="FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
@@ -849,6 +888,7 @@ def run_watch_for_symbol(
                                 context_score=float(context_score_msg) if context_score_msg is not None else None,
                                 entry_ok=True,
                                 skip_reasons=None,
+                                formatted=True,
                             )
                         except Exception as e:
                             log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")

@@ -21,6 +21,7 @@ def send_telegram(
     context_score: float | None,
     entry_ok: bool,
     skip_reasons: str | None = None,
+    formatted: bool = False,
 ) -> None:
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
@@ -32,14 +33,17 @@ def send_telegram(
         score_val = float(context_score) if context_score is not None else 0.0
         eid = (event_id or "")[:8] or "--------"
 
-        header = f"{emoji} {side_up} | {strategy_name} | {mode_up} | score={score_val:.2f} | eid={eid}"
-        lines = [header]
-        if entry_ok is False:
-            lines.append("ENTRY_OK ❌")
-            if skip_reasons:
-                lines.append(f"skip: {skip_reasons}")
-        if text:
-            lines.append(text)
+        if formatted:
+            lines = [text] if text else []
+        else:
+            header = f"{emoji} {side_up} | {strategy_name} | {mode_up} | score={score_val:.2f} | eid={eid}"
+            lines = [header]
+            if entry_ok is False:
+                lines.append("ENTRY_OK ❌")
+                if skip_reasons:
+                    lines.append(f"skip: {skip_reasons}")
+            if text:
+                lines.append(text)
         lines.append(f"#{strategy_name} #{mode_up}")
         final_text = "\n".join(lines)
 
