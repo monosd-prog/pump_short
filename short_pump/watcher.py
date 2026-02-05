@@ -196,6 +196,9 @@ def run_watch_for_symbol(
     log_summary = f"logs/{run_id}_{cfg.symbol}_summary.csv"
 
     st = StructureState()
+    if os.getenv("FORCE_ARMED") == "1":
+        st.stage = 4
+        log_info(logger, "TEST_FORCE_ARMED", symbol=cfg.symbol, run_id=run_id, step="WATCH_START")
     watch_time_utc = wall_time_utc()
     _ds_event(
         run_id=run_id,
