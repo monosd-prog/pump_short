@@ -182,6 +182,7 @@ def run_watch_for_symbol(
                         time_utc = entry_payload.get("time_utc")
                         price = entry_payload.get("price")
                         ctx_score = entry_payload.get("context_score")
+                        entry_time_wall_utc = wall_time_utc()
                         if not entry_payload.get("dist_to_peak_pct"):
                             peak_val = st.peak_price
                             entry_price = float(price) if price is not None else 0.0
@@ -300,12 +301,20 @@ def run_watch_for_symbol(
                                 strategy_name=cfg.strategy_name,
                             )
                             try:
-                                exit_ts = pd.Timestamp(summary.get("exit_time_utc") or summary.get("hit_time_utc") or entry_ts_utc)
-                                if exit_ts.tzinfo is None:
-                                    exit_ts = exit_ts.tz_localize("UTC")
-                                hold_seconds = (exit_ts - entry_ts_utc).total_seconds()
+                                entry_wall_ts = pd.Timestamp(entry_time_wall_utc)
+                                if entry_wall_ts.tzinfo is None:
+                                    entry_wall_ts = entry_wall_ts.tz_localize("UTC")
+                                outcome_time_wall_utc = wall_time_utc()
+                                outcome_wall_ts = pd.Timestamp(outcome_time_wall_utc)
+                                if outcome_wall_ts.tzinfo is None:
+                                    outcome_wall_ts = outcome_wall_ts.tz_localize("UTC")
+                                hold_seconds = max(0.0, (outcome_wall_ts - entry_wall_ts).total_seconds())
                             except Exception:
+                                outcome_time_wall_utc = wall_time_utc()
                                 hold_seconds = 0.0
+                            if hold_seconds == 0.0 and summary.get("end_reason") in ("TP_hit", "SL_hit"):
+                                min_hold = float(getattr(cfg, "outcome_poll_seconds", 60) or 60)
+                                hold_seconds = max(hold_seconds, min_hold)
                             summary["hold_seconds"] = hold_seconds
                             logger.info(
                                 "OUTCOME_DONE | symbol=%s | run_id=%s | outcome_type=%s | hold_seconds=%s | pnl_pct=%s | mae_pct=%s | mfe_pct=%s",
@@ -318,7 +327,7 @@ def run_watch_for_symbol(
                                 summary.get("mfe_pct"),
                             )
                             trade_id = entry_payload.get("trade_id") or f"{event_id}_trade"
-                            outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+                            outcome_time_utc = outcome_time_wall_utc
                             outcome_row = build_outcome_row(
                                 summary,
                                 trade_id=str(trade_id),
@@ -334,6 +343,9 @@ def run_watch_for_symbol(
                                     "entry_mode": mode,
                                     "context_score": entry_snapshot.get("context_score"),
                                     "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
+                                    "entry_time_wall_utc": entry_time_wall_utc,
+                                    "outcome_time_wall_utc": outcome_time_wall_utc,
+                                    "hold_seconds": hold_seconds,
                                 },
                             )
                             if outcome_row is not None:
