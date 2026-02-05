@@ -218,10 +218,10 @@ def run_watch_for_symbol(
         stage=st.stage,
         entry_ok=False,
         skip_reasons="watch_start",
-        context_score=None,
+        context_score=0.0,
         payload={
             "time_utc": meta.get("pump_ts") or watch_time_utc,
-            "price": "",
+            "price": 0.0,
             "dist_to_peak_pct": _sanitize_dist_to_peak(meta.get("dist_to_peak_pct")),
             "pump_pct": meta.get("pump_pct", ""),
             "source": meta.get("source", ""),
