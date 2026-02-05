@@ -104,7 +104,12 @@ def normalize_outcome_v2(row: Dict[str, Any]) -> Dict[str, Any]:
         {
             **row,
             "schema_version": SCHEMA_VERSION,
-            "outcome_time_utc": row.get("exit_time_utc") or row.get("hit_time_utc") or "",
+            "outcome_time_utc": (
+                row.get("outcome_time_utc")
+                or row.get("exit_time_utc")
+                or row.get("hit_time_utc")
+                or ""
+            ),
             "outcome": row.get("end_reason") or row.get("outcome") or "UNKNOWN",
             "details_json": row.get("details_payload") or row.get("details_json") or "",
         },
