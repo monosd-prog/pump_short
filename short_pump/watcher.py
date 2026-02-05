@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from typing import Any, Dict, Optional
@@ -49,6 +50,16 @@ def _dist_to_peak_pct(peak_price: float | None, current_price: float | None) -> 
     if peak <= 0:
         return 0.0
     return max(0.0, (peak - price) / peak * 100.0)
+
+
+def _sanitize_dist_to_peak(val: object) -> float:
+    try:
+        v = float(val)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(v):
+        return 0.0
+    return v
 
 
 def _ds_event(
@@ -211,7 +222,7 @@ def run_watch_for_symbol(
         payload={
             "time_utc": meta.get("pump_ts") or watch_time_utc,
             "price": "",
-            "dist_to_peak_pct": 0.0,
+            "dist_to_peak_pct": _sanitize_dist_to_peak(meta.get("dist_to_peak_pct")),
             "pump_pct": meta.get("pump_pct", ""),
             "source": meta.get("source", ""),
         },
