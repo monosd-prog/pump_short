@@ -23,6 +23,7 @@ def decide_entry_long(
     trades: pd.DataFrame,
     oi_1m: pd.DataFrame | None,
     ctx_parts: Dict[str, float],
+    peak_price: float | None = None,
     mode: str = "live",
 ) -> Tuple[bool, Dict[str, Any]]:
     event_id = str(uuid.uuid4())
@@ -67,10 +68,19 @@ def decide_entry_long(
 
     entry_ok = absorption_ok and breakout_ok
 
+    if peak_price is None:
+        peak_price = 0.0
+    try:
+        peak_val = float(peak_price or 0.0)
+    except (TypeError, ValueError):
+        peak_val = 0.0
+    dist_to_peak_pct = max(0.0, (peak_val - price) / peak_val * 100.0) if peak_val > 0 else 0.0
+
     payload = {
         "event_id": event_id,
         "time_utc": str(now_ts),
         "price": price,
+        "dist_to_peak_pct": dist_to_peak_pct,
         "cvd_delta_ratio_30s": cvd_30s,
         "cvd_delta_ratio_1m": cvd_1m,
         "oi_change_1m_pct": oi_change,
@@ -151,6 +161,7 @@ def _write_event(
         "context_parts": json.dumps(parts, ensure_ascii=False),
         "time_utc": payload.get("time_utc", ""),
         "price": payload.get("price", ""),
+        "dist_to_peak_pct": float(payload.get("dist_to_peak_pct") or 0.0),
         "cvd_delta_ratio_30s": payload.get("cvd_delta_ratio_30s", ""),
         "cvd_delta_ratio_1m": payload.get("cvd_delta_ratio_1m", ""),
         "oi_change_1m_pct": payload.get("oi_change_1m_pct", ""),

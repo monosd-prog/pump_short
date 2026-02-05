@@ -93,6 +93,17 @@ def run_watch_for_symbol(
                     last_ts = candles_5m.iloc[-1]["ts"]
                 if last_ts is not None and last_ts != st.last_5m_ts:
                     st.last_5m_ts = last_ts
+                    last_close = None
+                    try:
+                        last_close = float(candles_5m.iloc[-1]["close"])
+                    except Exception:
+                        last_close = None
+                    peak_price = st.peak_price
+                    dist_to_peak_pct = (
+                        max(0.0, (peak_price - last_close) / peak_price * 100.0)
+                        if peak_price and last_close
+                        else 0.0
+                    )
                     event_row = {
                         "run_id": run_id,
                         "event_id": str(last_ts),
@@ -106,6 +117,8 @@ def run_watch_for_symbol(
                         "context_parts": json.dumps(ctx_parts, ensure_ascii=False),
                         "entry_ok": False,
                         "skip_reasons": "stage_lt_2" if st.stage < 2 else "",
+                        "price": last_close if last_close is not None else "",
+                        "dist_to_peak_pct": float(dist_to_peak_pct),
                         "entry_payload": "",
                         "time_utc": str(last_ts),
                     }
@@ -140,6 +153,7 @@ def run_watch_for_symbol(
                         trades=trades,
                         oi_1m=oi,
                         ctx_parts=ctx_parts,
+                        peak_price=st.peak_price,
                         mode=mode,
                     )
                     logger.info(
@@ -168,6 +182,21 @@ def run_watch_for_symbol(
                         time_utc = entry_payload.get("time_utc")
                         price = entry_payload.get("price")
                         ctx_score = entry_payload.get("context_score")
+                        if not entry_payload.get("dist_to_peak_pct"):
+                            peak_val = st.peak_price
+                            entry_price = float(price) if price is not None else 0.0
+                            entry_payload["dist_to_peak_pct"] = (
+                                max(0.0, (peak_val - entry_price) / peak_val * 100.0) if peak_val > 0 else 0.0
+                            )
+                        logger.info(
+                            "EVENT_DIST_TO_PEAK | symbol=%s | run_id=%s | event_id=%s | price=%s | peak=%s | dist_to_peak_pct=%s",
+                            symbol,
+                            run_id,
+                            event_id,
+                            price,
+                            st.peak_price,
+                            entry_payload.get("dist_to_peak_pct"),
+                        )
                         logger.info("LONG_ENTRY_OK_TG | symbol=%s | run_id=%s | event_id=%s", symbol, run_id, event_id)
                         try:
                             parts = [f"ENTRY OK (LONG_PULLBACK): {symbol}", f"run_id={run_id}", f"event_id={event_id}"]

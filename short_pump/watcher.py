@@ -40,6 +40,17 @@ def _utc_now_str() -> str:
     return pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M:%S%z")
 
 
+def _dist_to_peak_pct(peak_price: float | None, current_price: float | None) -> float:
+    try:
+        peak = float(peak_price or 0.0)
+        price = float(current_price or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if peak <= 0:
+        return 0.0
+    return max(0.0, (peak - price) / peak * 100.0)
+
+
 def _ds_event(
     *,
     run_id: str,
@@ -66,7 +77,7 @@ def _ds_event(
         "skip_reasons": skip_reasons,
         "context_score": context_score if context_score is not None else "",
         "price": (payload or {}).get("price", ""),
-        "dist_to_peak_pct": (payload or {}).get("dist_to_peak_pct", ""),
+        "dist_to_peak_pct": float((payload or {}).get("dist_to_peak_pct") or 0.0),
         "cvd_delta_ratio_30s": (payload or {}).get("cvd_delta_ratio_30s", ""),
         "cvd_delta_ratio_1m": (payload or {}).get("cvd_delta_ratio_1m", ""),
         "oi_change_5m_pct": (extra or {}).get("oi_change_5m_pct", ""),
@@ -197,6 +208,7 @@ def run_watch_for_symbol(
         payload={
             "time_utc": meta.get("pump_ts") or watch_time_utc,
             "price": "",
+            "dist_to_peak_pct": 0.0,
             "pump_pct": meta.get("pump_pct", ""),
             "source": meta.get("source", ""),
         },
@@ -341,6 +353,21 @@ def run_watch_for_symbol(
                 # ARM notify once
                 if not st.armed_notified:
                     st.armed_notified = True
+                    armed_dist = _dist_to_peak_pct(dbg5.get("peak_price"), dbg5.get("price") or last_price)
+                    log_info(
+                        logger,
+                        "EVENT_DIST_TO_PEAK",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="ARMED",
+                        extra={
+                            "event_id": f"{run_id}_armed",
+                            "price": dbg5.get("price") or last_price,
+                            "peak": dbg5.get("peak_price"),
+                            "dist_to_peak_pct": armed_dist,
+                        },
+                    )
                     log_info(logger, "ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ARMED", extra={"context_score": context_score, "dist_to_peak_pct": dbg5.get('dist_to_peak_pct')})
                     _ds_event(
                         run_id=run_id,
@@ -353,7 +380,7 @@ def run_watch_for_symbol(
                         payload={
                             "time_utc": dbg5.get("time_utc") or wall_time_utc(),
                             "price": dbg5.get("price") or last_price,
-                            "dist_to_peak_pct": dbg5.get("dist_to_peak_pct"),
+                            "dist_to_peak_pct": armed_dist,
                             "pump_pct": meta.get("pump_pct", ""),
                             "source": meta.get("source", ""),
                         },
@@ -659,6 +686,22 @@ def run_watch_for_symbol(
                 )
                 event_id = entry_payload.get("event_id") or f"{run_id}_entry_{entry_source}"
                 trade_id = f"{event_id}_trade"
+                if not entry_payload.get("dist_to_peak_pct"):
+                    entry_payload["dist_to_peak_pct"] = _dist_to_peak_pct(dbg5.get("peak_price"), entry_price)
+                log_info(
+                    logger,
+                    "EVENT_DIST_TO_PEAK",
+                    symbol=cfg.symbol,
+                    run_id=run_id,
+                    stage=st.stage,
+                    step="ENTRY_DECISION",
+                    extra={
+                        "event_id": str(event_id),
+                        "price": entry_price,
+                        "peak": dbg5.get("peak_price"),
+                        "dist_to_peak_pct": entry_payload.get("dist_to_peak_pct"),
+                    },
+                )
                 _ds_event(
                     run_id=run_id,
                     symbol=cfg.symbol,
