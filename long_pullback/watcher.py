@@ -213,6 +213,17 @@ def run_watch_for_symbol(
                             "entry_source": entry_payload.get("entry_source", "1m"),
                             "entry_type": entry_payload.get("entry_type", "PULLBACK"),
                         }
+                        entry_snapshot.update(
+                            {
+                                "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
+                                "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
+                                "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
+                                "entry_source": entry_payload.get("entry_source"),
+                                "entry_type": entry_payload.get("entry_type"),
+                            }
+                        )
+                        if "dist_to_peak_pct" in entry_payload:
+                            entry_snapshot["dist_to_peak_pct"] = entry_payload.get("dist_to_peak_pct")
                         try:
                             now_ts = time.time()
                             entry_snapshot.update(
