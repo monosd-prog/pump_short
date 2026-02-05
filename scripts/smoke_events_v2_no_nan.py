@@ -67,8 +67,10 @@ def main() -> int:
         for row in reader:
             recent_rows.append(row)
 
+    recent_rows = list(recent_rows)
+    checked = recent_rows[-tail:] if tail else recent_rows
     bad_rows: list[dict[str, str]] = []
-    for row in list(recent_rows)[-tail:]:
+    for row in checked:
         bad_fields: list[str] = []
         for field in ("dist_to_peak_pct", "price", "context_score"):
             value = row.get(field)
@@ -98,7 +100,7 @@ def main() -> int:
         print(f"summary | rows_checked={len(recent_rows[-tail:])} | ok=0 | bad_count={len(bad_rows)}")
         return 1
 
-    print(f"summary | rows_checked={len(recent_rows[-tail:])} | ok=1")
+    print(f"summary | rows_checked={len(checked)} | ok=1")
     return 0
 
 
