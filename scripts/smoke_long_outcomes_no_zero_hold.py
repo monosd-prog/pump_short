@@ -6,6 +6,7 @@ import sys
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
+import os
 
 
 def _parse_float(value: object) -> float | None:
@@ -22,6 +23,19 @@ def _parse_float(value: object) -> float | None:
 
 def _print_usage() -> None:
     print("Usage: python scripts/smoke_long_outcomes_no_zero_hold.py [YYYYMMDD] [--tail N]")
+
+
+def resolve_root() -> Path:
+    env_root = os.getenv("DATASETS_ROOT")
+    if env_root:
+        root = Path(env_root).expanduser()
+    else:
+        root = Path(__file__).resolve().parents[1] / "datasets"
+    if (root / "datasets").exists():
+        root = root / "datasets"
+    if os.getenv("DEBUG_SMOKE") == "1":
+        print(f"DEBUG_SMOKE | datasets_root={root}")
+    return root
 
 
 def main() -> int:
@@ -48,9 +62,9 @@ def main() -> int:
             date_str = args[i]
             i += 1
 
-    repo_root = Path(__file__).resolve().parents[1]
-    rel_path = Path("datasets") / f"date={date_str}" / "strategy=long_pullback" / "mode=live" / "outcomes_v2.csv"
-    path = repo_root / rel_path
+    root = resolve_root()
+    rel_path = Path(f"date={date_str}") / "strategy=long_pullback" / "mode=live" / "outcomes_v2.csv"
+    path = root / rel_path
     if not path.exists():
         print(f"outcomes_v2.csv not found: {path}")
         return 2
