@@ -114,6 +114,8 @@ def write_outcome_row(
         "details_payload": row.get("details_payload", ""),
         **row,
     }
+    if not row.get("outcome_time_utc"):
+        row["outcome_time_utc"] = wall_time_utc
     base_dir = _dataset_dir(strategy, mode, wall_time_utc)
     if schema_version == 2:
         path = os.path.join(base_dir, "outcomes_v2.csv")
