@@ -154,6 +154,18 @@ def start_liquidation_listener(category: str) -> None:
         global _last_heartbeat
         global _rx_total, _rx_json_ok, _rx_topic_liq, _rx_events_total, _last_raw_ts, _last_rx_wall, _last_event_ts_ms, _last_symbol, _reconnects_total, _debug_msg_total
         global _ping_sent_count, _last_disconnect_reason, _last_no_data_log_ts
+
+        def _maybe_log_health(now: float, url: str) -> None:
+            global _last_heartbeat
+            if now - _last_heartbeat >= 60:
+                health = get_liq_health()
+                log_info(
+                    logger,
+                    "LIQ_WS_HEALTH",
+                    step="LIQ_WS",
+                    extra={"url": url, **health},
+                )
+                _last_heartbeat = now
         backoff = 1.0
         conn_id = 0
         while True:
@@ -208,21 +220,14 @@ def start_liquidation_listener(category: str) -> None:
                         last_ping_wall = now_wall
 
                     try:
+                        _maybe_log_health(time.time(), url)
                         raw = ws.recv()
                     except (WebSocketTimeoutException, socket.timeout, TimeoutError):
                         _last_disconnect_reason = "timeout_continue"
                         if _LIQ_WS_DEBUG:
                             log_info(logger, "LIQ_WS_TIMEOUT_CONTINUE", step="LIQ_WS", extra={"conn_id": conn_id})
                         now = time.time()
-                        if now - _last_heartbeat >= 60:
-                            health = get_liq_health()
-                            log_info(
-                                logger,
-                                "LIQ_WS_HEALTH",
-                                step="LIQ_WS",
-                                extra={"url": url, **health},
-                            )
-                            _last_heartbeat = now
+                        _maybe_log_health(now, url)
                         if now - _last_rx_wall >= 60 and (now - _last_no_data_log_ts >= 60):
                             log_info(
                                 logger,
@@ -315,15 +320,7 @@ def start_liquidation_listener(category: str) -> None:
 
             except (WebSocketTimeoutException, TimeoutError):
                 now = time.time()
-                if now - _last_heartbeat >= 60:
-                    health = get_liq_health()
-                    log_info(
-                        logger,
-                        "LIQ_WS_HEALTH",
-                        step="LIQ_WS",
-                        extra={"url": url, **health},
-                    )
-                    _last_heartbeat = now
+                _maybe_log_health(now, url)
                 continue
             except WebSocketConnectionClosedException as e:
                 _reconnects_total += 1
