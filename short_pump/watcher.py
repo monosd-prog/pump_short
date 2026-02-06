@@ -5,6 +5,7 @@ import json
 import math
 import os
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -626,6 +627,10 @@ def run_watch_for_symbol(
                 entry_source = entry_payload.get("entry_source", "unknown")
                 entry_type = entry_payload.get("entry_type", "unknown")
                 entry_ts_str = entry_payload.get("time_utc", "")
+                entry_wall_ts_ms = int(time.time() * 1000)
+                entry_time_wall_utc = (
+                    datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                )
                 try:
                     entry_ts_utc = pd.Timestamp(entry_ts_str)
                     if entry_ts_utc.tzinfo is None:
@@ -803,12 +808,13 @@ def run_watch_for_symbol(
                     summary["context_score"] = entry_snapshot.get("context_score")
                     summary["context_parts"] = json.dumps(entry_snapshot.get("context_parts"), ensure_ascii=False)
                     summary["entry_snapshot"] = json.dumps(entry_snapshot, ensure_ascii=False)
-                    try:
-                        exit_ts = pd.Timestamp(summary.get("exit_time_utc") or summary.get("hit_time_utc") or entry_ts_utc)
-                        if exit_ts.tzinfo is None:
-                            exit_ts = exit_ts.tz_localize("UTC")
-                        hold_seconds = (exit_ts - entry_ts_utc).total_seconds()
-                    except Exception:
+                    outcome_wall_ts_ms = int(time.time() * 1000)
+                    outcome_time_wall_utc = (
+                        datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    )
+                    if entry_wall_ts_ms:
+                        hold_seconds = max(0.0, (outcome_wall_ts_ms - entry_wall_ts_ms) / 1000.0)
+                    else:
                         hold_seconds = 0.0
                     summary["hold_seconds"] = hold_seconds
                     log_info(logger, "OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME", extra={"outcome": summary.get("outcome"), "end_reason": summary.get("end_reason")})
@@ -843,9 +849,34 @@ def run_watch_for_symbol(
                             "entry_mode": cfg.entry_mode,
                             "context_score": entry_snapshot.get("context_score"),
                             "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
+                            "entry_wall_ts_ms": entry_wall_ts_ms if entry_wall_ts_ms else None,
+                            "entry_time_wall_utc": entry_time_wall_utc if entry_wall_ts_ms else None,
+                            "outcome_wall_ts_ms": outcome_wall_ts_ms,
+                            "outcome_time_wall_utc": outcome_time_wall_utc,
+                            "hold_seconds": hold_seconds,
                         },
                     )
                     if outcome_row is not None:
+                        try:
+                            details_obj = json.loads(outcome_row.get("details_json") or "{}")
+                            if "entry_time_wall_utc" not in details_obj or "outcome_time_wall_utc" not in details_obj:
+                                log_warning(
+                                    logger,
+                                    "OUTCOME_DETAILS_MISSING_WALL_TIME",
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    stage=st.stage,
+                                    step="OUTCOME",
+                                )
+                        except Exception:
+                            log_warning(
+                                logger,
+                                "OUTCOME_DETAILS_PARSE_ERROR",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="OUTCOME",
+                            )
                         write_outcome_row(
                             outcome_row,
                             strategy="short_pump",
