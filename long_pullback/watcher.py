@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -183,7 +184,10 @@ def run_watch_for_symbol(
                         time_utc = entry_payload.get("time_utc")
                         price = entry_payload.get("price")
                         ctx_score = entry_payload.get("context_score")
-                        entry_time_wall_utc = wall_time_utc()
+                        entry_wall_ts_ms = int(time.time() * 1000)
+                        entry_time_wall_utc = (
+                            datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                        )
                         if not entry_payload.get("dist_to_peak_pct"):
                             peak_val = st.peak_price
                             entry_price = float(price) if price is not None else 0.0
@@ -316,17 +320,13 @@ def run_watch_for_symbol(
                                 category=cfg.category,
                                 strategy_name=cfg.strategy_name,
                             )
-                            try:
-                                entry_wall_ts = pd.Timestamp(entry_time_wall_utc)
-                                if entry_wall_ts.tzinfo is None:
-                                    entry_wall_ts = entry_wall_ts.tz_localize("UTC")
-                                outcome_time_wall_utc = wall_time_utc()
-                                outcome_wall_ts = pd.Timestamp(outcome_time_wall_utc)
-                                if outcome_wall_ts.tzinfo is None:
-                                    outcome_wall_ts = outcome_wall_ts.tz_localize("UTC")
-                                hold_seconds = max(0.0, (outcome_wall_ts - entry_wall_ts).total_seconds())
-                            except Exception:
-                                outcome_time_wall_utc = wall_time_utc()
+                            outcome_wall_ts_ms = int(time.time() * 1000)
+                            outcome_time_wall_utc = (
+                                datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                            )
+                            if entry_wall_ts_ms:
+                                hold_seconds = max(0.0, (outcome_wall_ts_ms - entry_wall_ts_ms) / 1000.0)
+                            else:
                                 hold_seconds = 0.0
                             if hold_seconds == 0.0 and summary.get("end_reason") in ("TP_hit", "SL_hit"):
                                 min_hold = float(getattr(cfg, "outcome_poll_seconds", 60) or 60)
@@ -359,12 +359,26 @@ def run_watch_for_symbol(
                                     "entry_mode": mode,
                                     "context_score": entry_snapshot.get("context_score"),
                                     "outcome_time_utc": summary.get("exit_time_utc") or summary.get("hit_time_utc"),
-                                    "entry_time_wall_utc": entry_time_wall_utc,
+                                    "entry_time_wall_utc": entry_time_wall_utc if entry_wall_ts_ms else None,
                                     "outcome_time_wall_utc": outcome_time_wall_utc,
                                     "hold_seconds": hold_seconds,
                                 },
                             )
                             if outcome_row is not None:
+                                try:
+                                    details_obj = json.loads(outcome_row.get("details_json") or "{}")
+                                    if "entry_time_wall_utc" not in details_obj or "outcome_time_wall_utc" not in details_obj:
+                                        logger.warning(
+                                            "OUTCOME_DETAILS_MISSING_WALL_TIME | symbol=%s | event_id=%s",
+                                            symbol,
+                                            event_id,
+                                        )
+                                except Exception:
+                                    logger.warning(
+                                        "OUTCOME_DETAILS_PARSE_ERROR | symbol=%s | event_id=%s",
+                                        symbol,
+                                        event_id,
+                                    )
                                 write_outcome_row(
                                     outcome_row,
                                     strategy=cfg.strategy_name,
