@@ -23,8 +23,8 @@ except Exception:  # pragma: no cover - runtime optional
 
 
 _lock = threading.Lock()
-_events_short: Dict[str, Deque[Tuple[float, float]]] = defaultdict(deque)
-_events_long: Dict[str, Deque[Tuple[float, float]]] = defaultdict(deque)
+_events_short: Dict[str, Deque[Tuple[int, float, float]]] = defaultdict(deque)
+_events_long: Dict[str, Deque[Tuple[int, float, float]]] = defaultdict(deque)
 _started = False
 _max_age_sec = 600.0  # keep up to 10 minutes
 _subscribed_symbols: Set[str] = set()
@@ -69,15 +69,15 @@ def _endpoint_for_category(category: str) -> str:
     return "wss://stream.bybit.com/v5/public/linear"
 
 
-def _add_event(symbol: str, ts_ms: int, usd: float, side: str) -> None:
-    if not symbol or usd <= 0:
+def _add_event(symbol: str, ts_ms: int, qty: float, price: float, side: str) -> None:
+    if not symbol or qty <= 0 or price <= 0:
         return
     sym = _normalize_symbol(symbol)
     with _lock:
         if side == "short":
-            _events_short[sym].append((ts_ms, usd))
+            _events_short[sym].append((ts_ms, qty, price))
         elif side == "long":
-            _events_long[sym].append((ts_ms, usd))
+            _events_long[sym].append((ts_ms, qty, price))
         _purge_locked(sym, now=ts_ms)
 
 
@@ -92,7 +92,7 @@ def _purge_locked(symbol: str, now: float) -> None:
 
 
 def get_liq_stats(symbol: str, now_ts: float, window_seconds: int, side: str = "short") -> Tuple[int, float]:
-    """Return (count, usd_sum) for liquidations over window_seconds."""
+    """Return (count, qty_sum) for liquidations over window_seconds."""
     sym = _normalize_symbol(symbol)
     if now_ts < 10**11:
         now_ms = int(now_ts * 1000)
@@ -105,12 +105,12 @@ def get_liq_stats(symbol: str, now_ts: float, window_seconds: int, side: str = "
             return 0, 0.0
         cutoff_ms = now_ms - int(window_seconds * 1000)
         count = 0
-        usd_sum = 0.0
-        for ts_ms, usd in q:
+        qty_sum = 0.0
+        for ts_ms, qty, _price in q:
             if ts_ms >= cutoff_ms:
                 count += 1
-                usd_sum += usd
-        return count, float(usd_sum)
+                qty_sum += qty
+        return count, float(qty_sum)
 def get_liq_health() -> Dict[str, Optional[int]]:
     with _lock:
         return {
@@ -272,51 +272,55 @@ def start_liquidation_listener(category: str) -> None:
                     except Exception:
                         continue
                     topic = msg.get("topic") or msg.get("op") or ""
-                    if isinstance(topic, str) and ("liquidation" in topic.lower() or "allliquidation" in topic.lower()):
+                    topic = topic if isinstance(topic, str) else ""
+                    if topic.startswith("allLiquidation."):
                         _rx_topic_liq += 1
 
                     data = msg.get("data")
-                    if not data:
+                    if not data or not isinstance(data, list):
                         continue
-                    if isinstance(data, dict):
-                        items = [data]
-                    else:
-                        items = data
-
-                    for item in items:
+                    for item in data:
                         if not isinstance(item, dict):
                             continue
-                        symbol = item.get("symbol") or item.get("s")
-                        side = (item.get("side") or item.get("S") or "").lower()
+                        symbol = item.get("s") or (topic.split(".", 1)[1] if "." in topic else "")
+                        side_raw = item.get("S") or ""
+                        side = side_raw.strip().lower()
                         # For Bybit: Buy = liquidation of LONG, Sell = liquidation of SHORT
                         if side not in ("buy", "sell"):
                             continue
-
-                        price = item.get("price") or item.get("p")
-                        qty = item.get("size") or item.get("qty") or item.get("q")
-                        ts = item.get("time") or item.get("ts") or item.get("timestamp") or item.get("T")
-
+                        price = item.get("p") or item.get("price") or 0
+                        qty = item.get("v") or item.get("size") or item.get("qty") or item.get("q") or 0
+                        ts = item.get("T") or msg.get("ts") or 0
                         try:
                             price_f = float(price)
                             qty_f = float(qty)
                         except Exception:
                             continue
-
-                        usd = price_f * qty_f
-                        if isinstance(ts, (int, float)):
-                            ts_f = float(ts)
-                        else:
-                            ts_f = time.time()
-                        if ts_f < 10**11:
-                            ts_ms = int(ts_f * 1000)
-                        else:
-                            ts_ms = int(ts_f)
+                        try:
+                            ts_ms = int(ts)
+                        except Exception:
+                            ts_ms = int(time.time() * 1000)
+                        if ts_ms < 10**11:
+                            ts_ms = int(ts_ms * 1000)
 
                         _rx_events_total += 1
                         _last_event_ts_ms = ts_ms
                         _last_symbol = str(symbol) if symbol else None
                         liq_side = "long" if side == "buy" else "short"
-                        _add_event(str(symbol), ts_ms, usd, liq_side)
+                        _add_event(str(symbol), ts_ms, qty_f, price_f, liq_side)
+                        if _LIQ_WS_DEBUG:
+                            log_info(
+                                logger,
+                                "LIQ_WS_EVENT",
+                                step="LIQ_WS",
+                                extra={
+                                    "symbol": str(symbol),
+                                    "ts_ms": ts_ms,
+                                    "side": side_raw,
+                                    "qty": qty_f,
+                                    "price": price_f,
+                                },
+                            )
 
             except (WebSocketTimeoutException, TimeoutError):
                 now = time.time()
