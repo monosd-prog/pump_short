@@ -166,6 +166,18 @@ def start_liquidation_listener(category: str) -> None:
                     extra={"url": url, **health},
                 )
                 _last_heartbeat = now
+            if _rx_topic_liq > 0 and _rx_events_total == 0 and (now - _last_rx_wall >= 60):
+                log_info(
+                    logger,
+                    "LIQ_WS_PARSE_SUSPECT",
+                    step="LIQ_WS",
+                    extra={
+                        "url": url,
+                        "rx_topic_liq": _rx_topic_liq,
+                        "rx_events_total": _rx_events_total,
+                        "last_raw_ts": _last_raw_ts,
+                    },
+                )
         backoff = 1.0
         conn_id = 0
         while True:
@@ -189,6 +201,8 @@ def start_liquidation_listener(category: str) -> None:
                 last_ping_wall = 0.0
                 _ping_sent_count = 0
                 _last_rx_wall = time.time()
+                debug_event_window_start = 0.0
+                debug_event_count = 0
                 while True:
                     # subscribe to new symbols
                     args = []
@@ -309,18 +323,24 @@ def start_liquidation_listener(category: str) -> None:
                         liq_side = "long" if side == "buy" else "short"
                         _add_event(str(symbol), ts_ms, qty_f, price_f, liq_side)
                         if _LIQ_WS_DEBUG:
-                            log_info(
-                                logger,
-                                "LIQ_WS_EVENT",
-                                step="LIQ_WS",
-                                extra={
-                                    "symbol": str(symbol),
-                                    "ts_ms": ts_ms,
-                                    "side": side_raw,
-                                    "qty": qty_f,
-                                    "price": price_f,
-                                },
-                            )
+                            now = time.time()
+                            if now - debug_event_window_start >= 60:
+                                debug_event_window_start = now
+                                debug_event_count = 0
+                            if debug_event_count < 5:
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_EVENT",
+                                    step="LIQ_WS",
+                                    extra={
+                                        "symbol": str(symbol),
+                                        "ts_ms": ts_ms,
+                                        "side": side_raw,
+                                        "qty": qty_f,
+                                        "price": price_f,
+                                    },
+                                )
+                                debug_event_count += 1
 
             except (WebSocketTimeoutException, TimeoutError):
                 now = time.time()
