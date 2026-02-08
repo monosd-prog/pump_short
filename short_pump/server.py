@@ -59,6 +59,48 @@ class PumpEvent(BaseModel):
     extra: Optional[Dict[str, Any]] = None
 
 
+@app.on_event("startup")
+async def bootstrap_force_symbols() -> None:
+    raw = os.getenv("FORCE_SYMBOLS", "")
+    symbols = [s.strip().upper() for s in raw.split(",") if s.strip()] if raw else []
+    logger.info(
+        "FORCE_SYMBOLS_BOOTSTRAP | symbols=%s | enabled=%s",
+        symbols,
+        bool(symbols),
+    )
+    if not symbols:
+        return
+    now = time.time()
+    pump_ts = _to_utc_iso(now)
+    for symbol in symbols:
+        try:
+            result = await rt.start_watch(
+                symbol=symbol,
+                exchange="bybit",
+                pump_pct=None,
+                pump_ts=pump_ts,
+                extra={"tf": "force", "kind": "force_start", "source": "force_symbols"},
+                source="force_symbols",
+            )
+            ok = isinstance(result, dict) and result.get("status") == "accepted"
+            err = ""
+            if isinstance(result, dict) and result.get("status") != "accepted":
+                err = result.get("reason", "")
+            logger.info(
+                "FORCE_SYMBOL_WATCH_START | symbol=%s | ok=%s | err=%s",
+                symbol,
+                ok,
+                err,
+            )
+        except Exception as e:
+            logger.exception(
+                "FORCE_SYMBOL_WATCH_START | symbol=%s | ok=%s | err=%s",
+                symbol,
+                False,
+                str(e),
+            )
+
+
 @app.get("/status")
 async def status():
     now = time.time()

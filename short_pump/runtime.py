@@ -126,6 +126,7 @@ class Runtime:
         pump_pct: Optional[float],
         pump_ts: Optional[str],
         extra: Optional[Dict[str, Any]],
+        source: str = "pump_webhook",
     ) -> Dict[str, Any]:
         symbol = self._validate_symbol(symbol)
         ex = (exchange or "bybit").lower()
@@ -156,7 +157,7 @@ class Runtime:
                     "pump_pct": pump_pct,
                     "pump_ts": pump_ts,
                     "extra": extra or {},
-                    "source": "pump_webhook",
+                    "source": source,
                 },
             )
 
