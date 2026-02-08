@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -21,6 +22,14 @@ from short_pump.io_csv import append_csv
 from short_pump.liquidations import get_liq_stats
 
 logger = get_logger(__name__, strategy="long_pullback")
+
+
+def is_strategy_enabled_for_tg(strategy: str) -> bool:
+    raw = os.getenv("TG_STRATEGIES", "short_pump")
+    if raw.strip().upper() == "ALL":
+        return True
+    allowed = {s.strip().lower() for s in raw.split(",") if s.strip()}
+    return (strategy or "").strip().lower() in allowed
 
 
 def _ds_outcome(
@@ -64,6 +73,13 @@ def run_watch_for_symbol(
     symbol = str(symbol).strip().upper()
     run_id = run_id or gen_run_id()
     logger = get_logger(__name__, strategy="long_pullback", symbol=symbol)
+    tg_enabled = is_strategy_enabled_for_tg("long_pullback")
+    logger.info(
+        "TG_STRATEGIES_CHECK | strategy=%s | enabled=%s | tg_strategies=%s",
+        "long_pullback",
+        tg_enabled,
+        os.getenv("TG_STRATEGIES", "short_pump"),
+    )
 
     log_5m = f"{cfg.logs_root}/{run_id}_{symbol}_5m.csv"
     log_1m = f"{cfg.logs_root}/{run_id}_{symbol}_1m.csv"
@@ -204,41 +220,49 @@ def run_watch_for_symbol(
                             entry_payload.get("dist_to_peak_pct"),
                         )
                         logger.info("LONG_ENTRY_OK_TG | symbol=%s | run_id=%s | event_id=%s", symbol, run_id, event_id)
-                        try:
-                            send_telegram(
-                                format_entry_ok(
-                                    strategy=cfg.strategy_name,
+                        if tg_enabled:
+                            try:
+                                send_telegram(
+                                    format_entry_ok(
+                                        strategy=cfg.strategy_name,
+                                        side="LONG",
+                                        symbol=symbol,
+                                        run_id=run_id,
+                                        event_id=str(event_id),
+                                        time_utc=str(time_utc or ""),
+                                        price=price,
+                                        entry_price=float(price) if price is not None else 0.0,
+                                        tp_price=tp_price,
+                                        sl_price=sl_price,
+                                        tp_pct=entry_payload.get("tp_pct") or (cfg.tp_pct * 100.0),
+                                        sl_pct=entry_payload.get("sl_pct") or (cfg.sl_pct * 100.0),
+                                        entry_type=entry_payload.get("entry_type", "PULLBACK"),
+                                        context_score=ctx_score,
+                                        ctx_parts=entry_payload.get("context_parts"),
+                                        liq_short_usd_30s=entry_snapshot.get("liq_short_usd_30s"),
+                                        liq_long_usd_30s=entry_snapshot.get("liq_long_usd_30s"),
+                                        oi_change_fast_pct=None,
+                                        cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
+                                        debug_payload=entry_payload,
+                                    ),
+                                    strategy="long_pullback",
                                     side="LONG",
-                                    symbol=symbol,
-                                    run_id=run_id,
-                                    event_id=str(event_id),
-                                    time_utc=str(time_utc or ""),
-                                    price=price,
-                                    entry_price=float(price) if price is not None else 0.0,
-                                    tp_price=tp_price,
-                                    sl_price=sl_price,
-                                    tp_pct=entry_payload.get("tp_pct") or (cfg.tp_pct * 100.0),
-                                    sl_pct=entry_payload.get("sl_pct") or (cfg.sl_pct * 100.0),
-                                    entry_type=entry_payload.get("entry_type", "PULLBACK"),
-                                    context_score=ctx_score,
-                                    ctx_parts=entry_payload.get("context_parts"),
-                                    liq_short_usd_30s=entry_snapshot.get("liq_short_usd_30s"),
-                                    liq_long_usd_30s=entry_snapshot.get("liq_long_usd_30s"),
-                                    oi_change_fast_pct=None,
-                                    cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
-                                    debug_payload=entry_payload,
-                                ),
-                                strategy="long_pullback",
-                                side="LONG",
-                                mode="LIVE",
-                                event_id=event_id,
-                                context_score=float(ctx_score) if ctx_score is not None else None,
-                                entry_ok=True,
-                                skip_reasons=None,
-                                formatted=True,
+                                    mode="LIVE",
+                                    event_id=event_id,
+                                    context_score=float(ctx_score) if ctx_score is not None else None,
+                                    entry_ok=True,
+                                    skip_reasons=None,
+                                    formatted=True,
+                                )
+                            except Exception:
+                                logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
+                        else:
+                            logger.info(
+                                "TG_SUPPRESSED | strategy=long_pullback | kind=ENTRY_OK | symbol=%s | run_id=%s | event_id=%s",
+                                symbol,
+                                run_id,
+                                event_id,
                             )
-                        except Exception:
-                            logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
 
                         try:
                             entry_ts_utc = pd.Timestamp(time_utc) if time_utc else pd.Timestamp.now(tz="UTC")
@@ -387,39 +411,47 @@ def run_watch_for_symbol(
                                     schema_version=2,
                                 )
                             if TG_SEND_OUTCOME:
-                                try:
-                                    send_telegram(
-                                        format_outcome(
+                                if tg_enabled:
+                                    try:
+                                        send_telegram(
+                                            format_outcome(
+                                                strategy=cfg.strategy_name,
+                                                side="LONG",
+                                                symbol=symbol,
+                                                run_id=run_id,
+                                                event_id=str(event_id),
+                                                outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
+                                                entry_price=entry_snapshot.get("entry_price"),
+                                                tp_price=entry_snapshot.get("tp_price"),
+                                                sl_price=entry_snapshot.get("sl_price"),
+                                                tp_pct=entry_snapshot.get("tp_pct"),
+                                                sl_pct=entry_snapshot.get("sl_pct"),
+                                                pnl_pct=summary.get("pnl_pct"),
+                                                hold_seconds=summary.get("hold_seconds"),
+                                                mae_pct=summary.get("mae_pct"),
+                                                mfe_pct=summary.get("mfe_pct"),
+                                                debug_payload=summary,
+                                            ),
                                             strategy=cfg.strategy_name,
                                             side="LONG",
-                                            symbol=symbol,
-                                            run_id=run_id,
+                                            mode="LIVE",
                                             event_id=str(event_id),
-                                            outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
-                                            entry_price=entry_snapshot.get("entry_price"),
-                                            tp_price=entry_snapshot.get("tp_price"),
-                                            sl_price=entry_snapshot.get("sl_price"),
-                                            tp_pct=entry_snapshot.get("tp_pct"),
-                                            sl_pct=entry_snapshot.get("sl_pct"),
-                                            pnl_pct=summary.get("pnl_pct"),
-                                            hold_seconds=summary.get("hold_seconds"),
-                                            mae_pct=summary.get("mae_pct"),
-                                            mfe_pct=summary.get("mfe_pct"),
-                                            debug_payload=summary,
-                                        ),
-                                        strategy=cfg.strategy_name,
-                                        side="LONG",
-                                        mode="LIVE",
-                                        event_id=str(event_id),
-                                        context_score=float(entry_snapshot.get("context_score"))
-                                        if entry_snapshot.get("context_score") is not None
-                                        else None,
-                                        entry_ok=True,
-                                        skip_reasons=None,
-                                        formatted=True,
+                                            context_score=float(entry_snapshot.get("context_score"))
+                                            if entry_snapshot.get("context_score") is not None
+                                            else None,
+                                            entry_ok=True,
+                                            skip_reasons=None,
+                                            formatted=True,
+                                        )
+                                    except Exception:
+                                        logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
+                                else:
+                                    logger.info(
+                                        "TG_SUPPRESSED | strategy=long_pullback | kind=OUTCOME | symbol=%s | run_id=%s | event_id=%s",
+                                        symbol,
+                                        run_id,
+                                        event_id,
                                     )
-                                except Exception:
-                                    logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
                         except Exception:
                             logger.exception("LONG_OUTCOME_ERROR | symbol=%s", symbol)
                         entry_ok = False
