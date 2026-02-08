@@ -12,6 +12,26 @@ def _print_usage() -> None:
     print("Usage: python scripts/smoke_outcomes_tp_sl_conflict.py [YYYYMMDD] [--tail N] [--strategy STR] [--mode MODE]")
 
 
+def get_payload(details_obj: dict) -> dict:
+    payload = details_obj.get("details_payload")
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str) and payload.strip():
+        try:
+            return json.loads(payload)
+        except Exception:
+            return {}
+    return {}
+
+
+def get_key(details_obj: dict, payload: dict, key: str) -> object:
+    if key in details_obj:
+        return details_obj.get(key)
+    if key in payload:
+        return payload.get(key)
+    return None
+
+
 def main() -> int:
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
     tail = 200
@@ -86,25 +106,32 @@ def main() -> int:
             details = json.loads(details_raw)
         except Exception:
             continue
-        if details.get("tp_sl_same_candle") == 1:
+        payload = get_payload(details)
+        tp_sl_same = details.get("tp_sl_same_candle")
+        if tp_sl_same is None:
+            tp_sl_same = payload.get("tp_sl_same_candle", 0)
+        conflict_source = "top" if details.get("tp_sl_same_candle") == 1 else "payload"
+        if tp_sl_same == 1:
             conflicts_found += 1
             missing = []
             for key in required_keys:
-                if key not in details:
+                if get_key(details, payload, key) is None:
                     missing.append(key)
             if missing:
                 row_copy = dict(row)
                 row_copy["_missing"] = ",".join(missing)
+                row_copy["_conflict_source"] = conflict_source
                 bad_rows.append(row_copy)
 
     if bad_rows:
         for row in bad_rows[:20]:
             print(
-                "BAD_ROW | trade_id={trade_id} | symbol={symbol} | outcome_time_utc={time_utc} | missing_keys={missing}".format(
+                "BAD_ROW | trade_id={trade_id} | symbol={symbol} | outcome_time_utc={time_utc} | missing_keys={missing} | conflict_source={src}".format(
                     trade_id=row.get("trade_id", ""),
                     symbol=row.get("symbol", ""),
                     time_utc=row.get("outcome_time_utc", ""),
                     missing=row.get("_missing", ""),
+                    src=row.get("_conflict_source", ""),
                 )
             )
         print(
