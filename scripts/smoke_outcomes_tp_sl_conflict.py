@@ -66,6 +66,19 @@ def main() -> int:
     rows = list(recent_rows)
     checked = rows[-tail:] if tail else rows
 
+    required_keys = [
+        "tp_sl_same_candle",
+        "conflict_policy",
+        "use_candle_hilo",
+        "candle_high",
+        "candle_low",
+        "alt_outcome_tp_first",
+        "alt_outcome_sl_first",
+        "alt_pnl_tp_first",
+        "alt_pnl_sl_first",
+    ]
+    rows_total_seen = len(checked)
+    conflicts_found = 0
     bad_rows: list[dict[str, str]] = []
     for row in checked:
         details_raw = row.get("details_json") or ""
@@ -74,15 +87,9 @@ def main() -> int:
         except Exception:
             continue
         if details.get("tp_sl_same_candle") == 1:
+            conflicts_found += 1
             missing = []
-            for key in (
-                "alt_outcome_tp_first",
-                "alt_pnl_tp_first",
-                "alt_outcome_sl_first",
-                "alt_pnl_sl_first",
-                "candle_high",
-                "candle_low",
-            ):
+            for key in required_keys:
                 if key not in details:
                     missing.append(key)
             if missing:
@@ -93,17 +100,33 @@ def main() -> int:
     if bad_rows:
         for row in bad_rows[:20]:
             print(
-                "BAD_ROW | time_utc={time_utc} | symbol={symbol} | outcome={outcome} | missing={missing}".format(
-                    time_utc=row.get("outcome_time_utc", ""),
+                "BAD_ROW | trade_id={trade_id} | symbol={symbol} | outcome_time_utc={time_utc} | missing_keys={missing}".format(
+                    trade_id=row.get("trade_id", ""),
                     symbol=row.get("symbol", ""),
-                    outcome=row.get("outcome", ""),
+                    time_utc=row.get("outcome_time_utc", ""),
                     missing=row.get("_missing", ""),
                 )
             )
-        print(f"summary | rows_checked={len(checked)} | ok=0 | bad_count={len(bad_rows)}")
+        print(
+            "summary | rows_total_seen={rows_total_seen} | conflicts_found={conflicts_found} | ok_conflicts={ok_conflicts} | bad_conflicts={bad_conflicts} | file={file}".format(
+                rows_total_seen=rows_total_seen,
+                conflicts_found=conflicts_found,
+                ok_conflicts=conflicts_found - len(bad_rows),
+                bad_conflicts=len(bad_rows),
+                file=path,
+            )
+        )
         return 1
 
-    print(f"summary | rows_checked={len(checked)} | ok=1")
+    print(
+        "summary | rows_total_seen={rows_total_seen} | conflicts_found={conflicts_found} | ok_conflicts={ok_conflicts} | bad_conflicts={bad_conflicts} | file={file}".format(
+            rows_total_seen=rows_total_seen,
+            conflicts_found=conflicts_found,
+            ok_conflicts=conflicts_found - len(bad_rows),
+            bad_conflicts=len(bad_rows),
+            file=path,
+        )
+    )
     return 0
 
 
