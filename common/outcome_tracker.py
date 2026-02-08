@@ -251,20 +251,14 @@ def track_outcome(
         "side": side_norm,
     }
     if tp_sl_same_candle:
-        if side_norm == "short":
-            tp_pnl = ((entry_price - tp_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
-            sl_pnl = ((entry_price - sl_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
-        else:
-            tp_pnl = ((tp_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
-            sl_pnl = ((sl_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
         details_payload.update(
             {
                 "candle_high": conflict_candle_high,
                 "candle_low": conflict_candle_low,
                 "alt_outcome_tp_first": "TP_hit",
-                "alt_pnl_tp_first": float(tp_pnl),
+                "alt_pnl_tp_first": float(tp_pct),
                 "alt_outcome_sl_first": "SL_hit",
-                "alt_pnl_sl_first": float(sl_pnl),
+                "alt_pnl_sl_first": float(-sl_pct),
             }
         )
 
