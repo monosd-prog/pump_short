@@ -139,6 +139,22 @@ Datasets are written under `datasets/date=YYYYMMDD/strategy=long_pullback/`.
 
 ---
 
+## Scripts
+
+Synthetic dataset writer (events/trades/outcomes):
+
+```
+PYTHONPATH=/root/pump_short STRATEGY=short_pump CASE=PATH_ONLY N_PATH=7 python scripts/test_dataset_writer.py
+```
+
+Conflict case (NEUTRAL policy):
+
+```
+PYTHONPATH=/root/pump_short STRATEGY=long_pullback CASE=CONFLICT CONFLICT_POLICY=NEUTRAL python scripts/test_dataset_writer.py
+```
+
+---
+
 ## Logging paths
 
 Log files are written to:
