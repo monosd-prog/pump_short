@@ -30,7 +30,7 @@ def _get_float(name: str, default: float) -> float:
     if v is None:
         return default
     try:
-        return float(v)
+        return float(v.replace(",", "."))
     except Exception as e:
         log_exception(logger, f"Failed to parse float env var {name}", step="CONFIG", extra={"value": v, "default": default})
         return default
@@ -173,9 +173,28 @@ class Config:
         c.outcome_watch_minutes = _get_int("OUTCOME_WATCH_MINUTES", c.outcome_watch_minutes)
         c.outcome_poll_seconds = _get_int("OUTCOME_POLL_SECONDS", c.outcome_poll_seconds)
 
+        # TP / SL overrides
+        c.tp_pct_confirm = _get_float("TP_PCT_CONFIRM", c.tp_pct_confirm)
+        c.sl_pct_confirm = _get_float("SL_PCT_CONFIRM", c.sl_pct_confirm)
+        c.tp_pct_early = _get_float("TP_PCT_EARLY", c.tp_pct_early)
+        c.sl_pct_early = _get_float("SL_PCT_EARLY", c.sl_pct_early)
+
         # CVD
         c.cvd_delta_ratio_30s_max = _get_float("CVD_DELTA_RATIO_30S_MAX", c.cvd_delta_ratio_30s_max)
         c.cvd_delta_ratio_1m_max = _get_float("CVD_DELTA_RATIO_1M_MAX", c.cvd_delta_ratio_1m_max)
         c.cvd_weight = _get_float("CVD_WEIGHT", c.cvd_weight)
+
+        if _get_bool("DEBUG_CONFIG", False):
+            log_info(
+                logger,
+                "TP_SL_CONFIG",
+                step="CONFIG",
+                extra={
+                    "tp_pct_confirm": c.tp_pct_confirm,
+                    "sl_pct_confirm": c.sl_pct_confirm,
+                    "tp_pct_early": c.tp_pct_early,
+                    "sl_pct_early": c.sl_pct_early,
+                },
+            )
 
         return c
