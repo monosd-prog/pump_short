@@ -392,7 +392,8 @@ def run_watch_for_symbol(
                         symbol=cfg.symbol,
                         event_id=f"{run_id}_armed",
                         stage=st.stage,
-                        entry_ok=True,
+                        # ARMED is readiness only, not an entry signal
+                        entry_ok=False,
                         skip_reasons="armed",
                         context_score=context_score,
                         payload={
