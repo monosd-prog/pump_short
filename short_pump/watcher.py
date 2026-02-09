@@ -883,6 +883,10 @@ def run_watch_for_symbol(
                             "pnl_pct": summary.get("pnl_pct"),
                             "mae_pct": summary.get("mae_pct"),
                             "mfe_pct": summary.get("mfe_pct"),
+                            "tp_sl_same_candle": summary.get("tp_sl_same_candle"),
+                            "conflict_policy": summary.get("conflict_policy"),
+                            "alt_outcome_tp_first": summary.get("alt_outcome_tp_first"),
+                            "alt_outcome_sl_first": summary.get("alt_outcome_sl_first"),
                         },
                     )
                     outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()

@@ -27,6 +27,7 @@ class Config:
     outcome_poll_seconds: int = 60
     tp_pct: float = 0.006
     sl_pct: float = 0.004
+    conflict_policy: str = "SL_FIRST"
 
     # context weights (v1)
     weight_pump: float = 0.25

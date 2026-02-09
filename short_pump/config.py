@@ -103,6 +103,7 @@ class Config:
 
     outcome_watch_minutes: int = 120
     outcome_poll_seconds: int = 60
+    conflict_policy: str = "SL_FIRST"
 
     # ===== TP / SL =====
     tp_pct_confirm: float = 0.006
@@ -172,6 +173,16 @@ class Config:
         # outcome
         c.outcome_watch_minutes = _get_int("OUTCOME_WATCH_MINUTES", c.outcome_watch_minutes)
         c.outcome_poll_seconds = _get_int("OUTCOME_POLL_SECONDS", c.outcome_poll_seconds)
+        raw_conflict = _get_str("CONFLICT_POLICY", c.conflict_policy).strip().upper()
+        if raw_conflict not in ("SL_FIRST", "TP_FIRST", "NEUTRAL"):
+            log_warning(
+                logger,
+                "Invalid CONFLICT_POLICY, falling back to SL_FIRST",
+                step="CONFIG",
+                extra={"conflict_policy": raw_conflict},
+            )
+            raw_conflict = "SL_FIRST"
+        c.conflict_policy = raw_conflict
 
         # TP / SL overrides
         c.tp_pct_confirm = _get_float("TP_PCT_CONFIRM", c.tp_pct_confirm)
@@ -194,6 +205,7 @@ class Config:
                     "sl_pct_confirm": c.sl_pct_confirm,
                     "tp_pct_early": c.tp_pct_early,
                     "sl_pct_early": c.sl_pct_early,
+                    "conflict_policy": c.conflict_policy,
                 },
             )
 

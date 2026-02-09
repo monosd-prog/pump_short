@@ -27,6 +27,7 @@ def track_outcome_short(
         sl_price=sl_price,
         entry_source=entry_source,
         entry_type=entry_type,
+        conflict_policy=cfg.conflict_policy,
         run_id=run_id,
         symbol=symbol,
         category=cfg.category,

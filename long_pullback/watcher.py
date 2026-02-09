@@ -32,6 +32,13 @@ def is_strategy_enabled_for_tg(strategy: str) -> bool:
     return (strategy or "").strip().lower() in allowed
 
 
+def _resolve_conflict_policy(default: str) -> str:
+    raw = os.getenv("CONFLICT_POLICY", default).strip().upper()
+    if raw in ("SL_FIRST", "TP_FIRST", "NEUTRAL"):
+        return raw
+    return "SL_FIRST"
+
+
 def _ds_outcome(
     *,
     run_id: str,
@@ -339,6 +346,7 @@ def run_watch_for_symbol(
                                 sl_price=sl_price,
                                 entry_source=entry_payload.get("entry_source", "1m"),
                                 entry_type=entry_payload.get("entry_type", "PULLBACK"),
+                                conflict_policy=_resolve_conflict_policy(cfg.conflict_policy),
                                 run_id=run_id,
                                 symbol=symbol,
                                 category=cfg.category,
@@ -375,6 +383,15 @@ def run_watch_for_symbol(
                                 summary.get("pnl_pct"),
                                 summary.get("mae_pct"),
                                 summary.get("mfe_pct"),
+                            )
+                            logger.info(
+                                "OUTCOME_CONFLICT | symbol=%s | run_id=%s | tp_sl_same_candle=%s | conflict_policy=%s | alt_tp=%s | alt_sl=%s",
+                                symbol,
+                                run_id,
+                                summary.get("tp_sl_same_candle"),
+                                summary.get("conflict_policy"),
+                                summary.get("alt_outcome_tp_first"),
+                                summary.get("alt_outcome_sl_first"),
                             )
                             trade_id = entry_payload.get("trade_id") or f"{event_id}_trade"
                             outcome_time_utc = outcome_time_wall_utc

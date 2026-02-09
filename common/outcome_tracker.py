@@ -15,6 +15,13 @@ PAPER_MODE = os.getenv("PAPER_MODE", "1") == "1"
 OUTCOME_USE_CANDLE_HILO = os.getenv("OUTCOME_USE_CANDLE_HILO", "1") == "1"
 OUTCOME_TP_SL_CONFLICT = os.getenv("OUTCOME_TP_SL_CONFLICT", "SL_FIRST").strip().upper()
 
+
+def _normalize_conflict_policy(raw: Optional[str]) -> str:
+    val = (raw or "").strip().upper()
+    if val in ("SL_FIRST", "TP_FIRST", "NEUTRAL"):
+        return val
+    return "SL_FIRST"
+
 _finalized_trade_ids: set[str] = set()
 _finalized_lock = threading.Lock()
 
@@ -39,6 +46,7 @@ def track_outcome(
     sl_price: float,
     entry_source: str = "unknown",
     entry_type: str = "unknown",
+    conflict_policy: Optional[str] = None,
     run_id: str = "",
     symbol: str = "",
     category: Optional[str] = None,
@@ -190,7 +198,10 @@ def track_outcome(
                 conflict_candle_low = lo
                 decision_candle_high = hi
                 decision_candle_low = lo
-                if OUTCOME_TP_SL_CONFLICT == "TP_FIRST":
+                policy = _normalize_conflict_policy(conflict_policy or OUTCOME_TP_SL_CONFLICT)
+                if policy == "NEUTRAL":
+                    end_reason = "CONFLICT"
+                elif policy == "TP_FIRST":
                     end_reason = "TP_hit"
                 else:
                     end_reason = "SL_hit"
@@ -255,9 +266,14 @@ def track_outcome(
         else:
             hit_time_utc_str = str(hit_ts)
 
-    if end_reason in ("TP_hit", "SL_hit"):
+    if end_reason in ("TP_hit", "SL_hit", "CONFLICT"):
         exit_time_utc = hit_time_utc_str
-        exit_price = tp_price if end_reason == "TP_hit" else sl_price
+        if end_reason == "TP_hit":
+            exit_price = tp_price
+        elif end_reason == "SL_hit":
+            exit_price = sl_price
+        else:
+            exit_price = entry_price
     else:
         exit_time_utc = entry_ts_utc.isoformat()
         exit_price = timeout_exit_price
@@ -270,11 +286,12 @@ def track_outcome(
         risk_pct = ((entry_price - sl_price) / entry_price) * 100.0 if entry_price > 0 else 0.0
     r_multiple = (pnl_pct / risk_pct) if risk_pct > 0 else 0.0
 
+    resolved_policy = _normalize_conflict_policy(conflict_policy or OUTCOME_TP_SL_CONFLICT)
     details_payload = {
         "tp_hit": end_reason == "TP_hit",
         "sl_hit": end_reason == "SL_hit",
         "tp_sl_same_candle": 1 if tp_sl_same_candle else 0,
-        "conflict_policy": OUTCOME_TP_SL_CONFLICT,
+        "conflict_policy": resolved_policy,
         "use_candle_hilo": OUTCOME_USE_CANDLE_HILO,
         "side": side_norm,
     }
@@ -321,6 +338,10 @@ def track_outcome(
         "r_multiple": float(r_multiple),
         "details_payload": json.dumps(details_payload, ensure_ascii=False),
         "path_1m": path_1m,
+        "tp_sl_same_candle": 1 if tp_sl_same_candle else 0,
+        "conflict_policy": resolved_policy,
+        "alt_outcome_tp_first": details_payload.get("alt_outcome_tp_first"),
+        "alt_outcome_sl_first": details_payload.get("alt_outcome_sl_first"),
     }
 
     return result

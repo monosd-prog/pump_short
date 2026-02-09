@@ -66,6 +66,7 @@ def main() -> None:
         sl_price=sl_price,
         entry_source="1m",
         entry_type="PULLBACK",
+        conflict_policy=os.getenv("CONFLICT_POLICY"),
         run_id=run_id,
         symbol=symbol,
         category=cfg.category,
