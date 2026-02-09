@@ -374,6 +374,11 @@ def build_outcome_row(
             details_payload_obj = {}
 
     end_reason = summary.get("end_reason") or summary.get("outcome") or ""
+    hold_val = summary.get("hold_seconds")
+    try:
+        hold_seconds = 0.0 if hold_val is None else float(hold_val)
+    except (TypeError, ValueError):
+        hold_seconds = 0.0
     details_json_obj: Dict[str, Any] = {
         "timeout": end_reason == "TIMEOUT",
         "tp_hit": bool(details_payload_obj.get("tp_hit")) if "tp_hit" in details_payload_obj else end_reason == "TP_hit",
@@ -395,7 +400,7 @@ def build_outcome_row(
         "exit_price": summary.get("exit_price"),
         "mae_pct": summary.get("mae_pct"),
         "mfe_pct": summary.get("mfe_pct"),
-        "hold_seconds": summary.get("hold_seconds"),
+        "hold_seconds": hold_seconds,
     }
     if details_payload:
         details_json_obj["details_payload"] = details_payload
@@ -415,7 +420,7 @@ def build_outcome_row(
         "outcome_time_utc": outcome_time_utc,
         "outcome": summary.get("outcome") or end_reason or "UNKNOWN",
         "pnl_pct": summary.get("pnl_pct") or 0.0,
-        "hold_seconds": summary.get("hold_seconds") or 0.0,
+        "hold_seconds": hold_seconds,
         "mae_pct": summary.get("mae_pct") or 0.0,
         "mfe_pct": summary.get("mfe_pct") or 0.0,
         "details_json": json.dumps(details_json_obj, ensure_ascii=False),

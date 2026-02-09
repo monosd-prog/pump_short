@@ -68,7 +68,7 @@ def main() -> None:
     trade_id = f"{uuid.uuid4()}_trade"
     event_id = str(uuid.uuid4())
     run_id = "smoke_long_outcome"
-    symbol = "TESTUSDT"
+    symbol = os.getenv("SYMBOL", "ZILUSDT").strip().upper()
     strategy = "long_pullback"
     mode = "live"
 

@@ -25,7 +25,7 @@ def _path_1m(n: int, base_price: float) -> list[dict[str, float | str]]:
 def main() -> None:
     strategy = os.getenv("STRATEGY", "short_pump").strip()
     case = os.getenv("CASE", "PATH_ONLY").strip().upper()
-    symbol = os.getenv("SYMBOL", "TESTUSDT").strip().upper()
+    symbol = os.getenv("SYMBOL", "ZILUSDT").strip().upper()
     mode = os.getenv("MODE", "live").strip()
     n_path = int(os.getenv("N_PATH", "5"))
     conflict_policy = os.getenv("CONFLICT_POLICY")
