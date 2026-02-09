@@ -356,6 +356,16 @@ def run_watch_for_symbol(
                                 min_hold = float(getattr(cfg, "outcome_poll_seconds", 60) or 60)
                                 hold_seconds = max(hold_seconds, min_hold)
                             summary["hold_seconds"] = hold_seconds
+                            path_1m = summary.get("path_1m") or []
+                            if path_1m:
+                                logger.info(
+                                    "OUTCOME_PATH | symbol=%s | run_id=%s | len_path_1m=%s | first_t=%s | last_t=%s",
+                                    symbol,
+                                    run_id,
+                                    len(path_1m),
+                                    path_1m[0].get("t") if path_1m else None,
+                                    path_1m[-1].get("t") if path_1m else None,
+                                )
                             logger.info(
                                 "OUTCOME_DONE | symbol=%s | run_id=%s | outcome_type=%s | hold_seconds=%s | pnl_pct=%s | mae_pct=%s | mfe_pct=%s",
                                 symbol,

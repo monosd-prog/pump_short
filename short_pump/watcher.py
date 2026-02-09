@@ -854,6 +854,21 @@ def run_watch_for_symbol(
                     else:
                         hold_seconds = 0.0
                     summary["hold_seconds"] = hold_seconds
+                    path_1m = summary.get("path_1m") or []
+                    if path_1m:
+                        log_info(
+                            logger,
+                            "OUTCOME_PATH",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="OUTCOME",
+                            extra={
+                                "len_path_1m": len(path_1m),
+                                "first_t": path_1m[0].get("t") if path_1m else None,
+                                "last_t": path_1m[-1].get("t") if path_1m else None,
+                            },
+                        )
                     log_info(logger, "OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME", extra={"outcome": summary.get("outcome"), "end_reason": summary.get("end_reason")})
                     log_info(
                         logger,

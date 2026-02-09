@@ -109,6 +109,11 @@ def track_outcome(
     tp_sl_same_candle = False
     conflict_candle_high: float | None = None
     conflict_candle_low: float | None = None
+    decision_candle_high: float | None = None
+    decision_candle_low: float | None = None
+    path_1m: list[dict[str, Any]] = []
+    max_path_len = min(int(getattr(cfg, "outcome_watch_minutes", 120)) + 2, 200)
+    last_path_ts: Optional[pd.Timestamp] = None
 
     while pd.Timestamp.now(tz="UTC") < end_ts:
         try:
@@ -131,6 +136,23 @@ def track_outcome(
             )
             time.sleep(5)
             continue
+
+        try:
+            last_row = future.iloc[-1]
+            last_ts = pd.Timestamp(last_row["ts"])
+            if last_path_ts is None or last_ts > last_path_ts:
+                path_1m.append(
+                    {
+                        "t": last_ts.isoformat(),
+                        "h": float(last_row["high"]),
+                        "l": float(last_row["low"]),
+                    }
+                )
+                last_path_ts = last_ts
+                if len(path_1m) > max_path_len:
+                    path_1m = path_1m[-max_path_len:]
+        except Exception:
+            pass
 
         min_low = float(future["low"].min())
         max_high = float(future["high"].max())
@@ -166,6 +188,8 @@ def track_outcome(
                 tp_sl_same_candle = True
                 conflict_candle_high = hi
                 conflict_candle_low = lo
+                decision_candle_high = hi
+                decision_candle_low = lo
                 if OUTCOME_TP_SL_CONFLICT == "TP_FIRST":
                     end_reason = "TP_hit"
                 else:
@@ -174,10 +198,14 @@ def track_outcome(
                 break
             if sl_hit:
                 end_reason = "SL_hit"
+                decision_candle_high = hi
+                decision_candle_low = lo
                 hit_ts = ts
                 break
             if tp_hit:
                 end_reason = "TP_hit"
+                decision_candle_high = hi
+                decision_candle_low = lo
                 hit_ts = ts
                 break
 
@@ -250,6 +278,9 @@ def track_outcome(
         "use_candle_hilo": OUTCOME_USE_CANDLE_HILO,
         "side": side_norm,
     }
+    if decision_candle_high is not None and decision_candle_low is not None:
+        details_payload["candle_high"] = decision_candle_high
+        details_payload["candle_low"] = decision_candle_low
     if tp_sl_same_candle:
         details_payload.update(
             {
@@ -261,6 +292,8 @@ def track_outcome(
                 "alt_pnl_sl_first": float(-sl_pct),
             }
         )
+    if path_1m:
+        details_payload["path_1m"] = path_1m
 
     result = {
         "run_id": str(run_id) if run_id else "",
@@ -287,6 +320,7 @@ def track_outcome(
         "pnl_pct": float(pnl_pct),
         "r_multiple": float(r_multiple),
         "details_payload": json.dumps(details_payload, ensure_ascii=False),
+        "path_1m": path_1m,
     }
 
     return result
@@ -328,6 +362,7 @@ def build_outcome_row(
         "use_candle_hilo": details_payload_obj.get("use_candle_hilo"),
         "candle_high": details_payload_obj.get("candle_high"),
         "candle_low": details_payload_obj.get("candle_low"),
+        "path_1m": details_payload_obj.get("path_1m"),
         "alt_outcome_tp_first": details_payload_obj.get("alt_outcome_tp_first"),
         "alt_pnl_tp_first": details_payload_obj.get("alt_pnl_tp_first"),
         "alt_outcome_sl_first": details_payload_obj.get("alt_outcome_sl_first"),
