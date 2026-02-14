@@ -61,14 +61,20 @@ class PumpEvent(BaseModel):
 
 @app.on_event("startup")
 async def bootstrap_force_symbols() -> None:
-    raw = os.getenv("FORCE_SYMBOLS", "")
-    symbols = [s.strip().upper() for s in raw.split(",") if s.strip()] if raw else []
+    raw_enabled = os.getenv("FORCE_SYMBOLS_BOOTSTRAP_ENABLED", "")
+    raw_symbols = os.getenv("FORCE_SYMBOLS_BOOTSTRAP", "")
+    if not raw_symbols:
+        raw_symbols = os.getenv("FORCE_SYMBOLS", "")
+    enabled = str(raw_enabled).strip().lower() in ("1", "true", "yes", "y", "on")
+    symbols = [s.strip().upper() for s in raw_symbols.split(",") if s.strip()] if raw_symbols else []
     logger.info(
-        "FORCE_SYMBOLS_BOOTSTRAP | symbols=%s | enabled=%s",
+        "FORCE_SYMBOLS_BOOTSTRAP | symbols=%s | enabled=%s | raw_enabled=%r | raw_symbols=%r",
         symbols,
-        bool(symbols),
+        enabled and bool(symbols),
+        raw_enabled,
+        raw_symbols,
     )
-    if not symbols:
+    if not enabled or not symbols:
         return
     now = time.time()
     pump_ts = _to_utc_iso(now)
