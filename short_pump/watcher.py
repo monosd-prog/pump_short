@@ -717,24 +717,61 @@ def run_watch_for_symbol(
                 }
                 try:
                     now_ts = time.time()
-                    entry_snapshot.update(
+                    liq_short_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")
+                    liq_long_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
+                    liq_short_60s = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
+                    liq_long_60s = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                    liq_short_5m = get_liq_stats(cfg.symbol, now_ts, 300, side="short")
+                    liq_long_5m = get_liq_stats(cfg.symbol, now_ts, 300, side="long")
+                    entry_payload.update(
                         {
-                            "liq_short_count_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="short")[0],
-                            "liq_short_usd_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="short")[1],
-                            "liq_short_count_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="short")[0],
-                            "liq_short_usd_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="short")[1],
-                            "liq_short_count_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="short")[0],
-                            "liq_short_usd_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="short")[1],
-                            "liq_long_count_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="long")[0],
-                            "liq_long_usd_30s": get_liq_stats(cfg.symbol, now_ts, 30, side="long")[1],
-                            "liq_long_count_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="long")[0],
-                            "liq_long_usd_60s": get_liq_stats(cfg.symbol, now_ts, 60, side="long")[1],
-                            "liq_long_count_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="long")[0],
-                            "liq_long_usd_5m": get_liq_stats(cfg.symbol, now_ts, 300, side="long")[1],
+                            "liq_short_count_30s": liq_short_30s[0],
+                            "liq_short_usd_30s": liq_short_30s[1],
+                            "liq_long_count_30s": liq_long_30s[0],
+                            "liq_long_usd_30s": liq_long_30s[1],
                         }
                     )
-                except Exception:
-                    pass
+                    entry_snapshot.update(
+                        {
+                            "liq_short_count_30s": liq_short_30s[0],
+                            "liq_short_usd_30s": liq_short_30s[1],
+                            "liq_long_count_30s": liq_long_30s[0],
+                            "liq_long_usd_30s": liq_long_30s[1],
+                        }
+                    )
+                    log_info(
+                        logger,
+                        "LIQ_SNAPSHOT_AT_ENTRY",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="ENTRY_DECISION",
+                        extra={
+                            "now_ts": now_ts,
+                            "count_short_30s": liq_short_30s[0],
+                            "usd_short_30s": liq_short_30s[1],
+                            "count_long_30s": liq_long_30s[0],
+                            "usd_long_30s": liq_long_30s[1],
+                            "count_short_60s": liq_short_60s[0],
+                            "usd_short_60s": liq_short_60s[1],
+                            "count_long_60s": liq_long_60s[0],
+                            "usd_long_60s": liq_long_60s[1],
+                            "count_short_5m": liq_short_5m[0],
+                            "usd_short_5m": liq_short_5m[1],
+                            "count_long_5m": liq_long_5m[0],
+                            "usd_long_5m": liq_long_5m[1],
+                        },
+                    )
+                except Exception as e:
+                    log_warning(
+                        logger,
+                        "LIQ_SNAPSHOT_FAILED",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="ENTRY_DECISION",
+                        extra={"exc_type": type(e).__name__, "exc_repr": repr(e)},
+                    )
 
                 log_info(
                     logger,
