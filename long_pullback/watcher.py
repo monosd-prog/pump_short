@@ -19,7 +19,7 @@ from long_pullback.entry import decide_entry_long
 from long_pullback.telegram import TG_SEND_OUTCOME, send_telegram
 from notifications.tg_format import format_entry_ok, format_outcome
 from short_pump.io_csv import append_csv
-from short_pump.liquidations import get_liq_stats
+from short_pump.liquidations import get_liq_stats, register_symbol
 
 logger = get_logger(__name__, strategy="long_pullback")
 
@@ -80,6 +80,7 @@ def run_watch_for_symbol(
     symbol = str(symbol).strip().upper()
     run_id = run_id or gen_run_id()
     logger = get_logger(__name__, strategy="long_pullback", symbol=symbol)
+    register_symbol(symbol)
     tg_enabled = is_strategy_enabled_for_tg("long_pullback")
     logger.info(
         "TG_STRATEGIES_CHECK | strategy=%s | enabled=%s | tg_strategies=%s",

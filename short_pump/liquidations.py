@@ -28,7 +28,7 @@ _events_long: Dict[str, Deque[Tuple[int, float, float]]] = defaultdict(deque)
 _started = False
 _max_age_sec = 600.0  # keep up to 10 minutes
 _subscribed_symbols: Set[str] = set()
-_pending_symbols: Set[str] = set()
+_desired_symbols: Set[str] = set()
 _last_heartbeat = 0.0
 _rx_total = 0
 _rx_json_ok = 0
@@ -132,9 +132,15 @@ def register_symbol(symbol: str) -> None:
     if not sym:
         return
     with _lock:
-        if sym in _subscribed_symbols:
-            return
-        _pending_symbols.add(sym)
+        _desired_symbols.add(sym)
+
+
+def unregister_symbol(symbol: str) -> None:
+    sym = _normalize_symbol(symbol)
+    if not sym:
+        return
+    with _lock:
+        _desired_symbols.discard(sym)
 
 
 def start_liquidation_listener(category: str) -> None:
@@ -149,6 +155,10 @@ def start_liquidation_listener(category: str) -> None:
 
     url = _endpoint_for_category(category)
     log_info(logger, "Starting liquidation listener", step="LIQ_WS", extra={"url": url})
+    raw_force = os.getenv("FORCE_LIQ_SYMBOLS", "")
+    if raw_force:
+        for sym in [s.strip().upper() for s in raw_force.split(",") if s.strip()]:
+            register_symbol(sym)
 
     def _run() -> None:
         global _last_heartbeat
@@ -188,6 +198,8 @@ def start_liquidation_listener(category: str) -> None:
                 ws = websocket.WebSocket()
                 ws.connect(url, timeout=10)
                 ws.settimeout(10)
+                with _lock:
+                    _subscribed_symbols.clear()
                 log_info(logger, "WS connected", step="LIQ_WS", extra={"url": url, "conn_id": conn_id})
                 log_info(
                     logger,
@@ -203,25 +215,54 @@ def start_liquidation_listener(category: str) -> None:
                 _last_rx_wall = time.time()
                 debug_event_window_start = 0.0
                 debug_event_count = 0
+                last_reconcile = 0.0
+                last_empty_log = 0.0
                 while True:
-                    # subscribe to new symbols
-                    args = []
-                    with _lock:
-                        if _pending_symbols:
-                            for sym in list(_pending_symbols):
-                                topic = f"allLiquidation.{sym}"
-                                args.append(topic)
-                                if _LIQ_WS_DEBUG:
-                                    args.append(f"tickers.{sym}")
-                                _subscribed_symbols.add(sym)
-                                _pending_symbols.remove(sym)
-                    if args:
-                        sub_msg = {"op": "subscribe", "args": args}
-                        ws.send(json.dumps(sub_msg))
-                        log_info(logger, "WS subscribed", step="LIQ_WS", extra={"url": url, "args": args, "conn_id": conn_id})
-
                     now_wall = time.time()
-                    if now_wall - last_ping_wall >= 25:
+                    if now_wall - last_reconcile >= 3:
+                        with _lock:
+                            desired = set(_desired_symbols)
+                            subscribed = set(_subscribed_symbols)
+                        to_add = sorted(desired - subscribed)
+                        to_remove = sorted(subscribed - desired)
+                        if to_add:
+                            args = [f"liquidation.{sym}" for sym in to_add]
+                            if _LIQ_WS_DEBUG:
+                                args.extend([f"tickers.{sym}" for sym in to_add])
+                            ws.send(json.dumps({"op": "subscribe", "args": args}))
+                            with _lock:
+                                _subscribed_symbols.update(to_add)
+                            log_info(
+                                logger,
+                                "LIQ_WS_SUBSCRIBE",
+                                step="LIQ_WS",
+                                extra={"added": len(to_add), "symbols": to_add},
+                            )
+                        if to_remove:
+                            args = [f"liquidation.{sym}" for sym in to_remove]
+                            if _LIQ_WS_DEBUG:
+                                args.extend([f"tickers.{sym}" for sym in to_remove])
+                            ws.send(json.dumps({"op": "unsubscribe", "args": args}))
+                            with _lock:
+                                for sym in to_remove:
+                                    _subscribed_symbols.discard(sym)
+                            log_info(
+                                logger,
+                                "LIQ_WS_UNSUBSCRIBE",
+                                step="LIQ_WS",
+                                extra={"removed": len(to_remove), "symbols": to_remove},
+                            )
+                        if not desired and (now_wall - last_empty_log >= 60):
+                            log_info(
+                                logger,
+                                "LIQ_WS_NO_SYMBOLS",
+                                step="LIQ_WS",
+                                extra={"conn_id": conn_id},
+                            )
+                            last_empty_log = now_wall
+                        last_reconcile = now_wall
+
+                    if now_wall - last_ping_wall >= 20:
                         try:
                             if hasattr(ws, "ping"):
                                 ws.ping()
@@ -287,7 +328,7 @@ def start_liquidation_listener(category: str) -> None:
                         continue
                     topic = msg.get("topic") or msg.get("op") or ""
                     topic = topic if isinstance(topic, str) else ""
-                    if topic.startswith("allLiquidation."):
+                    if topic.startswith("liquidation."):
                         _rx_topic_liq += 1
 
                     data = msg.get("data")

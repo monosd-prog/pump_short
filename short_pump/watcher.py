@@ -27,7 +27,7 @@ from short_pump.context5m import (
 from short_pump.entry import decide_entry_fast, decide_entry_1m
 from short_pump.features import normalize_funding, oi_change_pct
 from short_pump.io_csv import append_csv
-from short_pump.liquidations import get_liq_health, get_liq_stats, register_symbol
+from short_pump.liquidations import get_liq_health, get_liq_stats, register_symbol, unregister_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from common.outcome_tracker import build_outcome_row
 from short_pump.outcome import track_outcome_short
@@ -202,6 +202,11 @@ def run_watch_for_symbol(
         },
     )
     register_symbol(cfg.symbol)
+    def _cleanup_symbol() -> None:
+        try:
+            unregister_symbol(cfg.symbol)
+        except Exception:
+            log_exception(logger, "Failed to unregister symbol", symbol=cfg.symbol, run_id=run_id, step="LIQ_WS")
 
     log_5m = f"logs/{run_id}_{cfg.symbol}_5m.csv"
     log_1m = f"logs/{run_id}_{cfg.symbol}_1m.csv"
@@ -980,6 +985,7 @@ def run_watch_for_symbol(
                         except Exception as e:
                             log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
+                    _cleanup_symbol()
                     return summary
                 except Exception as e:
                     log_exception(logger, "Error in track_outcome_short", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME")
@@ -995,6 +1001,7 @@ def run_watch_for_symbol(
         }
         log_info(logger, "TIMEOUT", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TIMEOUT")
         append_csv(log_summary, summary)
+        _cleanup_symbol()
         return summary
 
     except KeyboardInterrupt:
@@ -1005,7 +1012,9 @@ def run_watch_for_symbol(
         }
         log_info(logger, "INTERRUPTED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="INTERRUPTED")
         append_csv(log_summary, summary)
+        _cleanup_symbol()
         return summary
     except Exception as e:
+        _cleanup_symbol()
         log_exception(logger, "Fatal error in run_watch_for_symbol", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FATAL")
         raise
