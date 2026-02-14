@@ -302,8 +302,18 @@ def start_liquidation_listener(category: str) -> None:
 
                     if now_wall - last_ping_wall >= 20:
                         try:
-                            ws.send(json.dumps({"op": "ping"}))
-                            log_info(logger, "LIQ_WS_PING", step="LIQ_WS", extra={"conn_id": conn_id})
+                            ping_method = "json"
+                            if hasattr(ws, "ping"):
+                                ws.ping()
+                                ping_method = "frame"
+                            else:
+                                ws.send(json.dumps({"op": "ping"}))
+                            log_info(
+                                logger,
+                                "LIQ_WS_PING",
+                                step="LIQ_WS",
+                                extra={"conn_id": conn_id, "method": ping_method},
+                            )
                             _ping_sent_count += 1
                         except Exception:
                             pass
