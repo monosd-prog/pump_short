@@ -227,31 +227,63 @@ def start_liquidation_listener(category: str) -> None:
                         to_remove = sorted(subscribed - desired)
                         if to_add:
                             args = [f"allLiquidation.{sym}" for sym in to_add]
-                            if _LIQ_WS_DEBUG:
-                                args.extend([f"tickers.{sym}" for sym in to_add])
-                            ws.send(json.dumps({"op": "subscribe", "args": args}))
-                            with _lock:
-                                _subscribed_symbols.update(to_add)
-                            log_info(
-                                logger,
-                                "LIQ_WS_SUBSCRIBE",
-                                step="LIQ_WS",
-                                extra={"added": len(to_add), "symbols": to_add},
-                            )
+                            if not all(arg.startswith("allLiquidation.") for arg in args):
+                                log_warning(
+                                    logger,
+                                    "LIQ_WS_SUBSCRIBE_INVALID",
+                                    step="LIQ_WS",
+                                    extra={"args": args},
+                                )
+                            else:
+                                ws.send(json.dumps({"op": "subscribe", "args": args}))
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_SUBSCRIBE_SENT",
+                                    step="LIQ_WS",
+                                    extra={
+                                        "count": len(args),
+                                        "first": args[0] if args else None,
+                                        "last": args[-1] if args else None,
+                                    },
+                                )
+                                with _lock:
+                                    _subscribed_symbols.update(to_add)
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_SUBSCRIBE",
+                                    step="LIQ_WS",
+                                    extra={"added": len(to_add), "symbols": to_add},
+                                )
                         if to_remove:
                             args = [f"allLiquidation.{sym}" for sym in to_remove]
-                            if _LIQ_WS_DEBUG:
-                                args.extend([f"tickers.{sym}" for sym in to_remove])
-                            ws.send(json.dumps({"op": "unsubscribe", "args": args}))
-                            with _lock:
-                                for sym in to_remove:
-                                    _subscribed_symbols.discard(sym)
-                            log_info(
-                                logger,
-                                "LIQ_WS_UNSUBSCRIBE",
-                                step="LIQ_WS",
-                                extra={"removed": len(to_remove), "symbols": to_remove},
-                            )
+                            if not all(arg.startswith("allLiquidation.") for arg in args):
+                                log_warning(
+                                    logger,
+                                    "LIQ_WS_UNSUBSCRIBE_INVALID",
+                                    step="LIQ_WS",
+                                    extra={"args": args},
+                                )
+                            else:
+                                ws.send(json.dumps({"op": "unsubscribe", "args": args}))
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_UNSUBSCRIBE_SENT",
+                                    step="LIQ_WS",
+                                    extra={
+                                        "count": len(args),
+                                        "first": args[0] if args else None,
+                                        "last": args[-1] if args else None,
+                                    },
+                                )
+                                with _lock:
+                                    for sym in to_remove:
+                                        _subscribed_symbols.discard(sym)
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_UNSUBSCRIBE",
+                                    step="LIQ_WS",
+                                    extra={"removed": len(to_remove), "symbols": to_remove},
+                                )
                         if not desired and (now_wall - last_empty_log >= 60):
                             log_info(
                                 logger,
@@ -326,6 +358,18 @@ def start_liquidation_listener(category: str) -> None:
                         _rx_json_ok += 1
                     except Exception:
                         continue
+                    if isinstance(msg, dict) and (msg.get("op") in ("subscribe", "unsubscribe") or "success" in msg):
+                        log_info(
+                            logger,
+                            "LIQ_WS_ACK",
+                            step="LIQ_WS",
+                            extra={
+                                "op": msg.get("op"),
+                                "success": msg.get("success"),
+                                "ret_msg": msg.get("ret_msg"),
+                                "req_id": msg.get("req_id"),
+                            },
+                        )
                     topic = msg.get("topic") or msg.get("op") or ""
                     topic = topic if isinstance(topic, str) else ""
                     if topic.startswith("allLiquidation."):
@@ -372,9 +416,9 @@ def start_liquidation_listener(category: str) -> None:
                         log_info(
                             logger,
                             "LIQ_WS_EVENT",
+                            symbol=str(symbol),
                             step="LIQ_WS",
                             extra={
-                                "symbol": str(symbol),
                                 "side": side_raw,
                                 "size": qty_f,
                                 "price": price_f,
@@ -384,9 +428,9 @@ def start_liquidation_listener(category: str) -> None:
                             log_info(
                                 logger,
                                 "LIQ_WS_EVENT",
+                                symbol=str(symbol),
                                 step="LIQ_WS",
                                 extra={
-                                    "symbol": str(symbol),
                                     "count": 1,
                                 },
                             )
