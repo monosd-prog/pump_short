@@ -38,6 +38,8 @@ _last_raw_ts: Optional[float] = None
 _last_rx_wall = 0.0
 _last_event_ts_ms: Optional[int] = None
 _last_symbol: Optional[str] = None
+_last_ws_op: Optional[str] = None
+_last_ws_topic: Optional[str] = None
 _reconnects_total = 0
 _debug_msg_total = 0
 _ping_sent_count = 0
@@ -121,6 +123,8 @@ def get_liq_health() -> Dict[str, Optional[int]]:
             "last_raw_ts": _last_raw_ts,
             "last_event_ts_ms": _last_event_ts_ms,
             "last_symbol": _last_symbol,
+            "last_ws_op": _last_ws_op,
+            "last_ws_topic": _last_ws_topic,
             "subscribed_symbols_count": len(_subscribed_symbols),
             "reconnects_total": _reconnects_total,
             "ping_sent_count": _ping_sent_count,
@@ -186,6 +190,8 @@ def start_liquidation_listener(category: str) -> None:
                         "rx_topic_liq": _rx_topic_liq,
                         "rx_events_total": _rx_events_total,
                         "last_raw_ts": _last_raw_ts,
+                        "last_ws_op": _last_ws_op,
+                        "last_ws_topic": _last_ws_topic,
                     },
                 )
         backoff = 1.0
@@ -296,10 +302,7 @@ def start_liquidation_listener(category: str) -> None:
 
                     if now_wall - last_ping_wall >= 20:
                         try:
-                            if hasattr(ws, "ping"):
-                                ws.ping()
-                            else:
-                                ws.send('{"op":"ping"}')
+                            ws.send(json.dumps({"op": "ping"}))
                             log_info(logger, "LIQ_WS_PING", step="LIQ_WS", extra={"conn_id": conn_id})
                             _ping_sent_count += 1
                         except Exception:
@@ -324,6 +327,9 @@ def start_liquidation_listener(category: str) -> None:
                                     "conn_id": conn_id,
                                     "subscribed_symbols_count": len(_subscribed_symbols),
                                     "ping_sent_count": _ping_sent_count,
+                                    "last_raw_ts": _last_raw_ts,
+                                    "last_ws_op": _last_ws_op,
+                                    "last_ws_topic": _last_ws_topic,
                                 },
                             )
                             _last_no_data_log_ts = now
@@ -358,6 +364,11 @@ def start_liquidation_listener(category: str) -> None:
                         _rx_json_ok += 1
                     except Exception:
                         continue
+                    if isinstance(msg, dict):
+                        if msg.get("op"):
+                            _last_ws_op = str(msg.get("op"))
+                        if msg.get("topic"):
+                            _last_ws_topic = str(msg.get("topic"))
                     if isinstance(msg, dict) and (msg.get("op") in ("subscribe", "unsubscribe") or "success" in msg):
                         log_info(
                             logger,
@@ -369,6 +380,17 @@ def start_liquidation_listener(category: str) -> None:
                                 "ret_msg": msg.get("ret_msg"),
                                 "req_id": msg.get("req_id"),
                             },
+                        )
+                    if isinstance(msg, dict) and msg.get("op") == "pong":
+                        server_ts = None
+                        data = msg.get("data")
+                        if isinstance(data, list) and data:
+                            server_ts = data[0]
+                        log_info(
+                            logger,
+                            "LIQ_WS_PONG",
+                            step="LIQ_WS",
+                            extra={"server_ts": server_ts, "conn_id": conn_id},
                         )
                     topic = msg.get("topic") or msg.get("op") or ""
                     topic = topic if isinstance(topic, str) else ""
