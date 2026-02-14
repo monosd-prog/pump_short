@@ -226,7 +226,7 @@ def start_liquidation_listener(category: str) -> None:
                         to_add = sorted(desired - subscribed)
                         to_remove = sorted(subscribed - desired)
                         if to_add:
-                            args = [f"liquidation.{sym}" for sym in to_add]
+                            args = [f"allLiquidation.{sym}" for sym in to_add]
                             if _LIQ_WS_DEBUG:
                                 args.extend([f"tickers.{sym}" for sym in to_add])
                             ws.send(json.dumps({"op": "subscribe", "args": args}))
@@ -239,7 +239,7 @@ def start_liquidation_listener(category: str) -> None:
                                 extra={"added": len(to_add), "symbols": to_add},
                             )
                         if to_remove:
-                            args = [f"liquidation.{sym}" for sym in to_remove]
+                            args = [f"allLiquidation.{sym}" for sym in to_remove]
                             if _LIQ_WS_DEBUG:
                                 args.extend([f"tickers.{sym}" for sym in to_remove])
                             ws.send(json.dumps({"op": "unsubscribe", "args": args}))
@@ -328,7 +328,7 @@ def start_liquidation_listener(category: str) -> None:
                         continue
                     topic = msg.get("topic") or msg.get("op") or ""
                     topic = topic if isinstance(topic, str) else ""
-                    if topic.startswith("liquidation."):
+                    if topic.startswith("allLiquidation."):
                         _rx_topic_liq += 1
 
                     data = msg.get("data")
@@ -363,6 +363,16 @@ def start_liquidation_listener(category: str) -> None:
                         _last_symbol = str(symbol) if symbol else None
                         liq_side = "long" if side == "buy" else "short"
                         _add_event(str(symbol), ts_ms, qty_f, price_f, liq_side)
+                        if _LIQ_WS_DEBUG:
+                            log_info(
+                                logger,
+                                "LIQ_WS_EVENT",
+                                step="LIQ_WS",
+                                extra={
+                                    "symbol": str(symbol),
+                                    "count": 1,
+                                },
+                            )
                         if _LIQ_WS_DEBUG:
                             now = time.time()
                             if now - debug_event_window_start >= 60:
