@@ -363,6 +363,17 @@ def start_liquidation_listener(category: str) -> None:
                         _last_symbol = str(symbol) if symbol else None
                         liq_side = "long" if side == "buy" else "short"
                         _add_event(str(symbol), ts_ms, qty_f, price_f, liq_side)
+                        log_info(
+                            logger,
+                            "LIQ_WS_EVENT",
+                            step="LIQ_WS",
+                            extra={
+                                "symbol": str(symbol),
+                                "side": side_raw,
+                                "size": qty_f,
+                                "price": price_f,
+                            },
+                        )
                         if _LIQ_WS_DEBUG:
                             log_info(
                                 logger,
