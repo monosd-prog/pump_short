@@ -332,9 +332,15 @@ def start_liquidation_listener(category: str) -> None:
                         _rx_topic_liq += 1
 
                     data = msg.get("data")
-                    if not data or not isinstance(data, list):
+                    if isinstance(data, dict):
+                        items = [data]
+                    elif isinstance(data, list):
+                        items = data
+                    else:
+                        items = []
+                    if not items:
                         continue
-                    for item in data:
+                    for item in items:
                         if not isinstance(item, dict):
                             continue
                         symbol = item.get("s") or (topic.split(".", 1)[1] if "." in topic else "")
