@@ -190,22 +190,29 @@ def run_watch_for_symbol(
     meta: Optional[Dict[str, Any]] = None,
     cfg: Optional[Config] = None,
 ) -> Dict[str, Any]:
+    import sys
+
     import short_pump.liquidations as liq_mod
 
-    print(
-        "WATCHER_SEES_LIQ_MODULE",
-        {
-            "file": liq_mod.__file__,
-            "module_name": liq_mod.__name__,
-            "id": id(liq_mod),
-            "pid": os.getpid(),
-        },
-    )
     cfg = cfg or Config.from_env()
     cfg.symbol = symbol.strip().upper()
     logger = get_logger(__name__, strategy_name="short_pump", symbol=cfg.symbol)
     meta = meta or {}
     run_id = run_id or time.strftime("%Y%m%d_%H%M%S")
+    diag_key = (run_id, cfg.symbol)
+    if not hasattr(run_watch_for_symbol, "_diag_liq_done"):
+        run_watch_for_symbol._diag_liq_done = set()
+    if diag_key not in run_watch_for_symbol._diag_liq_done:
+        run_watch_for_symbol._diag_liq_done.add(diag_key)
+        sys_keys = [k for k in sys.modules.keys() if "liquidations" in k]
+        logger.info(
+            "WATCHER_SEES_LIQ_MODULE_LOG | pid=%s | liq_file=%s | liq_name=%s | liq_obj_id=%s | sys_keys=%s",
+            os.getpid(),
+            liq_mod.__file__,
+            liq_mod.__name__,
+            id(liq_mod),
+            sys_keys,
+        )
 
     log_info(
         logger,

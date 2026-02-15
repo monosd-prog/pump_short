@@ -22,15 +22,19 @@ except Exception:  # pragma: no cover - runtime optional
     WebSocketTimeoutException = Exception  # type: ignore
     WebSocketConnectionClosedException = Exception  # type: ignore
 
-print(
-    "LIQ_MODULE_IMPORT",
-    {
-        "file": __file__,
-        "module_name": __name__,
-        "id": id(sys.modules[__name__]),
-        "pid": os.getpid(),
-    },
-)
+
+def _log_liq_module_diag(logger, tag: str) -> None:
+    mod = sys.modules.get(__name__)
+    logger.info(
+        "%s | pid=%s | file=%s | module_name=%s | module_obj_id=%s | sys_keys=%s",
+        tag,
+        os.getpid(),
+        __file__,
+        __name__,
+        id(mod) if mod is not None else None,
+        [k for k in sys.modules.keys() if "liquidations" in k],
+    )
+
 
 _lock = threading.Lock()
 _events_short: Dict[str, Deque[Tuple[int, float, float]]] = defaultdict(deque)
@@ -211,6 +215,10 @@ def register_symbol(symbol: str) -> None:
                 "pid": os.getpid(),
             },
         )
+        # DIAG: per-process module identity
+        if not hasattr(register_symbol, "_diag_done"):
+            register_symbol._diag_done = True
+            _log_liq_module_diag(logger, "LIQ_MODULE_REGISTER_LOG")
 
 
 def unregister_symbol(symbol: str) -> None:
@@ -233,6 +241,9 @@ def start_liquidation_listener(category: str) -> None:
 
     url = _endpoint_for_category(category)
     log_info(logger, "Starting liquidation listener", step="LIQ_WS", extra={"url": url})
+    if not hasattr(start_liquidation_listener, "_diag_done"):
+        start_liquidation_listener._diag_done = True
+        _log_liq_module_diag(logger, "LIQ_MODULE_IMPORT_LOG")
     raw_force = os.getenv("FORCE_LIQ_SYMBOLS", "")
     if raw_force:
         for sym in [s.strip().upper() for s in raw_force.split(",") if s.strip()]:
