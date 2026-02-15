@@ -218,6 +218,7 @@ def run_watch_for_symbol(
         except Exception:
             log_exception(logger, "Failed to unregister symbol", symbol=cfg.symbol, run_id=run_id, step="LIQ_WS")
 
+    st = None
     log_5m = f"logs/{run_id}_{cfg.symbol}_5m.csv"
     log_1m = f"logs/{run_id}_{cfg.symbol}_1m.csv"
     log_fast = f"logs/{run_id}_{cfg.symbol}_fast.csv"
@@ -391,6 +392,20 @@ def run_watch_for_symbol(
                 run_id=run_id,
                 step="WATCHER",
             )
+            now_wall = time.time()
+            last_state_log_ts = run_watch_for_symbol._last_liq_state_log_ts.get(cfg.symbol, 0.0)
+            if now_wall - last_state_log_ts >= 60:
+                stage = st.stage if st is not None else None
+                log_info(
+                    logger,
+                    "LIQ_STATE_FROM_WATCHER",
+                    symbol=cfg.symbol,
+                    run_id=run_id,
+                    stage=stage,
+                    step="LIQ_STATS",
+                    extra=get_liq_debug_state(cfg.symbol),
+                )
+                run_watch_for_symbol._last_liq_state_log_ts[cfg.symbol] = now_wall
             # =====================
             # 5m CONTEXT LOOP
             # =====================
@@ -627,19 +642,6 @@ def run_watch_for_symbol(
                                 },
                             )
                             run_watch_for_symbol._last_liq_log_ts[cfg.symbol] = now_ts
-                        last_state_log_ts = run_watch_for_symbol._last_liq_state_log_ts.get(cfg.symbol, 0.0)
-                        if now_ts - last_state_log_ts >= 60:
-                            state_dbg = get_liq_debug_state(cfg.symbol)
-                            log_info(
-                                logger,
-                                "LIQ_STATE_FROM_WATCHER",
-                                symbol=cfg.symbol,
-                                run_id=run_id,
-                                stage=st.stage,
-                                step="LIQ_STATS",
-                                extra=state_dbg,
-                            )
-                            run_watch_for_symbol._last_liq_state_log_ts[cfg.symbol] = now_ts
                         if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
                             run_watch_for_symbol._liq_sample_warned = set()
                         if run_id not in run_watch_for_symbol._liq_sample_warned:
@@ -834,19 +836,6 @@ def run_watch_for_symbol(
                             },
                         )
                         run_watch_for_symbol._last_liq_log_ts[cfg.symbol] = now_ts
-                    last_state_log_ts = run_watch_for_symbol._last_liq_state_log_ts.get(cfg.symbol, 0.0)
-                    if now_ts - last_state_log_ts >= 60:
-                        state_dbg = get_liq_debug_state(cfg.symbol)
-                        log_info(
-                            logger,
-                            "LIQ_STATE_FROM_WATCHER",
-                            symbol=cfg.symbol,
-                            run_id=run_id,
-                            stage=st.stage,
-                            step="LIQ_STATS",
-                            extra=state_dbg,
-                        )
-                        run_watch_for_symbol._last_liq_state_log_ts[cfg.symbol] = now_ts
                     if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
                         run_watch_for_symbol._liq_sample_warned = set()
                     if run_id not in run_watch_for_symbol._liq_sample_warned:
