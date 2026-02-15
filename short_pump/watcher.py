@@ -190,6 +190,17 @@ def run_watch_for_symbol(
     meta: Optional[Dict[str, Any]] = None,
     cfg: Optional[Config] = None,
 ) -> Dict[str, Any]:
+    import short_pump.liquidations as liq_mod
+
+    print(
+        "WATCHER_SEES_LIQ_MODULE",
+        {
+            "file": liq_mod.__file__,
+            "module_name": liq_mod.__name__,
+            "id": id(liq_mod),
+            "pid": os.getpid(),
+        },
+    )
     cfg = cfg or Config.from_env()
     cfg.symbol = symbol.strip().upper()
     logger = get_logger(__name__, strategy_name="short_pump", symbol=cfg.symbol)

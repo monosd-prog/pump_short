@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import threading
 import time
 from collections import defaultdict, deque
@@ -21,6 +22,15 @@ except Exception:  # pragma: no cover - runtime optional
     WebSocketTimeoutException = Exception  # type: ignore
     WebSocketConnectionClosedException = Exception  # type: ignore
 
+print(
+    "LIQ_MODULE_IMPORT",
+    {
+        "file": __file__,
+        "module_name": __name__,
+        "id": id(sys.modules[__name__]),
+        "pid": os.getpid(),
+    },
+)
 
 _lock = threading.Lock()
 _events_short: Dict[str, Deque[Tuple[int, float, float]]] = defaultdict(deque)
