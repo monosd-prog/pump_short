@@ -471,13 +471,11 @@ def run_watch_for_symbol(
                                     run_id=run_id,
                                     stage=st.stage,
                                     step="LIQ_STATS",
-                                    extra={
-                                        "now_ts": now_ts,
-                                        "liq_short_count_30s": liq_short_count_30s,
-                                        "liq_short_usd_30s": liq_short_usd_30s,
-                                        "liq_long_count_30s": liq_long_count_30s,
-                                        "liq_long_usd_30s": liq_long_usd_30s,
-                                    },
+                                    now_ts=now_ts,
+                                    liq_short_count_30s=liq_short_count_30s,
+                                    liq_short_usd_30s=liq_short_usd_30s,
+                                    liq_long_count_30s=liq_long_count_30s,
+                                    liq_long_usd_30s=liq_long_usd_30s,
                                 )
                                 run_watch_for_symbol._last_liq_nonzero_log_ts[cfg.symbol] = now_ts
                         last_liq_ts = run_watch_for_symbol._last_liq_log_ts.get(cfg.symbol, 0.0)
@@ -594,13 +592,11 @@ def run_watch_for_symbol(
                                 run_id=run_id,
                                 stage=st.stage,
                                 step="LIQ_STATS",
-                                extra={
-                                    "now_ts": now_ts,
-                                    "liq_short_count_30s": liq_short_count_30s,
-                                    "liq_short_usd_30s": liq_short_usd_30s,
-                                    "liq_long_count_30s": liq_long_count_30s,
-                                    "liq_long_usd_30s": liq_long_usd_30s,
-                                },
+                                now_ts=now_ts,
+                                liq_short_count_30s=liq_short_count_30s,
+                                liq_short_usd_30s=liq_short_usd_30s,
+                                liq_long_count_30s=liq_long_count_30s,
+                                liq_long_usd_30s=liq_long_usd_30s,
                             )
                             run_watch_for_symbol._last_liq_nonzero_log_ts[cfg.symbol] = now_ts
                     last_liq_ts = run_watch_for_symbol._last_liq_log_ts.get(cfg.symbol, 0.0)

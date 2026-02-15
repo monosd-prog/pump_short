@@ -167,7 +167,7 @@ def start_liquidation_listener(category: str) -> None:
     def _run() -> None:
         global _last_heartbeat
         global _rx_total, _rx_json_ok, _rx_topic_liq, _rx_events_total, _last_raw_ts, _last_rx_wall, _last_event_ts_ms, _last_symbol, _reconnects_total, _debug_msg_total
-        global _ping_sent_count, _last_disconnect_reason, _last_no_data_log_ts
+        global _ping_sent_count, _last_disconnect_reason, _last_no_data_log_ts, _last_ws_op, _last_ws_topic
 
         def _maybe_log_health(now: float, url: str) -> None:
             global _last_heartbeat
@@ -495,6 +495,12 @@ def start_liquidation_listener(category: str) -> None:
                 close_code = getattr(ws, "close_status", None)
                 close_reason = getattr(ws, "close_reason", None)
                 _last_disconnect_reason = "closed"
+                log_info(
+                    logger,
+                    "LIQ_WS_RECONNECT_CONTEXT",
+                    step="LIQ_WS",
+                    extra={"conn_id": conn_id, "last_ws_topic": _last_ws_topic, "last_ws_op": _last_ws_op},
+                )
                 log_exception(
                     logger,
                     "WS disconnected; reconnecting",
@@ -520,6 +526,12 @@ def start_liquidation_listener(category: str) -> None:
                 except Exception:
                     pass
                 _last_disconnect_reason = "exception"
+                log_info(
+                    logger,
+                    "LIQ_WS_RECONNECT_CONTEXT",
+                    step="LIQ_WS",
+                    extra={"conn_id": conn_id, "last_ws_topic": _last_ws_topic, "last_ws_op": _last_ws_op},
+                )
                 log_exception(
                     logger,
                     "Liquidation listener error; reconnecting",
