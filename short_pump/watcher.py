@@ -270,6 +270,8 @@ def run_watch_for_symbol(
         run_watch_for_symbol._last_liq_state_log_ts = {}
     if not hasattr(run_watch_for_symbol, "_last_liq_nonzero_log_ts"):
         run_watch_for_symbol._last_liq_nonzero_log_ts = {}
+    if not hasattr(run_watch_for_symbol, "_diag_ping_done"):
+        run_watch_for_symbol._diag_ping_done = set()
 
     entry_ok = False
     entry_payload: Dict[str, Any] = {}
@@ -392,6 +394,28 @@ def run_watch_for_symbol(
                 run_id=run_id,
                 step="WATCHER",
             )
+            diag_key = (run_id, cfg.symbol)
+            if diag_key not in run_watch_for_symbol._diag_ping_done:
+                run_watch_for_symbol._diag_ping_done.add(diag_key)
+                logger.info(
+                    "LIQ_STATE_PING | symbol=%s | run_id=%s | step=DIAG | pid=%s | watcher_file=%s",
+                    cfg.symbol,
+                    run_id,
+                    os.getpid(),
+                    __file__,
+                )
+                dbg = get_liq_debug_state(cfg.symbol)
+                logger.info(
+                    "LIQ_STATE_DUMP | symbol=%s | run_id=%s | step=DIAG | pid=%s | rx_events_total=%s | last_event_ts_ms=%s | last_symbol=%s | buffer_short_len=%s | buffer_long_len=%s",
+                    cfg.symbol,
+                    run_id,
+                    os.getpid(),
+                    dbg.get("rx_events_total"),
+                    dbg.get("last_event_ts_ms"),
+                    dbg.get("last_symbol"),
+                    dbg.get("buffer_short_len"),
+                    dbg.get("buffer_long_len"),
+                )
             now_wall = time.time()
             last_state_log_ts = run_watch_for_symbol._last_liq_state_log_ts.get(cfg.symbol, 0.0)
             if now_wall - last_state_log_ts >= 60:
