@@ -8,11 +8,17 @@ from typing import Any, Dict
 
 from common.dataset_schema import (
     EVENT_FIELDS_V2,
+    EVENT_FIELDS_V3,
     OUTCOME_FIELDS_V2,
+    OUTCOME_FIELDS_V3,
     TRADE_FIELDS_V2,
+    TRADE_FIELDS_V3,
     normalize_event_v2,
+    normalize_event_v3,
     normalize_outcome_v2,
+    normalize_outcome_v3,
     normalize_trade_v2,
+    normalize_trade_v3,
 )
 
 
@@ -48,11 +54,18 @@ def ensure_dataset_files(strategy: str, mode: str, wall_time_utc: str, schema_ve
         return
     base_dir = _dataset_dir(strategy, mode, wall_time_utc)
     os.makedirs(base_dir, exist_ok=True)
-    targets = [
-        ("events_v2.csv", EVENT_FIELDS_V2),
-        ("trades_v2.csv", TRADE_FIELDS_V2),
-        ("outcomes_v2.csv", OUTCOME_FIELDS_V2),
-    ]
+    if schema_version == 3:
+        targets = [
+            ("events_v3.csv", EVENT_FIELDS_V3),
+            ("trades_v3.csv", TRADE_FIELDS_V3),
+            ("outcomes_v3.csv", OUTCOME_FIELDS_V3),
+        ]
+    else:
+        targets = [
+            ("events_v2.csv", EVENT_FIELDS_V2),
+            ("trades_v2.csv", TRADE_FIELDS_V2),
+            ("outcomes_v2.csv", OUTCOME_FIELDS_V2),
+        ]
     for filename, fieldnames in targets:
         path = os.path.join(base_dir, filename)
         if os.path.isfile(path):
@@ -60,10 +73,24 @@ def ensure_dataset_files(strategy: str, mode: str, wall_time_utc: str, schema_ve
         with open(path, "a", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fieldnames)
             w.writeheader()
+    event_filename = "events_v3.csv" if schema_version == 3 else "events_v2.csv"
+    fieldnames = EVENT_FIELDS_V3 if schema_version == 3 else EVENT_FIELDS_V2
+    has_1m_fields = all(
+        k in fieldnames
+        for k in (
+            "liq_short_count_1m",
+            "liq_short_usd_1m",
+            "liq_long_count_1m",
+            "liq_long_usd_1m",
+        )
+    )
     logging.getLogger(__name__).info(
-        "DATASET_V2_ENSURE_OK | strategy=%s | mode=%s | wall_time_utc=%s",
+        "DATASET_ENSURE_OK | schema_version=%s | strategy=%s | mode=%s | event_file=%s | has_1m_fields=%s | wall_time_utc=%s",
+        schema_version,
         strategy,
         mode,
+        event_filename,
+        has_1m_fields,
         wall_time_utc,
     )
 
@@ -72,7 +99,13 @@ def write_event_row(
     row: Dict[str, Any], *, strategy: str, mode: str, wall_time_utc: str, schema_version: int = 2
 ) -> None:
     base_dir = _dataset_dir(strategy, mode, wall_time_utc)
-    if schema_version >= 2:
+    if schema_version == 3:
+        path = os.path.join(base_dir, "events_v3.csv")
+        row_v3 = normalize_event_v3(row)
+        _write_row(path, row_v3, EVENT_FIELDS_V3)
+        if os.getenv("DATASET_V1", "1") == "1":
+            _write_row(os.path.join(base_dir, "events.csv"), row)
+    elif schema_version >= 2:
         path = os.path.join(base_dir, "events_v2.csv")
         row_v2 = normalize_event_v2(row)
         _write_row(path, row_v2, EVENT_FIELDS_V2)
@@ -95,7 +128,13 @@ def write_trade_row(
         **row,
     }
     base_dir = _dataset_dir(strategy, mode, wall_time_utc)
-    if schema_version >= 2:
+    if schema_version == 3:
+        path = os.path.join(base_dir, "trades_v3.csv")
+        row_v3 = normalize_trade_v3(row)
+        _write_row(path, row_v3, TRADE_FIELDS_V3)
+        if os.getenv("DATASET_V1", "1") == "1":
+            _write_row(os.path.join(base_dir, "trades.csv"), row)
+    elif schema_version >= 2:
         path = os.path.join(base_dir, "trades_v2.csv")
         row_v2 = normalize_trade_v2(row)
         _write_row(path, row_v2, TRADE_FIELDS_V2)
@@ -117,7 +156,13 @@ def write_outcome_row(
     if not row.get("outcome_time_utc"):
         row["outcome_time_utc"] = wall_time_utc
     base_dir = _dataset_dir(strategy, mode, wall_time_utc)
-    if schema_version >= 2:
+    if schema_version == 3:
+        path = os.path.join(base_dir, "outcomes_v3.csv")
+        row_v3 = normalize_outcome_v3(row)
+        _write_row(path, row_v3, OUTCOME_FIELDS_V3)
+        if os.getenv("DATASET_V1", "1") == "1":
+            _write_row(os.path.join(base_dir, "outcomes.csv"), row)
+    elif schema_version >= 2:
         path = os.path.join(base_dir, "outcomes_v2.csv")
         row_v2 = normalize_outcome_v2(row)
         _write_row(path, row_v2, OUTCOME_FIELDS_V2)
