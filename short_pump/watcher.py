@@ -27,7 +27,13 @@ from short_pump.context5m import (
 from short_pump.entry import decide_entry_fast, decide_entry_1m
 from short_pump.features import normalize_funding, oi_change_pct
 from short_pump.io_csv import append_csv
-from short_pump.liquidations import get_liq_health, get_liq_stats, register_symbol, unregister_symbol
+from short_pump.liquidations import (
+    get_liq_debug_state,
+    get_liq_health,
+    get_liq_stats,
+    register_symbol,
+    unregister_symbol,
+)
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from common.outcome_tracker import build_outcome_row
 from short_pump.outcome import track_outcome_short
@@ -259,11 +265,122 @@ def run_watch_for_symbol(
     last_heartbeat_wall = 0.0
     if not hasattr(run_watch_for_symbol, "_last_liq_log_ts"):
         run_watch_for_symbol._last_liq_log_ts = {}
+    if not hasattr(run_watch_for_symbol, "_last_liq_state_log_ts"):
+        run_watch_for_symbol._last_liq_state_log_ts = {}
     if not hasattr(run_watch_for_symbol, "_last_liq_nonzero_log_ts"):
         run_watch_for_symbol._last_liq_nonzero_log_ts = {}
 
     entry_ok = False
     entry_payload: Dict[str, Any] = {}
+    entry_candidate_active = False
+    entry_candidate_snapshot: Dict[str, Any] = {}
+    entry_candidate_set_ts = 0.0
+    entry_candidate_expires_ts = 0.0
+    entry_candidate_source = ""
+
+    def _context_filter_pass(payload: Dict[str, Any], current_funding_abs: float | None, base_context_score: float) -> tuple[bool, Dict[str, Any]]:
+        flags = payload.get("flags") if isinstance(payload.get("flags"), dict) else {}
+        dist_pct = float(payload.get("dist_to_peak_pct") or 0.0)
+        near_top = bool(flags.get("near_top")) if "near_top" in flags else (dist_pct <= cfg.dist_to_peak_max_pct * 100.0)
+        oi_val = payload.get("oi_change_fast_pct")
+        if oi_val is None:
+            oi_val = payload.get("oi_change_1m_pct")
+        context_score_val = float(payload.get("context_score", base_context_score) or 0.0)
+        oi_ok = True
+        if cfg.entry_context_oi_change_max_pct is not None and oi_val is not None:
+            oi_ok = float(oi_val) <= float(cfg.entry_context_oi_change_max_pct)
+        funding_ok = True
+        if cfg.entry_context_funding_abs_max is not None and current_funding_abs is not None:
+            funding_ok = float(current_funding_abs) <= float(cfg.entry_context_funding_abs_max)
+        context_ok = (
+            st.stage >= 3
+            and near_top
+            and oi_ok
+            and funding_ok
+            and context_score_val >= float(cfg.entry_context_min_score)
+        )
+        return context_ok, {
+            "near_top": near_top,
+            "dist_to_peak_pct": dist_pct,
+            "context_score": context_score_val,
+            "oi_ok": oi_ok,
+            "funding_ok": funding_ok,
+        }
+
+    def _trigger_pass(payload: Dict[str, Any]) -> tuple[bool, Dict[str, Any]]:
+        flags = payload.get("flags") if isinstance(payload.get("flags"), dict) else {}
+        entry_source = str(payload.get("entry_source") or "")
+        delta_ok = bool(flags.get("delta_ok"))
+        break_low = bool(flags.get("break_low"))
+        if entry_source == "1m":
+            trigger_ok = break_low and delta_ok
+        else:
+            trigger_ok = delta_ok
+        return trigger_ok, {"entry_source": entry_source, "delta_ok": delta_ok, "break_low": break_low}
+
+    def _set_candidate(payload: Dict[str, Any], now_ts: float, source: str, context_meta: Dict[str, Any]) -> None:
+        nonlocal entry_candidate_active, entry_candidate_snapshot, entry_candidate_set_ts, entry_candidate_expires_ts, entry_candidate_source
+        ttl = max(1.0, float(cfg.entry_candidate_ttl_seconds))
+        entry_candidate_active = True
+        entry_candidate_set_ts = now_ts
+        entry_candidate_expires_ts = now_ts + ttl
+        entry_candidate_source = source
+        entry_candidate_snapshot = {
+            "candidate_state": "ENTRY_CANDIDATE",
+            "candidate_set_ts": now_ts,
+            "candidate_ttl_seconds": ttl,
+            "candidate_expires_ts": entry_candidate_expires_ts,
+            "source": source,
+            "stage": st.stage,
+            "time_utc": payload.get("time_utc"),
+            "price": payload.get("price"),
+            "dist_to_peak_pct": payload.get("dist_to_peak_pct"),
+            "context_score": payload.get("context_score", context_score),
+            "oi_change_1m_pct": payload.get("oi_change_1m_pct"),
+            "oi_change_fast_pct": payload.get("oi_change_fast_pct"),
+            "funding_rate_abs": payload.get("funding_rate_abs"),
+            "liq_short_count_30s": payload.get("liq_short_count_30s", 0),
+            "liq_short_usd_30s": payload.get("liq_short_usd_30s", 0.0),
+            "liq_long_count_30s": payload.get("liq_long_count_30s", 0),
+            "liq_long_usd_30s": payload.get("liq_long_usd_30s", 0.0),
+            "liq_short_count_1m": payload.get("liq_short_count_1m", 0),
+            "liq_short_usd_1m": payload.get("liq_short_usd_1m", 0.0),
+            "liq_long_count_1m": payload.get("liq_long_count_1m", 0),
+            "liq_long_usd_1m": payload.get("liq_long_usd_1m", 0.0),
+            "flags": payload.get("flags"),
+            "context_meta": context_meta,
+        }
+        log_info(
+            logger,
+            "ENTRY_CANDIDATE_SET",
+            symbol=cfg.symbol,
+            run_id=run_id,
+            stage=st.stage,
+            step="ENTRY_CANDIDATE",
+            extra={
+                "ttl_seconds": ttl,
+                "source": source,
+                "context_score": entry_candidate_snapshot.get("context_score"),
+                "dist_to_peak_pct": entry_candidate_snapshot.get("dist_to_peak_pct"),
+                "liq_long_usd_30s": entry_candidate_snapshot.get("liq_long_usd_30s"),
+                "liq_short_usd_30s": entry_candidate_snapshot.get("liq_short_usd_30s"),
+            },
+        )
+
+    def _apply_liq_adjustments(payload: Dict[str, Any], base_score: float) -> tuple[float, bool, str]:
+        long_usd_30s = float(payload.get("liq_long_usd_30s") or 0.0)
+        short_usd_30s = float(payload.get("liq_short_usd_30s") or 0.0)
+        adj_score = float(base_score)
+        veto = False
+        veto_reason = ""
+        if cfg.entry_liq_long_bonus_usd_30s is not None and long_usd_30s >= float(cfg.entry_liq_long_bonus_usd_30s):
+            adj_score += float(cfg.entry_liq_long_bonus_score)
+        if cfg.entry_liq_short_penalty_usd_30s is not None and short_usd_30s >= float(cfg.entry_liq_short_penalty_usd_30s):
+            adj_score -= float(cfg.entry_liq_short_penalty_score)
+        if cfg.entry_liq_short_veto_usd_30s is not None and short_usd_30s >= float(cfg.entry_liq_short_veto_usd_30s):
+            veto = True
+            veto_reason = "liq_short_veto"
+        return max(0.0, min(1.0, adj_score)), veto, veto_reason
 
     try:
         while pd.Timestamp.now(tz="UTC") < end_ts:
@@ -447,12 +564,12 @@ def run_watch_for_symbol(
                         funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
                         funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
 
-                        entry_ok, entry_payload = decide_entry_1m(
+                        decision_1m_ok, decision_1m_payload = decide_entry_1m(
                             cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                         )
                         # Update context_score with CVD if available
-                        context_score_with_cvd = entry_payload.get("context_score", context_score)
-                        ctx_parts = entry_payload.get("context_parts", ctx_parts)
+                        context_score_with_cvd = decision_1m_payload.get("context_score", context_score)
+                        ctx_parts = decision_1m_payload.get("context_parts", ctx_parts)
 
                         # Liquidation stats
                         now_ts = time.time()
@@ -496,9 +613,26 @@ def run_watch_for_symbol(
                                     "liq_short_usd_30s": liq_short_usd_30s,
                                     "liq_long_count_30s": liq_long_count_30s,
                                     "liq_long_usd_30s": liq_long_usd_30s,
+                                    "liq_short_count_1m": liq_short_count_1m,
+                                    "liq_short_usd_1m": liq_short_usd_1m,
+                                    "liq_long_count_1m": liq_long_count_1m,
+                                    "liq_long_usd_1m": liq_long_usd_1m,
                                 },
                             )
                             run_watch_for_symbol._last_liq_log_ts[cfg.symbol] = now_ts
+                        last_state_log_ts = run_watch_for_symbol._last_liq_state_log_ts.get(cfg.symbol, 0.0)
+                        if now_ts - last_state_log_ts >= 60:
+                            state_dbg = get_liq_debug_state(cfg.symbol)
+                            log_info(
+                                logger,
+                                "LIQ_STATE_FROM_WATCHER",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="LIQ_STATS",
+                                extra=state_dbg,
+                            )
+                            run_watch_for_symbol._last_liq_state_log_ts[cfg.symbol] = now_ts
                         if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
                             run_watch_for_symbol._liq_sample_warned = set()
                         if run_id not in run_watch_for_symbol._liq_sample_warned:
@@ -519,7 +653,7 @@ def run_watch_for_symbol(
                                 },
                             )
                             run_watch_for_symbol._liq_sample_warned.add(run_id)
-                        entry_payload.update({
+                        decision_1m_payload.update({
                             "liq_short_count_30s": liq_short_count_30s,
                             "liq_short_usd_30s": liq_short_usd_30s,
                             "liq_short_count_1m": liq_short_count_1m,
@@ -532,6 +666,75 @@ def run_watch_for_symbol(
                             "funding_rate_ts_utc": funding_rate_ts_utc,
                             "funding_rate_abs": funding_rate_abs,
                         })
+                        now_decision_ts = time.time()
+                        if entry_candidate_active and now_decision_ts > entry_candidate_expires_ts:
+                            entry_candidate_active = False
+                            entry_candidate_snapshot = {}
+                            entry_candidate_source = ""
+
+                        context_pass, context_meta = _context_filter_pass(decision_1m_payload, funding_rate_abs, context_score)
+                        if context_pass and not entry_candidate_active:
+                            _set_candidate(decision_1m_payload, now_decision_ts, "1m", context_meta)
+
+                        trigger_pass, trigger_meta = _trigger_pass(decision_1m_payload)
+                        if (
+                            entry_candidate_active
+                            and now_decision_ts <= entry_candidate_expires_ts
+                            and trigger_pass
+                            and cfg.entry_mode != "FAST_ONLY"
+                        ):
+                            base_score = float(decision_1m_payload.get("context_score", context_score) or 0.0)
+                            adjusted_score, vetoed, veto_reason = _apply_liq_adjustments(decision_1m_payload, base_score)
+                            if (not vetoed) and adjusted_score >= float(cfg.entry_context_min_score):
+                                confirmed_payload = dict(decision_1m_payload)
+                                confirmed_payload["context_score"] = adjusted_score
+                                confirmed_payload["candidate_snapshot"] = dict(entry_candidate_snapshot)
+                                confirmed_payload["entry_snapshot"] = {
+                                    "state": "ENTRY_OK_CONFIRMED",
+                                    "confirmed_ts": now_decision_ts,
+                                    "source": trigger_meta.get("entry_source") or "1m",
+                                    "trigger_meta": trigger_meta,
+                                    "context_meta": context_meta,
+                                    "base_context_score": base_score,
+                                    "adjusted_context_score": adjusted_score,
+                                    "candidate_set_ts": entry_candidate_set_ts,
+                                    "candidate_expires_ts": entry_candidate_expires_ts,
+                                    "liq_long_usd_30s": confirmed_payload.get("liq_long_usd_30s"),
+                                    "liq_short_usd_30s": confirmed_payload.get("liq_short_usd_30s"),
+                                }
+                                log_info(
+                                    logger,
+                                    "ENTRY_OK_CONFIRMED",
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    stage=st.stage,
+                                    step="ENTRY_DECISION",
+                                    extra={
+                                        "source": confirmed_payload.get("entry_source"),
+                                        "trigger_meta": trigger_meta,
+                                        "base_context_score": base_score,
+                                        "adjusted_context_score": adjusted_score,
+                                        "candidate_set_ts": entry_candidate_set_ts,
+                                        "candidate_expires_ts": entry_candidate_expires_ts,
+                                        "cand_liq_long_usd_30s": entry_candidate_snapshot.get("liq_long_usd_30s"),
+                                        "cand_liq_short_usd_30s": entry_candidate_snapshot.get("liq_short_usd_30s"),
+                                    },
+                                )
+                                entry_ok = True
+                                entry_payload = confirmed_payload
+                                entry_candidate_active = False
+                                entry_candidate_snapshot = {}
+                                entry_candidate_source = ""
+                            elif vetoed:
+                                log_info(
+                                    logger,
+                                    "ENTRY_TRIGGER_VETOED",
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    stage=st.stage,
+                                    step="ENTRY_DECISION",
+                                    extra={"reason": veto_reason, "source": trigger_meta.get("entry_source")},
+                                )
 
                         append_csv(
                             log_1m,
@@ -540,11 +743,11 @@ def run_watch_for_symbol(
                                 "symbol": cfg.symbol,
                                 "time_utc": str(candles_1m.iloc[-1]["ts"]),
                                 "price": float(candles_1m.iloc[-1]["close"]),
-                                "entry_ok": bool(entry_ok),
-                                "oi_change_1m_pct": entry_payload.get("oi_change_1m_pct"),
-                                "cvd_delta_ratio_30s": entry_payload.get("cvd_delta_ratio_30s"),
-                                "cvd_delta_ratio_1m": entry_payload.get("cvd_delta_ratio_1m"),
-                                "cvd_part": entry_payload.get("cvd_part"),
+                                "entry_ok": bool(decision_1m_ok),
+                                "oi_change_1m_pct": decision_1m_payload.get("oi_change_1m_pct"),
+                                "cvd_delta_ratio_30s": decision_1m_payload.get("cvd_delta_ratio_30s"),
+                                "cvd_delta_ratio_1m": decision_1m_payload.get("cvd_delta_ratio_1m"),
+                                "cvd_part": decision_1m_payload.get("cvd_part"),
                                 "funding_rate": funding_rate,
                                 "funding_rate_ts_utc": funding_rate_ts_utc,
                                 "funding_rate_abs": funding_rate_abs,
@@ -556,7 +759,7 @@ def run_watch_for_symbol(
                                 "liq_long_usd_30s": liq_long_usd_30s,
                                 "liq_long_count_1m": liq_long_count_1m,
                                 "liq_long_usd_1m": liq_long_usd_1m,
-                                "entry_payload": json.dumps(entry_payload, ensure_ascii=False),
+                                "entry_payload": json.dumps(decision_1m_payload, ensure_ascii=False),
                             },
                         )
                         last_1m_wall_write = time.time()
@@ -617,9 +820,26 @@ def run_watch_for_symbol(
                                 "liq_short_usd_30s": liq_short_usd_30s,
                                 "liq_long_count_30s": liq_long_count_30s,
                                 "liq_long_usd_30s": liq_long_usd_30s,
+                                "liq_short_count_1m": liq_short_count_1m,
+                                "liq_short_usd_1m": liq_short_usd_1m,
+                                "liq_long_count_1m": liq_long_count_1m,
+                                "liq_long_usd_1m": liq_long_usd_1m,
                             },
                         )
                         run_watch_for_symbol._last_liq_log_ts[cfg.symbol] = now_ts
+                    last_state_log_ts = run_watch_for_symbol._last_liq_state_log_ts.get(cfg.symbol, 0.0)
+                    if now_ts - last_state_log_ts >= 60:
+                        state_dbg = get_liq_debug_state(cfg.symbol)
+                        log_info(
+                            logger,
+                            "LIQ_STATE_FROM_WATCHER",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="LIQ_STATS",
+                            extra=state_dbg,
+                        )
+                        run_watch_for_symbol._last_liq_state_log_ts[cfg.symbol] = now_ts
                     if not hasattr(run_watch_for_symbol, "_liq_sample_warned"):
                         run_watch_for_symbol._liq_sample_warned = set()
                     if run_id not in run_watch_for_symbol._liq_sample_warned:
@@ -653,6 +873,70 @@ def run_watch_for_symbol(
                         "funding_rate_ts_utc": funding_rate_ts_utc,
                         "funding_rate_abs": funding_rate_abs,
                     })
+                    now_decision_ts = time.time()
+                    if entry_candidate_active and now_decision_ts > entry_candidate_expires_ts:
+                        entry_candidate_active = False
+                        entry_candidate_snapshot = {}
+                        entry_candidate_source = ""
+
+                    context_pass, context_meta = _context_filter_pass(payload_fast, funding_rate_abs, context_score)
+                    if context_pass and not entry_candidate_active:
+                        _set_candidate(payload_fast, now_decision_ts, "fast", context_meta)
+
+                    trigger_pass, trigger_meta = _trigger_pass(payload_fast)
+                    if entry_candidate_active and now_decision_ts <= entry_candidate_expires_ts and trigger_pass:
+                        base_score = float(payload_fast.get("context_score", context_score) or 0.0)
+                        adjusted_score, vetoed, veto_reason = _apply_liq_adjustments(payload_fast, base_score)
+                        if (not vetoed) and adjusted_score >= float(cfg.entry_context_min_score):
+                            confirmed_payload = dict(payload_fast)
+                            confirmed_payload["context_score"] = adjusted_score
+                            confirmed_payload["candidate_snapshot"] = dict(entry_candidate_snapshot)
+                            confirmed_payload["entry_snapshot"] = {
+                                "state": "ENTRY_OK_CONFIRMED",
+                                "confirmed_ts": now_decision_ts,
+                                "source": trigger_meta.get("entry_source") or "fast",
+                                "trigger_meta": trigger_meta,
+                                "context_meta": context_meta,
+                                "base_context_score": base_score,
+                                "adjusted_context_score": adjusted_score,
+                                "candidate_set_ts": entry_candidate_set_ts,
+                                "candidate_expires_ts": entry_candidate_expires_ts,
+                                "liq_long_usd_30s": confirmed_payload.get("liq_long_usd_30s"),
+                                "liq_short_usd_30s": confirmed_payload.get("liq_short_usd_30s"),
+                            }
+                            log_info(
+                                logger,
+                                "ENTRY_OK_CONFIRMED",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="ENTRY_DECISION",
+                                extra={
+                                    "source": confirmed_payload.get("entry_source"),
+                                    "trigger_meta": trigger_meta,
+                                    "base_context_score": base_score,
+                                    "adjusted_context_score": adjusted_score,
+                                    "candidate_set_ts": entry_candidate_set_ts,
+                                    "candidate_expires_ts": entry_candidate_expires_ts,
+                                    "cand_liq_long_usd_30s": entry_candidate_snapshot.get("liq_long_usd_30s"),
+                                    "cand_liq_short_usd_30s": entry_candidate_snapshot.get("liq_short_usd_30s"),
+                                },
+                            )
+                            entry_ok = True
+                            entry_payload = confirmed_payload
+                            entry_candidate_active = False
+                            entry_candidate_snapshot = {}
+                            entry_candidate_source = ""
+                        elif vetoed:
+                            log_info(
+                                logger,
+                                "ENTRY_TRIGGER_VETOED",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="ENTRY_DECISION",
+                                extra={"reason": veto_reason, "source": trigger_meta.get("entry_source")},
+                            )
                     append_csv(
                         log_fast,
                         {
@@ -678,22 +962,12 @@ def run_watch_for_symbol(
                             "entry_payload": json.dumps(payload_fast, ensure_ascii=False),
                         },
                     )
-                    if ok_fast:
-                        if cfg.entry_mode == "FAST_ONLY" and payload_fast.get("entry_source") != "fast":
-                            log_warning(
-                                logger,
-                                "FAST_ONLY: non-fast entry suppressed",
-                                symbol=cfg.symbol,
-                                run_id=run_id,
-                                stage=st.stage,
-                                step="FAST",
-                                extra={"entry_source": payload_fast.get("entry_source")},
-                            )
-                        else:
-                            entry_ok = True
-                            entry_payload = payload_fast
                 except Exception as e:
                     log_exception(logger, "Error in fast polling", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="FAST")
+            elif entry_candidate_active:
+                entry_candidate_active = False
+                entry_candidate_snapshot = {}
+                entry_candidate_source = ""
 
             # =====================
             # ENTRY OK → OUTCOME
@@ -765,6 +1039,7 @@ def run_watch_for_symbol(
                     "stage": st.stage,
                     "entry_mode": cfg.entry_mode,
                 }
+                entry_payload["entry_snapshot"] = entry_snapshot
                 try:
                     now_ts = time.time()
                     liq_short_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")

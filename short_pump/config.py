@@ -94,6 +94,15 @@ class Config:
     delta_ratio_30s_max: Optional[float] = -0.12
     delta_ratio_fast_late_max: float = -0.18
     delta_ratio_1m_max: float = -0.05
+    entry_candidate_ttl_seconds: int = 120
+    entry_context_min_score: float = 0.45
+    entry_context_oi_change_max_pct: Optional[float] = None
+    entry_context_funding_abs_max: Optional[float] = None
+    entry_liq_long_bonus_usd_30s: Optional[float] = None
+    entry_liq_short_penalty_usd_30s: Optional[float] = None
+    entry_liq_short_veto_usd_30s: Optional[float] = None
+    entry_liq_long_bonus_score: float = 0.05
+    entry_liq_short_penalty_score: float = 0.05
 
     break_low_lookback: int = 3
     no_new_high_lookback: int = 5
@@ -169,6 +178,15 @@ class Config:
         # entry thresholds
         c.delta_ratio_30s_min = _get_optional_float("DELTA_RATIO_30S_MIN", c.delta_ratio_30s_min)
         c.delta_ratio_30s_max = _get_optional_float("DELTA_RATIO_30S_MAX", c.delta_ratio_30s_max)
+        c.entry_candidate_ttl_seconds = _get_int("ENTRY_CANDIDATE_TTL_SECONDS", c.entry_candidate_ttl_seconds)
+        c.entry_context_min_score = _get_float("ENTRY_CONTEXT_MIN_SCORE", c.entry_context_min_score)
+        c.entry_context_oi_change_max_pct = _get_optional_float("ENTRY_CONTEXT_OI_CHANGE_MAX_PCT", c.entry_context_oi_change_max_pct)
+        c.entry_context_funding_abs_max = _get_optional_float("ENTRY_CONTEXT_FUNDING_ABS_MAX", c.entry_context_funding_abs_max)
+        c.entry_liq_long_bonus_usd_30s = _get_optional_float("ENTRY_LIQ_LONG_BONUS_USD_30S", c.entry_liq_long_bonus_usd_30s)
+        c.entry_liq_short_penalty_usd_30s = _get_optional_float("ENTRY_LIQ_SHORT_PENALTY_USD_30S", c.entry_liq_short_penalty_usd_30s)
+        c.entry_liq_short_veto_usd_30s = _get_optional_float("ENTRY_LIQ_SHORT_VETO_USD_30S", c.entry_liq_short_veto_usd_30s)
+        c.entry_liq_long_bonus_score = _get_float("ENTRY_LIQ_LONG_BONUS_SCORE", c.entry_liq_long_bonus_score)
+        c.entry_liq_short_penalty_score = _get_float("ENTRY_LIQ_SHORT_PENALTY_SCORE", c.entry_liq_short_penalty_score)
 
         # outcome
         c.outcome_watch_minutes = _get_int("OUTCOME_WATCH_MINUTES", c.outcome_watch_minutes)

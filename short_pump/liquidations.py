@@ -164,6 +164,23 @@ def get_liq_health() -> Dict[str, Optional[int]]:
         }
 
 
+def get_liq_debug_state(symbol: str) -> Dict[str, Optional[int]]:
+    sym = _normalize_symbol(symbol)
+    with _lock:
+        q_short = _events_short.get(sym)
+        q_long = _events_long.get(sym)
+        return {
+            "symbol": sym,
+            "rx_events_total": _rx_events_total,
+            "last_event_ts_ms": _last_event_ts_ms,
+            "last_symbol": _last_symbol,
+            "buffer_short_len": len(q_short) if q_short else 0,
+            "buffer_long_len": len(q_long) if q_long else 0,
+            "buffer_short_last_ts_ms": q_short[-1][0] if q_short else None,
+            "buffer_long_last_ts_ms": q_long[-1][0] if q_long else None,
+        }
+
+
 def register_symbol(symbol: str) -> None:
     sym = _normalize_symbol(symbol)
     if not sym:
