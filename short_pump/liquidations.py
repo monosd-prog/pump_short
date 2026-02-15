@@ -25,14 +25,17 @@ except Exception:  # pragma: no cover - runtime optional
 
 def _log_liq_module_diag(logger, tag: str) -> None:
     mod = sys.modules.get(__name__)
-    logger.info(
-        "%s | pid=%s | file=%s | module_name=%s | module_obj_id=%s | sys_keys=%s",
+    log_info(
+        logger,
         tag,
-        os.getpid(),
-        __file__,
-        __name__,
-        id(mod) if mod is not None else None,
-        [k for k in sys.modules.keys() if "liquidations" in k],
+        step="LIQ_WS",
+        extra={
+            "pid": os.getpid(),
+            "file": __file__,
+            "module_name": __name__,
+            "module_obj_id": id(mod) if mod is not None else None,
+            "sys_keys": [k for k in sys.modules.keys() if "liquidations" in k],
+        },
     )
 
 
