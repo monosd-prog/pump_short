@@ -45,6 +45,7 @@ _debug_msg_total = 0
 _ping_sent_count = 0
 _last_disconnect_reason: Optional[str] = None
 _last_no_data_log_ts = 0.0
+_last_liq_zero_window_log_ts: Dict[str, float] = {}
 
 def _env_flag(name: str, default: bool = False) -> bool:
     v = os.getenv(name)
@@ -112,9 +113,38 @@ def get_liq_stats(symbol: str, now_ts: float, window_seconds: int, side: str = "
             if ts_ms >= cutoff_ms:
                 count += 1
                 qty_sum += qty
+        if count == 0 and q:
+            now_wall = time.time()
+            last_dbg = _last_liq_zero_window_log_ts.get(sym, 0.0)
+            if _LIQ_WS_DEBUG or (now_wall - last_dbg >= 60):
+                last_event_ts_ms_for_symbol = q[-1][0] if q else None
+                computed_age_ms = (
+                    int(now_ms - int(last_event_ts_ms_for_symbol))
+                    if last_event_ts_ms_for_symbol is not None
+                    else None
+                )
+                log_info(
+                    logger,
+                    "LIQ_STATS_ZERO_WINDOW_DEBUG",
+                    symbol=sym,
+                    step="LIQ_STATS",
+                    extra={
+                        "side": side,
+                        "now_ms": now_ms,
+                        "window_ms": int(window_seconds * 1000),
+                        "events_in_buffer": len(q),
+                        "last_event_ts_ms_for_symbol": last_event_ts_ms_for_symbol,
+                        "computed_age_ms": computed_age_ms,
+                    },
+                )
+                _last_liq_zero_window_log_ts[sym] = now_wall
         return count, float(qty_sum)
 def get_liq_health() -> Dict[str, Optional[int]]:
     with _lock:
+        xrp_short = _events_short.get("XRPUSDT")
+        xrp_long = _events_long.get("XRPUSDT")
+        xrp_last_short_ts_ms = xrp_short[-1][0] if xrp_short else None
+        xrp_last_long_ts_ms = xrp_long[-1][0] if xrp_long else None
         return {
             "rx_total": _rx_total,
             "rx_json_ok": _rx_json_ok,
@@ -128,6 +158,8 @@ def get_liq_health() -> Dict[str, Optional[int]]:
             "subscribed_symbols_count": len(_subscribed_symbols),
             "reconnects_total": _reconnects_total,
             "ping_sent_count": _ping_sent_count,
+            "xrp_last_short_ts_ms": xrp_last_short_ts_ms,
+            "xrp_last_long_ts_ms": xrp_last_long_ts_ms,
         }
 
 
@@ -427,24 +459,48 @@ def start_liquidation_listener(category: str) -> None:
                             continue
                         price = item.get("p") or item.get("price") or 0
                         qty = item.get("v") or item.get("size") or item.get("qty") or item.get("q") or 0
-                        ts = item.get("T") or msg.get("ts") or 0
+                        ts_candidates = (
+                            item.get("ts"),
+                            item.get("T"),
+                            item.get("ctime"),
+                            item.get("updatedTime"),
+                            msg.get("ts"),
+                            msg.get("ctime"),
+                            msg.get("creationTime"),
+                        )
                         try:
                             price_f = float(price)
                             qty_f = float(qty)
                         except Exception:
                             continue
-                        try:
-                            ts_ms = int(ts)
-                        except Exception:
+                        ts_ms = 0
+                        ts_fallback = False
+                        for ts_candidate in ts_candidates:
+                            if ts_candidate is None:
+                                continue
+                            try:
+                                candidate_ms = int(float(ts_candidate))
+                            except Exception:
+                                continue
+                            if candidate_ms <= 0:
+                                continue
+                            if candidate_ms < 10**11:
+                                candidate_ms *= 1000
+                            if candidate_ms <= 0:
+                                continue
+                            ts_ms = candidate_ms
+                            break
+                        if ts_ms <= 0:
                             ts_ms = int(time.time() * 1000)
-                        if ts_ms < 10**11:
-                            ts_ms = int(ts_ms * 1000)
+                            ts_fallback = True
 
                         _rx_events_total += 1
                         _last_event_ts_ms = ts_ms
                         _last_symbol = str(symbol) if symbol else None
                         liq_side = "long" if side == "buy" else "short"
                         _add_event(str(symbol), ts_ms, qty_f, price_f, liq_side)
+                        now_ms = int(time.time() * 1000)
+                        age_ms = int(now_ms - ts_ms)
                         log_info(
                             logger,
                             "LIQ_WS_EVENT",
@@ -454,6 +510,10 @@ def start_liquidation_listener(category: str) -> None:
                                 "side": side_raw,
                                 "size": qty_f,
                                 "price": price_f,
+                                "ts_ms": ts_ms,
+                                "ts_fallback": ts_fallback,
+                                "now_ms": now_ms,
+                                "age_ms": age_ms,
                             },
                         )
                         if _LIQ_WS_DEBUG:
