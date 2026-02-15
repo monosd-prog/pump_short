@@ -82,6 +82,15 @@ def _ds_event(
     payload: Dict[str, Any] | None,
     extra: Dict[str, Any] | None = None,
 ) -> None:
+    pl = payload or {}
+    snap = run_watch_for_symbol._last_liq_snapshot.get(symbol, {}) if hasattr(run_watch_for_symbol, "_last_liq_snapshot") else {}
+
+    def _liq_val(key: str):  # use payload if present and non-empty, else snapshot, else 0
+        v = pl.get(key)
+        if v is not None and v != "":
+            return v
+        return snap.get(key, 0)
+
     row = {
         "run_id": run_id,
         "event_id": event_id,
@@ -90,28 +99,28 @@ def _ds_event(
         "mode": "live",
         "side": "SHORT",
         "wall_time_utc": wall_time_utc(),
-        "time_utc": (payload or {}).get("time_utc", ""),
+        "time_utc": pl.get("time_utc", ""),
         "stage": stage,
         "entry_ok": int(bool(entry_ok)),
         "skip_reasons": skip_reasons,
         "context_score": context_score if context_score is not None else "",
-        "price": (payload or {}).get("price", ""),
-        "dist_to_peak_pct": float((payload or {}).get("dist_to_peak_pct") or 0.0),
-        "cvd_delta_ratio_30s": (payload or {}).get("cvd_delta_ratio_30s", ""),
-        "cvd_delta_ratio_1m": (payload or {}).get("cvd_delta_ratio_1m", ""),
+        "price": pl.get("price", ""),
+        "dist_to_peak_pct": float(pl.get("dist_to_peak_pct") or 0.0),
+        "cvd_delta_ratio_30s": pl.get("cvd_delta_ratio_30s", ""),
+        "cvd_delta_ratio_1m": pl.get("cvd_delta_ratio_1m", ""),
         "oi_change_5m_pct": (extra or {}).get("oi_change_5m_pct", ""),
-        "oi_change_1m_pct": (payload or {}).get("oi_change_1m_pct", ""),
-        "oi_change_fast_pct": (payload or {}).get("oi_change_fast_pct", ""),
-        "funding_rate": (payload or {}).get("funding_rate", ""),
-        "funding_rate_abs": (payload or {}).get("funding_rate_abs", ""),
-        "liq_short_count_30s": (payload or {}).get("liq_short_count_30s", ""),
-        "liq_short_usd_30s": (payload or {}).get("liq_short_usd_30s", ""),
-        "liq_long_count_30s": (payload or {}).get("liq_long_count_30s", ""),
-        "liq_long_usd_30s": (payload or {}).get("liq_long_usd_30s", ""),
-        "liq_short_count_1m": (payload or {}).get("liq_short_count_1m", ""),
-        "liq_short_usd_1m": (payload or {}).get("liq_short_usd_1m", ""),
-        "liq_long_count_1m": (payload or {}).get("liq_long_count_1m", ""),
-        "liq_long_usd_1m": (payload or {}).get("liq_long_usd_1m", ""),
+        "oi_change_1m_pct": pl.get("oi_change_1m_pct", ""),
+        "oi_change_fast_pct": pl.get("oi_change_fast_pct", ""),
+        "funding_rate": pl.get("funding_rate", ""),
+        "funding_rate_abs": pl.get("funding_rate_abs", ""),
+        "liq_short_count_30s": _liq_val("liq_short_count_30s"),
+        "liq_short_usd_30s": _liq_val("liq_short_usd_30s"),
+        "liq_long_count_30s": _liq_val("liq_long_count_30s"),
+        "liq_long_usd_30s": _liq_val("liq_long_usd_30s"),
+        "liq_short_count_1m": _liq_val("liq_short_count_1m"),
+        "liq_short_usd_1m": _liq_val("liq_short_usd_1m"),
+        "liq_long_count_1m": _liq_val("liq_long_count_1m"),
+        "liq_long_usd_1m": _liq_val("liq_long_usd_1m"),
         "payload_json": json.dumps(payload or {}, ensure_ascii=False),
     }
     if extra:
@@ -309,6 +318,10 @@ def run_watch_for_symbol(
         run_watch_for_symbol._last_liq_nonzero_log_ts = {}
     if not hasattr(run_watch_for_symbol, "_diag_ping_done"):
         run_watch_for_symbol._diag_ping_done = set()
+    if not hasattr(run_watch_for_symbol, "_last_liq_snapshot"):
+        run_watch_for_symbol._last_liq_snapshot = {}
+    if not hasattr(run_watch_for_symbol, "_last_liq_snap_ts"):
+        run_watch_for_symbol._last_liq_snap_ts = {}
 
     entry_ok = False
     entry_payload: Dict[str, Any] = {}
@@ -469,6 +482,24 @@ def run_watch_for_symbol(
                     extra=extra_safe,
                 )
                 run_watch_for_symbol._last_liq_state_log_ts[cfg.symbol] = now_wall
+            # Liq snapshot for CSV (every 15s per symbol)
+            if now_wall - run_watch_for_symbol._last_liq_snap_ts.get(cfg.symbol, 0) >= 15:
+                run_watch_for_symbol._last_liq_snap_ts[cfg.symbol] = now_wall
+                sc, su30 = get_liq_stats(cfg.symbol, now_wall, 30, side="short")
+                sc60, su60 = get_liq_stats(cfg.symbol, now_wall, 60, side="short")
+                lc, lu30 = get_liq_stats(cfg.symbol, now_wall, 30, side="long")
+                lc60, lu60 = get_liq_stats(cfg.symbol, now_wall, 60, side="long")
+                run_watch_for_symbol._last_liq_snapshot[cfg.symbol] = {
+                    "liq_short_count_30s": sc,
+                    "liq_short_usd_30s": su30,
+                    "liq_long_count_30s": lc,
+                    "liq_long_usd_30s": lu30,
+                    "liq_short_count_1m": sc60,
+                    "liq_short_usd_1m": su60,
+                    "liq_long_count_1m": lc60,
+                    "liq_long_usd_1m": lu60,
+                    "liq_snap_ts": now_wall,
+                }
             # =====================
             # 5m CONTEXT LOOP
             # =====================
