@@ -384,6 +384,13 @@ def run_watch_for_symbol(
 
     try:
         while pd.Timestamp.now(tz="UTC") < end_ts:
+            log_info(
+                logger,
+                "WATCHER_LOOP_ALIVE",
+                symbol=cfg.symbol,
+                run_id=run_id,
+                step="WATCHER",
+            )
             # =====================
             # 5m CONTEXT LOOP
             # =====================
