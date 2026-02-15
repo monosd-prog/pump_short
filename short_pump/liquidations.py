@@ -238,6 +238,21 @@ def start_liquidation_listener(category: str) -> None:
                 ws.settimeout(10)
                 with _lock:
                     _subscribed_symbols.clear()
+                    desired_snapshot = sorted(_desired_symbols)
+                desired_topics = [f"allLiquidation.{sym}" for sym in desired_snapshot]
+                log_info(
+                    logger,
+                    "LIQ_WS_CONNECT_CTX",
+                    step="LIQ_WS",
+                    extra={
+                        "category": (category or "linear").strip().lower(),
+                        "url": url,
+                        "conn_id": conn_id,
+                        "topics_count": len(desired_topics),
+                        "topics_first": desired_topics[0] if desired_topics else None,
+                        "topics_last": desired_topics[-1] if desired_topics else None,
+                    },
+                )
                 log_info(logger, "WS connected", step="LIQ_WS", extra={"url": url, "conn_id": conn_id})
                 log_info(
                     logger,
