@@ -116,6 +116,23 @@ def _ds_event(
     }
     if extra:
         row.update(extra)
+    # DIAG: values we are about to write to events CSV (why liq_* often 0)
+    logger.info(
+        "LIQ_STATS_BEFORE_CSV",
+        extra={
+            "event_id": event_id,
+            "run_id": run_id,
+            "symbol": symbol,
+            "liq_short_count_30s": row.get("liq_short_count_30s"),
+            "liq_short_usd_30s": row.get("liq_short_usd_30s"),
+            "liq_long_count_30s": row.get("liq_long_count_30s"),
+            "liq_long_usd_30s": row.get("liq_long_usd_30s"),
+            "liq_short_count_1m": row.get("liq_short_count_1m"),
+            "liq_short_usd_1m": row.get("liq_short_usd_1m"),
+            "liq_long_count_1m": row.get("liq_long_count_1m"),
+            "liq_long_usd_1m": row.get("liq_long_usd_1m"),
+        },
+    )
     try:
         write_event_row(row, strategy="short_pump", mode="live", wall_time_utc=row["wall_time_utc"], schema_version=3)
     except Exception as e:
@@ -645,6 +662,33 @@ def run_watch_for_symbol(
                         liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
                         liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
                         liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                        dbg = get_liq_debug_state(cfg.symbol)
+                        log_info(
+                            logger,
+                            "LIQ_STATS_AFTER_GET_1M",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="LIQ_STATS",
+                            extra={
+                                "now_ts": now_ts,
+                                "liq_short_count_30s": liq_short_count_30s,
+                                "liq_short_usd_30s": liq_short_usd_30s,
+                                "liq_long_count_30s": liq_long_count_30s,
+                                "liq_long_usd_30s": liq_long_usd_30s,
+                                "liq_short_count_1m": liq_short_count_1m,
+                                "liq_short_usd_1m": liq_short_usd_1m,
+                                "liq_long_count_1m": liq_long_count_1m,
+                                "liq_long_usd_1m": liq_long_usd_1m,
+                                "buffer_short_len": dbg.get("buffer_short_len"),
+                                "buffer_long_len": dbg.get("buffer_long_len"),
+                                "buffer_short_last_ts_ms": dbg.get("buffer_short_last_ts_ms"),
+                                "buffer_long_last_ts_ms": dbg.get("buffer_long_last_ts_ms"),
+                                "last_event_ts_ms": dbg.get("last_event_ts_ms"),
+                                "last_symbol": dbg.get("last_symbol"),
+                                "rx_events_total": dbg.get("rx_events_total"),
+                            },
+                        )
                         if (
                             liq_short_count_30s > 0
                             or liq_short_usd_30s > 0
@@ -839,6 +883,33 @@ def run_watch_for_symbol(
                     liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
                     liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
                     liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                    dbg = get_liq_debug_state(cfg.symbol)
+                    log_info(
+                        logger,
+                        "LIQ_STATS_AFTER_GET_FAST",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="LIQ_STATS",
+                        extra={
+                            "now_ts": now_ts,
+                            "liq_short_count_30s": liq_short_count_30s,
+                            "liq_short_usd_30s": liq_short_usd_30s,
+                            "liq_long_count_30s": liq_long_count_30s,
+                            "liq_long_usd_30s": liq_long_usd_30s,
+                            "liq_short_count_1m": liq_short_count_1m,
+                            "liq_short_usd_1m": liq_short_usd_1m,
+                            "liq_long_count_1m": liq_long_count_1m,
+                            "liq_long_usd_1m": liq_long_usd_1m,
+                            "buffer_short_len": dbg.get("buffer_short_len"),
+                            "buffer_long_len": dbg.get("buffer_long_len"),
+                            "buffer_short_last_ts_ms": dbg.get("buffer_short_last_ts_ms"),
+                            "buffer_long_last_ts_ms": dbg.get("buffer_long_last_ts_ms"),
+                            "last_event_ts_ms": dbg.get("last_event_ts_ms"),
+                            "last_symbol": dbg.get("last_symbol"),
+                            "rx_events_total": dbg.get("rx_events_total"),
+                        },
+                    )
                     if (
                         liq_short_count_30s > 0
                         or liq_short_usd_30s > 0
