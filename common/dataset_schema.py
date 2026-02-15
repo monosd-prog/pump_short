@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 EVENT_FIELDS_V2 = [
     "schema_version",
@@ -31,6 +31,10 @@ EVENT_FIELDS_V2 = [
     "liq_short_usd_30s",
     "liq_long_count_30s",
     "liq_long_usd_30s",
+    "liq_short_count_1m",
+    "liq_short_usd_1m",
+    "liq_long_count_1m",
+    "liq_long_usd_1m",
     "payload_json",
 ]
 

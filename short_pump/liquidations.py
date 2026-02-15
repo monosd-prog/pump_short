@@ -46,6 +46,7 @@ _ping_sent_count = 0
 _last_disconnect_reason: Optional[str] = None
 _last_no_data_log_ts = 0.0
 _last_liq_zero_window_log_ts: Dict[str, float] = {}
+_last_liq_after_event_log_ts: Dict[str, float] = {}
 
 def _env_flag(name: str, default: bool = False) -> bool:
     v = os.getenv(name)
@@ -469,7 +470,7 @@ def start_liquidation_listener(category: str) -> None:
                         symbol = item.get("s") or (topic.split(".", 1)[1] if "." in topic else "")
                         side_raw = item.get("S") or ""
                         side = side_raw.strip().lower()
-                        # For Bybit: Buy = liquidation of LONG, Sell = liquidation of SHORT
+                        # For Bybit allLiquidation: Buy closes SHORT, Sell closes LONG.
                         if side not in ("buy", "sell"):
                             continue
                         price = item.get("p") or item.get("price") or 0
@@ -512,7 +513,7 @@ def start_liquidation_listener(category: str) -> None:
                         _rx_events_total += 1
                         _last_event_ts_ms = ts_ms
                         _last_symbol = str(symbol) if symbol else None
-                        liq_side = "long" if side == "buy" else "short"
+                        liq_side = "short" if side == "buy" else "long"
                         _add_event(str(symbol), ts_ms, qty_f, price_f, liq_side)
                         now_ms = int(time.time() * 1000)
                         age_ms = int(now_ms - ts_ms)
@@ -531,6 +532,39 @@ def start_liquidation_listener(category: str) -> None:
                                 "age_ms": age_ms,
                             },
                         )
+                        sym_norm = _normalize_symbol(str(symbol))
+                        now_ts_stats = time.time()
+                        long_30s_count, long_30s_usd = get_liq_stats(sym_norm, now_ts_stats, 30, side="long")
+                        short_30s_count, short_30s_usd = get_liq_stats(sym_norm, now_ts_stats, 30, side="short")
+                        long_60s_count, long_60s_usd = get_liq_stats(sym_norm, now_ts_stats, 60, side="long")
+                        short_60s_count, short_60s_usd = get_liq_stats(sym_norm, now_ts_stats, 60, side="short")
+                        with _lock:
+                            events_in_buffer_long = len(_events_long.get(sym_norm) or [])
+                            events_in_buffer_short = len(_events_short.get(sym_norm) or [])
+                        last_after_event_log_ts = _last_liq_after_event_log_ts.get(sym_norm, 0.0)
+                        if (now_ts_stats - last_after_event_log_ts) >= 2.0:
+                            log_info(
+                                logger,
+                                "LIQ_STATS_AFTER_EVENT",
+                                symbol=sym_norm,
+                                step="LIQ_WS",
+                                side_raw=side_raw,
+                                liq_side_selected=liq_side,
+                                now_ms=now_ms,
+                                ts_ms=ts_ms,
+                                age_ms=age_ms,
+                                long_30s_count=long_30s_count,
+                                long_30s_usd=long_30s_usd,
+                                short_30s_count=short_30s_count,
+                                short_30s_usd=short_30s_usd,
+                                long_60s_count=long_60s_count,
+                                long_60s_usd=long_60s_usd,
+                                short_60s_count=short_60s_count,
+                                short_60s_usd=short_60s_usd,
+                                events_in_buffer_long=events_in_buffer_long,
+                                events_in_buffer_short=events_in_buffer_short,
+                            )
+                            _last_liq_after_event_log_ts[sym_norm] = now_ts_stats
                         if _LIQ_WS_DEBUG:
                             log_info(
                                 logger,

@@ -102,12 +102,16 @@ def _ds_event(
         "liq_short_usd_30s": (payload or {}).get("liq_short_usd_30s", ""),
         "liq_long_count_30s": (payload or {}).get("liq_long_count_30s", ""),
         "liq_long_usd_30s": (payload or {}).get("liq_long_usd_30s", ""),
+        "liq_short_count_1m": (payload or {}).get("liq_short_count_1m", ""),
+        "liq_short_usd_1m": (payload or {}).get("liq_short_usd_1m", ""),
+        "liq_long_count_1m": (payload or {}).get("liq_long_count_1m", ""),
+        "liq_long_usd_1m": (payload or {}).get("liq_long_usd_1m", ""),
         "payload_json": json.dumps(payload or {}, ensure_ascii=False),
     }
     if extra:
         row.update(extra)
     try:
-        write_event_row(row, strategy="short_pump", mode="live", wall_time_utc=row["wall_time_utc"], schema_version=2)
+        write_event_row(row, strategy="short_pump", mode="live", wall_time_utc=row["wall_time_utc"], schema_version=3)
     except Exception as e:
         log_exception(logger, "SHORT_DATASET_WRITE_ERROR | event", symbol=symbol, run_id=run_id, step="DATASET", extra={"event_id": event_id, "error": str(e)})
 
@@ -139,7 +143,7 @@ def _ds_trade(
         "trade_type": trade_type,
     }
     try:
-        write_trade_row(row, strategy="short_pump", mode="live", wall_time_utc=entry_time_utc, schema_version=2)
+        write_trade_row(row, strategy="short_pump", mode="live", wall_time_utc=entry_time_utc, schema_version=3)
     except Exception as e:
         log_exception(logger, "SHORT_DATASET_WRITE_ERROR | trade", symbol=symbol, run_id=run_id, step="DATASET", extra={"trade_id": trade_id, "error": str(e)})
 
@@ -169,7 +173,7 @@ def _ds_outcome(
         "details_json": details_json,
     }
     try:
-        write_outcome_row(row, strategy="short_pump", mode="live", wall_time_utc=outcome_time_utc, schema_version=2)
+        write_outcome_row(row, strategy="short_pump", mode="live", wall_time_utc=outcome_time_utc, schema_version=3)
     except Exception as e:
         log_exception(logger, "SHORT_DATASET_WRITE_ERROR | outcome", symbol=symbol, run_id=run_id, step="DATASET", extra={"trade_id": trade_id, "error": str(e)})
 
@@ -775,6 +779,10 @@ def run_watch_for_symbol(
                             "liq_short_usd_30s": liq_short_30s[1],
                             "liq_long_count_30s": liq_long_30s[0],
                             "liq_long_usd_30s": liq_long_30s[1],
+                            "liq_short_count_1m": liq_short_60s[0],
+                            "liq_short_usd_1m": liq_short_60s[1],
+                            "liq_long_count_1m": liq_long_60s[0],
+                            "liq_long_usd_1m": liq_long_60s[1],
                         }
                     )
                     entry_snapshot.update(
@@ -1026,7 +1034,7 @@ def run_watch_for_symbol(
                             strategy="short_pump",
                             mode="live",
                             wall_time_utc=outcome_time_utc,
-                            schema_version=2,
+                            schema_version=3,
                         )
                     try:
                         append_csv(log_summary, summary)

@@ -167,7 +167,7 @@ async def pump(evt: PumpEvent):
         _cleanup_short(now)
         _active_short_symbols[symbol] = {"run_id": run_id or "", "started_ts": now}
         now_utc = wall_time_utc()
-        ensure_dataset_files("short_pump", "live", now_utc, schema_version=2)
+        ensure_dataset_files("short_pump", "live", now_utc, schema_version=3)
         if start_long:
             ensure_dataset_files("long_pullback", "live", now_utc, schema_version=2)
 
