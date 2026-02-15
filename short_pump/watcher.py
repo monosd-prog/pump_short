@@ -229,7 +229,9 @@ def run_watch_for_symbol(
             "cfg_id": id(cfg),
         },
     )
+    log_info(logger, "REGISTER_SYMBOL_WILL_CALL", symbol=cfg.symbol, run_id=run_id, step="LIQ_WS")
     register_symbol(cfg.symbol)
+    log_info(logger, "REGISTER_SYMBOL_DID_CALL", symbol=cfg.symbol, run_id=run_id, step="LIQ_WS")
     def _cleanup_symbol() -> None:
         try:
             unregister_symbol(cfg.symbol)
