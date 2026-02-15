@@ -182,6 +182,7 @@ def get_liq_debug_state(symbol: str) -> Dict[str, Optional[int]]:
 
 
 def register_symbol(symbol: str) -> None:
+    log_info(logger, "REGISTER_SYMBOL_CALLED", symbol=symbol, step="LIQ_WS")
     sym = _normalize_symbol(symbol)
     if not sym:
         return
