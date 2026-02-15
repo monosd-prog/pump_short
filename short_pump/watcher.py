@@ -420,6 +420,8 @@ def run_watch_for_symbol(
             last_state_log_ts = run_watch_for_symbol._last_liq_state_log_ts.get(cfg.symbol, 0.0)
             if now_wall - last_state_log_ts >= 60:
                 stage = st.stage if st is not None else None
+                dbg = get_liq_debug_state(cfg.symbol)
+                extra_safe = {k: v for k, v in dbg.items() if k != "symbol"}
                 log_info(
                     logger,
                     "LIQ_STATE_FROM_WATCHER",
@@ -427,7 +429,7 @@ def run_watch_for_symbol(
                     run_id=run_id,
                     stage=stage,
                     step="LIQ_STATS",
-                    extra=get_liq_debug_state(cfg.symbol),
+                    extra=extra_safe,
                 )
                 run_watch_for_symbol._last_liq_state_log_ts[cfg.symbol] = now_wall
             # =====================

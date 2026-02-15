@@ -188,6 +188,19 @@ def register_symbol(symbol: str) -> None:
         return
     with _lock:
         _desired_symbols.add(sym)
+        # DIAG: confirm mutation visible to ws loop (same container id in same process)
+        log_info(
+            logger,
+            "REGISTER_SYMBOL_DONE",
+            symbol=sym,
+            step="LIQ_WS",
+            extra={
+                "desired_len": len(_desired_symbols),
+                "desired_id": id(_desired_symbols),
+                "desired_sample": sorted(_desired_symbols)[:5],
+                "pid": os.getpid(),
+            },
+        )
 
 
 def unregister_symbol(symbol: str) -> None:
@@ -295,6 +308,20 @@ def start_liquidation_listener(category: str) -> None:
                         with _lock:
                             desired = set(_desired_symbols)
                             subscribed = set(_subscribed_symbols)
+                            # DIAG: when desired empty, log to compare with register_symbol (same pid+id = same process)
+                            if not desired and (now_wall - last_empty_log >= 60):
+                                log_info(
+                                    logger,
+                                    "LIQ_WS_RECONCILE_EMPTY",
+                                    step="LIQ_WS",
+                                    extra={
+                                        "desired_len": len(_desired_symbols),
+                                        "subscribed_len": len(_subscribed_symbols),
+                                        "desired_id": id(_desired_symbols),
+                                        "subscribed_id": id(_subscribed_symbols),
+                                        "pid": os.getpid(),
+                                    },
+                                )
                         to_add = sorted(desired - subscribed)
                         to_remove = sorted(subscribed - desired)
                         if to_add:
