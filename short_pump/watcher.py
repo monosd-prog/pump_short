@@ -454,6 +454,27 @@ def run_watch_for_symbol(
                         liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
                         liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
                         liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                        if (
+                            liq_short_count_30s > 0
+                            or liq_short_usd_30s > 0
+                            or liq_long_count_30s > 0
+                            or liq_long_usd_30s > 0
+                        ):
+                            log_info(
+                                logger,
+                                "LIQ_STATS_NONZERO",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="LIQ_STATS",
+                                extra={
+                                    "now_ts": now_ts,
+                                    "liq_short_count_30s": liq_short_count_30s,
+                                    "liq_short_usd_30s": liq_short_usd_30s,
+                                    "liq_long_count_30s": liq_long_count_30s,
+                                    "liq_long_usd_30s": liq_long_usd_30s,
+                                },
+                            )
                         last_liq_ts = run_watch_for_symbol._last_liq_log_ts.get(cfg.symbol, 0.0)
                         if now_ts - last_liq_ts >= 60:
                             log_info(
@@ -553,6 +574,27 @@ def run_watch_for_symbol(
                     liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
                     liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
                     liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                    if (
+                        liq_short_count_30s > 0
+                        or liq_short_usd_30s > 0
+                        or liq_long_count_30s > 0
+                        or liq_long_usd_30s > 0
+                    ):
+                        log_info(
+                            logger,
+                            "LIQ_STATS_NONZERO",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="LIQ_STATS",
+                            extra={
+                                "now_ts": now_ts,
+                                "liq_short_count_30s": liq_short_count_30s,
+                                "liq_short_usd_30s": liq_short_usd_30s,
+                                "liq_long_count_30s": liq_long_count_30s,
+                                "liq_long_usd_30s": liq_long_usd_30s,
+                            },
+                        )
                     last_liq_ts = run_watch_for_symbol._last_liq_log_ts.get(cfg.symbol, 0.0)
                     if now_ts - last_liq_ts >= 60:
                         log_info(
