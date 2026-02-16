@@ -247,10 +247,8 @@ def start_liquidation_listener(category: str) -> None:
     if not hasattr(start_liquidation_listener, "_diag_done"):
         start_liquidation_listener._diag_done = True
         _log_liq_module_diag(logger, "LIQ_MODULE_IMPORT_LOG")
-    raw_force = os.getenv("FORCE_LIQ_SYMBOLS", "")
-    if raw_force:
-        for sym in [s.strip().upper() for s in raw_force.split(",") if s.strip()]:
-            register_symbol(sym)
+    # REMOVED: FORCE_LIQ_SYMBOLS auto-registration on startup.
+    # Symbols are now registered only when watchers start via explicit triggers (/pump or manual scripts).
 
     def _run() -> None:
         global _last_heartbeat
