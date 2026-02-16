@@ -121,6 +121,7 @@ def _ds_event(
         "liq_short_usd_1m": _liq_val("liq_short_usd_1m"),
         "liq_long_count_1m": _liq_val("liq_long_count_1m"),
         "liq_long_usd_1m": _liq_val("liq_long_usd_1m"),
+        "outcome_label": (payload or {}).get("outcome_label", ""),
         "payload_json": json.dumps(payload or {}, ensure_ascii=False),
     }
     if extra:
@@ -322,6 +323,8 @@ def run_watch_for_symbol(
         run_watch_for_symbol._last_liq_snapshot = {}
     if not hasattr(run_watch_for_symbol, "_last_liq_snap_ts"):
         run_watch_for_symbol._last_liq_snap_ts = {}
+    if not hasattr(run_watch_for_symbol, "_outcome_emitted"):
+        run_watch_for_symbol._outcome_emitted = set()
 
     entry_ok = False
     entry_payload: Dict[str, Any] = {}
@@ -1404,7 +1407,60 @@ def run_watch_for_symbol(
                             "alt_outcome_sl_first": summary.get("alt_outcome_sl_first"),
                         },
                     )
+                    # Map end_reason to outcome_label: TP_hit -> TP, SL_hit -> SL, TIMEOUT -> TIMEOUT
+                    end_reason = summary.get("end_reason") or summary.get("outcome") or "TIMEOUT"
+                    if end_reason == "TP_hit":
+                        outcome_label = "TP"
+                        skip_reason_outcome = "outcome_tp"
+                    elif end_reason == "SL_hit":
+                        outcome_label = "SL"
+                        skip_reason_outcome = "outcome_sl"
+                    else:
+                        outcome_label = "TIMEOUT"
+                        skip_reason_outcome = "outcome_timeout"
                     outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+                    outcome_event_id = f"{run_id}_outcome"
+                    # Idempotency: emit outcome event only once per run_id
+                    if outcome_event_id not in run_watch_for_symbol._outcome_emitted:
+                        run_watch_for_symbol._outcome_emitted.add(outcome_event_id)
+                        exit_price = summary.get("exit_price", 0.0)
+                        log_info(
+                            logger,
+                            "OUTCOME_FINAL",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="OUTCOME",
+                            extra={
+                                "outcome_label": outcome_label,
+                                "exit_price": exit_price,
+                                "exit_time_utc": outcome_time_utc,
+                                "reason": skip_reason_outcome,
+                            },
+                        )
+                        _ds_event(
+                            run_id=run_id,
+                            symbol=cfg.symbol,
+                            event_id=outcome_event_id,
+                            stage=st.stage,
+                            entry_ok=1,
+                            skip_reasons=skip_reason_outcome,
+                            context_score=entry_snapshot.get("context_score"),
+                            payload={
+                                "time_utc": outcome_time_utc,
+                                "price": exit_price,
+                                "outcome_label": outcome_label,
+                                "exit_time_utc": outcome_time_utc,
+                                "exit_price": exit_price,
+                                "tp_price": tp_price,
+                                "sl_price": sl_price,
+                                "watch_minutes": cfg.outcome_watch_minutes,
+                                "end_reason": end_reason,
+                                "pnl_pct": summary.get("pnl_pct"),
+                                "hold_seconds": hold_seconds,
+                            },
+                            extra=None,
+                        )
                     outcome_row = build_outcome_row(
                         summary,
                         trade_id=str(trade_id),

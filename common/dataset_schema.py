@@ -40,6 +40,7 @@ EVENT_FIELDS_V3 = [
     "liq_short_usd_1m",
     "liq_long_count_1m",
     "liq_long_usd_1m",
+    "outcome_label",
     "payload_json",
 ]
 
@@ -106,6 +107,7 @@ def normalize_event_v3(row: Dict[str, Any]) -> Dict[str, Any]:
             **row,
             "schema_version": SCHEMA_VERSION,
             "entry_ok": int(bool(row.get("entry_ok", False))),
+            "outcome_label": row.get("outcome_label", ""),
             "payload_json": payload_json,
         },
     )
