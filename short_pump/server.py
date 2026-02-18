@@ -15,7 +15,9 @@ from common.io_dataset import ensure_dataset_files
 from short_pump.config import Config
 from short_pump.logging_utils import get_logger
 from short_pump.runtime import Runtime
-from long_pullback.watcher import run_watch_for_symbol as run_long_watch
+
+# Long pullback is disabled by default; enable with ENABLE_LONG_PULLBACK=1
+ENABLE_LONG_PULLBACK = os.getenv("ENABLE_LONG_PULLBACK", "0").strip().lower() in ("1", "true", "yes", "y", "on")
 
 # Initialize logging early
 logger = get_logger(__name__)
@@ -24,6 +26,18 @@ app = FastAPI(title="Pump → Short Watcher")
 
 cfg = Config.from_env()
 rt = Runtime(cfg)
+
+
+def _enabled_strategies() -> list[str]:
+    strategies = ["short_pump"]
+    if ENABLE_LONG_PULLBACK:
+        strategies.append("long_pullback")
+    return strategies
+
+
+@app.on_event("startup")
+async def _log_enabled_strategies() -> None:
+    logger.info("Enabled strategies: %s", ", ".join(_enabled_strategies()))
 
 _LONG_TTL_SEC = 30 * 60
 _active_long_symbols: Dict[str, float] = {}
@@ -91,7 +105,8 @@ async def status():
     return {
         "ts_utc": _to_utc_iso(now),
         "code_version": code_version(),
-        "start_long_on_pump": os.getenv("START_LONG_ON_PUMP", "0") == "1",
+        "enabled_strategies": _enabled_strategies(),
+        "start_long_on_pump": ENABLE_LONG_PULLBACK and os.getenv("START_LONG_ON_PUMP", "0") == "1",
         "short_active": short_active,
         "long_active": long_active,
     }
@@ -117,7 +132,6 @@ async def pump(evt: PumpEvent):
             pump_ts=evt.pump_ts,
             extra=evt.extra,
         )
-        start_long = os.getenv("START_LONG_ON_PUMP", "0") == "1"
         run_id = result.get("run_id") if isinstance(result, dict) else None
         symbol = evt.symbol.strip().upper()
         now = time.time()
@@ -125,6 +139,7 @@ async def pump(evt: PumpEvent):
         _active_short_symbols[symbol] = {"run_id": run_id or "", "started_ts": now}
         now_utc = wall_time_utc()
         ensure_dataset_files("short_pump", "live", now_utc, schema_version=3)
+        start_long = ENABLE_LONG_PULLBACK and (os.getenv("START_LONG_ON_PUMP", "0") == "1")
         if start_long:
             ensure_dataset_files("long_pullback", "live", now_utc, schema_version=2)
 
@@ -132,6 +147,7 @@ async def pump(evt: PumpEvent):
 
         if start_long and _can_start_long(symbol):
             _active_long_symbols[symbol] = time.time()
+            from long_pullback.watcher import run_watch_for_symbol as run_long_watch
 
             def _long_runner():
                 try:
