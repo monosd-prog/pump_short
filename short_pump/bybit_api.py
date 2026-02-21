@@ -211,3 +211,42 @@ def get_funding_rate(category: str, symbol: str) -> Optional[Dict[str, Any]]:
             extra={"category": category, "symbol": symbol},
         )
         return None
+
+
+def get_orderbook(category: str, symbol: str, limit: int = 10) -> Optional[Dict[str, Any]]:
+    """
+    Fetch orderbook for symbol.
+    Returns {"bids": [[price, size], ...], "asks": [[price, size], ...]} or None.
+    """
+    category = _norm_category(category)
+    symbol = _norm_symbol(symbol)
+    try:
+        j = _get_json(
+            "/v5/market/orderbook",
+            {
+                "category": category,
+                "symbol": symbol,
+                "limit": str(min(max(limit, 1), 25)),
+            },
+        )
+        if j.get("retCode") != 0:
+            log_exception(
+                logger,
+                "Orderbook API error",
+                step="BYBIT_API",
+                extra={"category": category, "symbol": symbol, "response": j},
+            )
+            return None
+        result = j.get("result", {})
+        return {
+            "bids": result.get("b", []) or [],
+            "asks": result.get("a", []) or [],
+        }
+    except Exception:
+        log_exception(
+            logger,
+            "Failed to fetch orderbook",
+            step="BYBIT_API",
+            extra={"category": category, "symbol": symbol},
+        )
+        return None

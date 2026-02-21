@@ -37,7 +37,7 @@ from short_pump.liquidations import (
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from common.outcome_tracker import build_outcome_row
 from short_pump.outcome import track_outcome_short
-from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
+from short_pump.telegram import TG_SEND_OUTCOME, send_telegram, tg_entry_filter
 from notifications.tg_format import format_armed_short, format_entry_ok, format_outcome
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.runtime import wall_time_utc
@@ -1309,8 +1309,24 @@ def run_watch_for_symbol(
                     entry_source = entry_payload.get("entry_source", "unknown")
                     mode = "FAST" if entry_source == "fast" else "ARMED"
                     context_score_msg = entry_payload.get("context_score", context_score)
-                    send_telegram(
-                        format_entry_ok(
+                    dist_to_peak = entry_payload.get("dist_to_peak_pct")
+                    if not tg_entry_filter(st.stage, dist_to_peak):
+                        log_info(
+                            logger,
+                            "TG_ENTRY_OK_FILTERED",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="TELEGRAM",
+                            extra={
+                                "event_id": str(event_id),
+                                "dist_to_peak_pct": dist_to_peak,
+                                "reason": "stage!=4 or dist_to_peak_pct<3.5",
+                            },
+                        )
+                    else:
+                        send_telegram(
+                            format_entry_ok(
                             strategy="short_pump",
                             side="SHORT",
                             symbol=cfg.symbol,

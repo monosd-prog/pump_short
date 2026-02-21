@@ -9,6 +9,29 @@ logger = get_logger(__name__)
 TG_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 TG_SEND_OUTCOME = os.getenv("TG_SEND_OUTCOME", "0") == "1"
+TG_ENTRY_STAGE = (os.getenv("TG_ENTRY_STAGE", "4") or "4").strip()
+try:
+    TG_DIST_TO_PEAK_MIN = float((os.getenv("TG_DIST_TO_PEAK_MIN", "3.5") or "3.5").replace(",", "."))
+except (TypeError, ValueError):
+    TG_DIST_TO_PEAK_MIN = 3.5
+
+
+def tg_entry_filter(stage, dist_to_peak_pct) -> bool:
+    """Return True if ENTRY_OK should send Telegram (stage and dist satisfy thresholds)."""
+    try:
+        stage_i = int(stage)
+    except (TypeError, ValueError):
+        return False
+    try:
+        dist = float(dist_to_peak_pct)
+    except (TypeError, ValueError):
+        return False
+    stage_req = int(TG_ENTRY_STAGE) if TG_ENTRY_STAGE else 4
+    if stage_i != stage_req:
+        return False
+    if not (dist >= TG_DIST_TO_PEAK_MIN):
+        return False
+    return True
 
 
 def send_telegram(
