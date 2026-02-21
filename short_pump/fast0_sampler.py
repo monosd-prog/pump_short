@@ -8,7 +8,8 @@ import os
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 import pandas as pd
 
@@ -25,7 +26,7 @@ from short_pump.context5m import StructureState, build_dbg5, compute_context_sco
 from short_pump.features import cvd_delta_ratio, normalize_funding, oi_change_pct
 from short_pump.liquidations import get_liq_stats, register_symbol, unregister_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info
-from common.io_dataset import write_event_row
+from common.io_dataset import ensure_dataset_files, write_event_row
 from common.runtime import wall_time_utc
 
 logger = get_logger(__name__)
@@ -72,15 +73,18 @@ def run_fast0_for_symbol(
     pump_ts: str,
     mode: str = "live",
     max_ticks: Optional[int] = None,
+    base_dir: Union[str, Path, None] = None,
 ) -> None:
     """
     Run fast stage-0 sampling loop for symbol. Writes events to short_pump_fast0 strategy.
     No entry decisions, no trading. Data for later EV/WR analysis.
+    base_dir: datasets root (e.g. /root/pump_short/datasets). If None, uses CWD/datasets.
     """
     cfg = Config.from_env()
     cfg.symbol = symbol.strip().upper()
     logger = get_logger(__name__, strategy_name=STRATEGY, symbol=cfg.symbol)
     run_id = run_id or time.strftime("%Y%m%d_%H%M%S")
+    base_dir_str = str(base_dir) if base_dir else None
 
     register_symbol(cfg.symbol)
     try:
@@ -88,14 +92,23 @@ def run_fast0_for_symbol(
         tick = 0
         st = StructureState(stage=0)
 
+        now_utc_start = wall_time_utc()
+        ensure_dataset_files(STRATEGY, mode, now_utc_start, schema_version=3, base_dir=base_dir_str)
+
         log_info(
             logger,
             "FAST0_START",
             symbol=cfg.symbol,
             run_id=run_id,
             step="FAST0",
-            extra={"pump_ts": pump_ts, "window_sec": FAST0_WINDOW_SEC, "poll_sec": FAST0_POLL_SECONDS},
+            extra={
+                "pump_ts": pump_ts,
+                "window_sec": FAST0_WINDOW_SEC,
+                "poll_sec": FAST0_POLL_SECONDS,
+                "FAST0_DATASET_ROOT": base_dir_str or "(cwd)/datasets",
+            },
         )
+        logger.info("FAST0_DATASET_ROOT=%s", base_dir_str or os.path.join(os.getcwd(), "datasets"))
 
         while (time.time() - start_ts) < FAST0_WINDOW_SEC and (max_ticks is None or tick < max_ticks):
             try:
@@ -224,6 +237,7 @@ def run_fast0_for_symbol(
                     mode=mode,
                     wall_time_utc=now_utc,
                     schema_version=3,
+                    base_dir=base_dir_str,
                 )
                 log_info(
                     logger,

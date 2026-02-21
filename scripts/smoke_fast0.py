@@ -26,22 +26,25 @@ def main():
     max_ticks = int(os.getenv("FAST0_SMOKE_TICKS", "10"))
     run_id = time.strftime("%Y%m%d_%H%M%S") + "_smoke"
     pump_ts = datetime.now(timezone.utc).isoformat()
+    # FAST0_BASE_DIR or default /root/pump_short/datasets; fallback to cwd/datasets if not set
+    base_dir = os.getenv("FAST0_BASE_DIR") or os.getenv("DATASETS_ROOT") or "/root/pump_short/datasets"
 
     now_utc = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    ensure_dataset_files(STRATEGY, "live", now_utc, schema_version=3)
-    print(f"Smoke: running fast0 sampler for {symbol}, max_ticks={max_ticks}")
+    ensure_dataset_files(STRATEGY, "live", now_utc, schema_version=3, base_dir=base_dir)
+    print(f"Smoke: running fast0 sampler for {symbol}, max_ticks={max_ticks}, base_dir={base_dir}")
     run_fast0_for_symbol(
         symbol=symbol,
         run_id=run_id,
         pump_ts=pump_ts,
         mode="live",
         max_ticks=max_ticks,
+        base_dir=base_dir,
     )
 
-    # Verify rows written (datasets/date=YYYYMMDD/strategy=short_pump_fast0/mode=live/)
+    # Verify rows written under base_dir/date=YYYYMMDD/strategy=short_pump_fast0/mode=live/
     day = datetime.now(timezone.utc).strftime("%Y%m%d")
-    base_dir = Path("datasets") / f"date={day}" / f"strategy={STRATEGY}" / "mode=live"
-    events_path = base_dir / "events_v3.csv"
+    base_path = Path(base_dir.rstrip("/")) / f"date={day}" / f"strategy={STRATEGY}" / "mode=live"
+    events_path = base_path / "events_v3.csv"
     if not events_path.exists():
         print(f"FAIL: events file not found: {events_path}")
         sys.exit(1)

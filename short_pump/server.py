@@ -20,6 +20,8 @@ from short_pump.runtime import Runtime
 ENABLE_LONG_PULLBACK = os.getenv("ENABLE_LONG_PULLBACK", "0").strip().lower() in ("1", "true", "yes", "y", "on")
 # FAST_FROM_PUMP: stage0 fast sampling right after pump for research/dataset only (no auto-trade)
 ENABLE_FAST_FROM_PUMP = os.getenv("ENABLE_FAST_FROM_PUMP", "0").strip().lower() in ("1", "true", "yes", "y", "on")
+# Datasets root for fast0 (redirects fast0 writes; short_pump unchanged)
+DATASETS_ROOT = os.getenv("DATASETS_ROOT", "/root/pump_short/datasets").rstrip("/")
 
 # Initialize logging early
 logger = get_logger(__name__)
@@ -163,7 +165,9 @@ async def pump(evt: PumpEvent):
         if start_long:
             ensure_dataset_files("long_pullback", "live", now_utc, schema_version=2)
         if ENABLE_FAST_FROM_PUMP:
-            ensure_dataset_files("short_pump_fast0", "live", now_utc, schema_version=3)
+            ensure_dataset_files(
+                "short_pump_fast0", "live", now_utc, schema_version=3, base_dir=DATASETS_ROOT
+            )
 
         logger.info(
             "PUMP_ACCEPTED | symbol=%s | run_id=%s | start_long=%s | fast0=%s",
@@ -183,6 +187,7 @@ async def pump(evt: PumpEvent):
                         run_id=run_id or "",
                         pump_ts=pump_ts,
                         mode="live",
+                        base_dir=DATASETS_ROOT,
                     )
                 except Exception:
                     logger.exception("FAST0_SAMPLER_ERROR | symbol=%s", symbol)
