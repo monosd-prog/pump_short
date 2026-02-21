@@ -1,12 +1,14 @@
 # short_pump/fast0_sampler.py
-"""Stage-0 fast sampling right after pump signal. Research/dataset only, no auto-trade."""
+"""Stage-0 fast sampling right after pump signal. ENTRY_OK, trades, outcomes for ML."""
 
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
@@ -26,8 +28,11 @@ from short_pump.context5m import StructureState, build_dbg5, compute_context_sco
 from short_pump.features import cvd_delta_ratio, normalize_funding, oi_change_pct
 from short_pump.liquidations import get_liq_stats, register_symbol, unregister_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info
-from common.io_dataset import ensure_dataset_files, write_event_row
+from common.io_dataset import ensure_dataset_files, write_event_row, write_outcome_row, write_trade_row
+from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import wall_time_utc
+from notifications.tg_format import format_fast0_entry_ok
+from short_pump.telegram import send_telegram
 
 logger = get_logger(__name__)
 
@@ -35,6 +40,20 @@ STRATEGY = "short_pump_fast0"
 ENABLE_ORDERBOOK = os.getenv("ENABLE_ORDERBOOK", "0").strip().lower() in ("1", "true", "yes", "y", "on")
 FAST0_WINDOW_SEC = int(os.getenv("FAST0_WINDOW_SEC", "180"))
 FAST0_POLL_SECONDS = int(os.getenv("FAST0_POLL_SECONDS", "10"))
+FAST0_TG_ENTRY_ENABLE = os.getenv("FAST0_TG_ENTRY_ENABLE", "0").strip().lower() in ("1", "true", "yes", "y", "on")
+FAST0_ENTRY_CONTEXT_MIN = float(os.getenv("FAST0_ENTRY_CONTEXT_MIN", "0.60").replace(",", "."))
+FAST0_ENTRY_DIST_MIN = float(os.getenv("FAST0_ENTRY_DIST_MIN", "0.50").replace(",", "."))
+FAST0_ENTRY_CVD30S_MAX = float(os.getenv("FAST0_ENTRY_CVD30S_MAX", "-0.10").replace(",", "."))
+FAST0_ENTRY_CVD1M_MAX = float(os.getenv("FAST0_ENTRY_CVD1M_MAX", "-0.05").replace(",", "."))
+FAST0_ENTRY_MIN_TICK = int(os.getenv("FAST0_ENTRY_MIN_TICK", "2"))
+FAST0_TP_PCT = float(os.getenv("FAST0_TP_PCT", "0.012").replace(",", "."))
+FAST0_SL_PCT = float(os.getenv("FAST0_SL_PCT", "0.010").replace(",", "."))
+FAST0_OUTCOME_WATCH_SEC = int(os.getenv("FAST0_OUTCOME_WATCH_SEC", "1800"))
+FAST0_OUTCOME_POLL_SEC = int(os.getenv("FAST0_OUTCOME_POLL_SEC", "5"))
+FAST0_MAX_WATCHERS = int(os.getenv("FAST0_MAX_WATCHERS", "20"))
+
+_active_fast0_watchers = 0
+_fast0_watchers_lock = threading.Lock()
 
 
 def _orderbook_imbalance_and_spread(
@@ -67,6 +86,134 @@ def _volume_from_candles(candles: pd.DataFrame, last_n: int) -> float:
     return float(candles["volume"].tail(last_n).sum())
 
 
+def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str]:
+    """
+    Returns (pass, reason). pass=True if thresholds met, else (False, reason).
+    """
+    if tick < FAST0_ENTRY_MIN_TICK:
+        return False, f"tick<{FAST0_ENTRY_MIN_TICK}"
+    cs = payload.get("context_score")
+    try:
+        cs_val = float(cs) if cs is not None else -999.0
+    except (TypeError, ValueError):
+        return False, "context_score_invalid"
+    if cs_val < FAST0_ENTRY_CONTEXT_MIN:
+        return False, f"context_score={cs_val}<{FAST0_ENTRY_CONTEXT_MIN}"
+    dist = payload.get("dist_to_peak_pct")
+    try:
+        dist_val = float(dist) if dist is not None else -999.0
+    except (TypeError, ValueError):
+        return False, "dist_invalid"
+    if dist_val < FAST0_ENTRY_DIST_MIN:
+        return False, f"dist_to_peak={dist_val}<{FAST0_ENTRY_DIST_MIN}"
+    cvd30 = payload.get("cvd_delta_ratio_30s")
+    try:
+        cvd30_val = float(cvd30) if cvd30 is not None else 999.0
+    except (TypeError, ValueError):
+        cvd30_val = 999.0
+    if cvd30_val > FAST0_ENTRY_CVD30S_MAX:
+        return False, f"cvd30s={cvd30_val}>{FAST0_ENTRY_CVD30S_MAX}"
+    cvd1m = payload.get("cvd_delta_ratio_1m")
+    try:
+        cvd1m_val = float(cvd1m) if cvd1m is not None else 999.0
+    except (TypeError, ValueError):
+        cvd1m_val = 999.0
+    if cvd1m_val > FAST0_ENTRY_CVD1M_MAX:
+        return False, f"cvd1m={cvd1m_val}>{FAST0_ENTRY_CVD1M_MAX}"
+    return True, "ok"
+
+
+@dataclass
+class _Fast0OutcomeCfg:
+    category: str = "linear"
+    outcome_watch_minutes: int = 30
+    outcome_poll_seconds: int = 5
+
+
+def _run_fast0_outcome_watcher(
+    *,
+    symbol: str,
+    run_id: str,
+    event_id: str,
+    trade_id: str,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    entry_time_utc: str,
+    base_dir: Optional[str],
+    mode: str,
+) -> None:
+    """Daemon thread: track TP/SL, write outcome row."""
+    global _active_fast0_watchers
+    with _fast0_watchers_lock:
+        if _active_fast0_watchers >= FAST0_MAX_WATCHERS:
+            logger.warning(
+                "FAST0_MAX_WATCHERS reached, skipping outcome watch",
+                extra={"symbol": symbol, "trade_id": trade_id},
+            )
+            return
+        _active_fast0_watchers += 1
+    try:
+        cfg = _Fast0OutcomeCfg(
+            category=Config.from_env().category,
+            outcome_watch_minutes=FAST0_OUTCOME_WATCH_SEC // 60,
+            outcome_poll_seconds=FAST0_OUTCOME_POLL_SEC,
+        )
+        try:
+            entry_ts = pd.Timestamp(entry_time_utc)
+            if entry_ts.tzinfo is None:
+                entry_ts = entry_ts.tz_localize("UTC")
+        except Exception:
+            entry_ts = pd.Timestamp.now(tz="UTC")
+        summary = track_outcome(
+            cfg,
+            side="short",
+            entry_ts_utc=entry_ts,
+            entry_price=entry_price,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            entry_source="fast0",
+            entry_type="fast0",
+            run_id=run_id,
+            symbol=symbol,
+            category=cfg.category,
+            fetch_klines_1m=get_klines_1m,
+            strategy_name=STRATEGY,
+        )
+        minutes_to_hit = summary.get("minutes_to_hit")
+        summary["hold_seconds"] = (minutes_to_hit * 60.0) if minutes_to_hit is not None else 0.0
+        outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+        orow = build_outcome_row(
+            summary,
+            trade_id=trade_id,
+            event_id=event_id,
+            run_id=run_id,
+            symbol=symbol,
+            strategy=STRATEGY,
+            mode=mode,
+            side="SHORT",
+            outcome_time_utc=outcome_time_utc,
+        )
+        if orow:
+            write_outcome_row(
+                orow,
+                strategy=STRATEGY,
+                mode=mode,
+                wall_time_utc=outcome_time_utc,
+                schema_version=3,
+                base_dir=base_dir,
+            )
+            logger.info(
+                "FAST0_OUTCOME",
+                extra={"symbol": symbol, "trade_id": trade_id, "outcome": summary.get("outcome")},
+            )
+    except Exception as e:
+        log_exception(logger, "FAST0_OUTCOME_ERROR", step="FAST0_OUTCOME", extra={"trade_id": trade_id})
+    finally:
+        with _fast0_watchers_lock:
+            _active_fast0_watchers -= 1
+
+
 def run_fast0_for_symbol(
     symbol: str,
     run_id: str,
@@ -87,6 +234,7 @@ def run_fast0_for_symbol(
     base_dir_str = str(base_dir) if base_dir else None
 
     register_symbol(cfg.symbol)
+    entry_ok_fired = False
     try:
         start_ts = time.time()
         tick = 0
@@ -169,6 +317,7 @@ def run_fast0_for_symbol(
                     "time_utc": dbg5.get("time_utc", now_utc),
                     "price": last_price,
                     "dist_to_peak_pct": dist_to_peak,
+                    "context_score": context_score,
                     "cvd_delta_ratio_30s": cvd_30s,
                     "cvd_delta_ratio_1m": cvd_1m,
                     "oi_change_5m_pct": oi_change_5m,
@@ -197,6 +346,21 @@ def run_fast0_for_symbol(
 
                 event_id = f"{run_id}_fast0_{tick}_{uuid.uuid4().hex[:8]}"
 
+                entry_ok_pass, entry_reason = should_fast0_entry_ok(payload, tick)
+                if not entry_ok_pass:
+                    log_info(
+                        logger,
+                        "FAST0_ENTRY_FILTERED",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        step="FAST0",
+                        extra={"reason": entry_reason, "tick": tick, "context_score": context_score, "dist_to_peak_pct": dist_to_peak},
+                    )
+                entry_ok = entry_ok_pass and not entry_ok_fired
+                if entry_ok:
+                    entry_ok_fired = True
+                payload["entry_ok"] = entry_ok
+
                 row = {
                     "run_id": run_id,
                     "event_id": event_id,
@@ -207,8 +371,8 @@ def run_fast0_for_symbol(
                     "wall_time_utc": now_utc,
                     "time_utc": payload.get("time_utc", ""),
                     "stage": 0,
-                    "entry_ok": 0,
-                    "skip_reasons": "fast0_sample",
+                    "entry_ok": 1 if entry_ok else 0,
+                    "skip_reasons": "" if entry_ok else "fast0_sample",
                     "context_score": context_score if context_score is not None else "",
                     "price": last_price,
                     "dist_to_peak_pct": dist_to_peak,
@@ -239,6 +403,83 @@ def run_fast0_for_symbol(
                     schema_version=3,
                     base_dir=base_dir_str,
                 )
+
+                if entry_ok:
+                    entry_price = last_price
+                    tp_price = entry_price * (1.0 - FAST0_TP_PCT)
+                    sl_price = entry_price * (1.0 + FAST0_SL_PCT)
+                    trade_id = f"{run_id}_fast0_trade_{uuid.uuid4().hex[:8]}"
+                    trade_row = {
+                        "trade_id": trade_id,
+                        "event_id": event_id,
+                        "run_id": run_id,
+                        "symbol": cfg.symbol,
+                        "strategy": STRATEGY,
+                        "mode": mode,
+                        "side": "SHORT",
+                        "entry_time_utc": payload.get("time_utc", now_utc),
+                        "entry_price": entry_price,
+                        "tp_price": tp_price,
+                        "sl_price": sl_price,
+                        "trade_type": "FAST0_PAPER",
+                    }
+                    entry_time_str = payload.get("time_utc", now_utc)
+                    write_trade_row(
+                        trade_row,
+                        strategy=STRATEGY,
+                        mode=mode,
+                        wall_time_utc=now_utc,
+                        schema_version=3,
+                        base_dir=base_dir_str,
+                    )
+                    if FAST0_TG_ENTRY_ENABLE:
+                        try:
+                            send_telegram(
+                                format_fast0_entry_ok(
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    dist_to_peak_pct=dist_to_peak,
+                                    context_score=context_score,
+                                    cvd_30s=cvd_30s,
+                                    cvd_1m=cvd_1m,
+                                ),
+                                strategy=STRATEGY,
+                                side="SHORT",
+                                mode="FAST0",
+                                event_id=event_id,
+                                context_score=context_score,
+                                entry_ok=True,
+                                formatted=True,
+                            )
+                        except Exception:
+                            log_exception(logger, "FAST0_TG_SEND_ERROR", symbol=cfg.symbol, run_id=run_id, step="FAST0")
+                    t = threading.Thread(
+                        target=_run_fast0_outcome_watcher,
+                        kwargs={
+                            "symbol": cfg.symbol,
+                            "run_id": run_id,
+                            "event_id": event_id,
+                            "trade_id": trade_id,
+                            "entry_price": entry_price,
+                            "tp_price": tp_price,
+                            "sl_price": sl_price,
+                            "entry_time_utc": entry_time_str,
+                            "base_dir": base_dir_str,
+                            "mode": mode,
+                        },
+                        name=f"fast0_outcome_{cfg.symbol}_{trade_id[:16]}",
+                        daemon=True,
+                    )
+                    t.start()
+                    log_info(
+                        logger,
+                        "FAST0_ENTRY_OK",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        step="FAST0",
+                        extra={"event_id": event_id, "trade_id": trade_id},
+                    )
+
                 log_info(
                     logger,
                     "FAST0_TICK",

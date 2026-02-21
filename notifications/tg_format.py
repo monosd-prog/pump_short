@@ -109,6 +109,22 @@ def format_entry_ok(
     return "\n".join(lines)
 
 
+def format_fast0_entry_ok(
+    *,
+    symbol: str,
+    run_id: str,
+    dist_to_peak_pct: Any,
+    context_score: Any,
+    cvd_30s: Any,
+    cvd_1m: Any,
+) -> str:
+    return (
+        f"⚡ FAST0 ENTRY_OK | {symbol} | dist={_fmt_pct(dist_to_peak_pct)} | "
+        f"cs={_fmt_num(context_score)} | cvd30s={_fmt_num(cvd_30s, 3)} | "
+        f"cvd1m={_fmt_num(cvd_1m, 3)} | run_id={run_id}"
+    )
+
+
 def format_outcome(
     *,
     strategy: str,
