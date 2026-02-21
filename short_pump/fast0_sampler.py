@@ -180,15 +180,15 @@ def _run_fast0_outcome_watcher(
             fetch_klines_1m=get_klines_1m,
             strategy_name=STRATEGY,
         )
-        outcome_ts = pd.Timestamp.now(tz="UTC")
         end_reason = summary.get("end_reason") or summary.get("outcome") or "TIMEOUT"
         if end_reason in ("TP_hit", "SL_hit", "CONFLICT") and summary.get("hit_time_utc"):
             outcome_time_utc = summary["hit_time_utc"]
             minutes_to_hit = summary.get("minutes_to_hit")
             hold_sec = (minutes_to_hit * 60.0) if minutes_to_hit is not None else 1.0
         else:
+            outcome_ts = datetime.now(timezone.utc)
             outcome_time_utc = outcome_ts.isoformat()
-            hold_sec = (outcome_ts - entry_ts).total_seconds()
+            hold_sec = (outcome_ts - entry_ts.to_pydatetime()).total_seconds()
             summary["exit_time_utc"] = outcome_time_utc
         summary["hold_seconds"] = max(1.0, hold_sec)
         pnl = summary.get("pnl_pct")
