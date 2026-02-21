@@ -4,6 +4,7 @@ E2E smoke test for fast0: events, trades, outcomes.
 Runs with relaxed entry thresholds to force ENTRY_OK, short outcome watch for quick exit.
 """
 
+import csv
 import os
 import sys
 import time
@@ -58,6 +59,10 @@ def main():
     outcomes_path = base_path / "outcomes_v3.csv"
 
     ok = True
+    our_events = []
+    our_trades = []
+    our_outcomes = []
+
     if not events_path.exists():
         print(f"FAIL: events_v3.csv not found at {events_path}")
         ok = False
@@ -65,7 +70,11 @@ def main():
         lines = events_path.read_text().strip().split("\n")
         data_rows = [l for l in lines[1:] if l.strip()]
         our_events = [r for r in data_rows if run_id in r]
-        print(f"OK: events_v3.csv has {len(our_events)} rows for run_id")
+        if len(our_events) < max_ticks:
+            print(f"FAIL: events_v3.csv has {len(our_events)} rows, expected >= {max_ticks}")
+            ok = False
+        else:
+            print(f"OK: events_v3.csv has {len(our_events)} rows (>= {max_ticks})")
 
     if not trades_path.exists():
         print(f"FAIL: trades_v3.csv not found at {trades_path}")
@@ -74,25 +83,40 @@ def main():
         lines = trades_path.read_text().strip().split("\n")
         data_rows = [l for l in lines[1:] if l.strip()]
         our_trades = [r for r in data_rows if run_id in r]
-        print(f"OK: trades_v3.csv has {len(our_trades)} rows for run_id")
+        if len(our_trades) != 1:
+            print(f"FAIL: trades_v3.csv has {len(our_trades)} rows, expected 1 (one ENTRY_OK per run)")
+            ok = False
+        else:
+            print(f"OK: trades_v3.csv has {len(our_trades)} row(s) (expected 1)")
 
     # Outcomes: watcher runs FAST0_OUTCOME_WATCH_SEC (10s in smoke)
     if not outcomes_path.exists():
         print(f"WARN: outcomes_v3.csv not found yet (watcher may still be running)")
         time.sleep(_watch_sec + 5)
-        if outcomes_path.exists():
-            lines = outcomes_path.read_text().strip().split("\n")
-            data_rows = [l for l in lines[1:] if l.strip()]
-            our_outcomes = [r for r in data_rows if run_id in r]
-            print(f"OK: outcomes_v3.csv has {len(our_outcomes)} rows for run_id")
-        else:
-            print(f"FAIL: outcomes_v3.csv still missing after 15s wait")
+
+    if outcomes_path.exists():
+        with open(outcomes_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        our_outcomes = [r for r in rows if run_id in r.get("run_id", "")]
+        if len(our_outcomes) != len(our_trades):
+            print(f"FAIL: outcomes_v3.csv has {len(our_outcomes)} rows, expected {len(our_trades)} (match trades)")
             ok = False
+        else:
+            print(f"OK: outcomes_v3.csv has {len(our_outcomes)} row(s)")
+        for i, row in enumerate(our_outcomes):
+            hold_val = row.get("hold_seconds", "")
+            try:
+                hold = float(hold_val)
+                if hold <= 0:
+                    print(f"FAIL: outcome row {i+1} has hold_seconds={hold}, expected > 0")
+                    ok = False
+            except (ValueError, TypeError):
+                print(f"FAIL: outcome row {i+1} has invalid hold_seconds={hold_val!r}")
+                ok = False
     else:
-        lines = outcomes_path.read_text().strip().split("\n")
-        data_rows = [l for l in lines[1:] if l.strip()]
-        our_outcomes = [r for r in data_rows if run_id in r]
-        print(f"OK: outcomes_v3.csv has {len(our_outcomes)} rows for run_id")
+        print(f"FAIL: outcomes_v3.csv still missing after wait")
+        ok = False
 
     if ok:
         print("OK: smoke_fast0_e2e passed")

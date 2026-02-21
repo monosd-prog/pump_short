@@ -180,9 +180,19 @@ def _run_fast0_outcome_watcher(
             fetch_klines_1m=get_klines_1m,
             strategy_name=STRATEGY,
         )
-        minutes_to_hit = summary.get("minutes_to_hit")
-        summary["hold_seconds"] = (minutes_to_hit * 60.0) if minutes_to_hit is not None else 0.0
-        outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+        outcome_ts = pd.Timestamp.now(tz="UTC")
+        end_reason = summary.get("end_reason") or summary.get("outcome") or "TIMEOUT"
+        if end_reason in ("TP_hit", "SL_hit", "CONFLICT") and summary.get("hit_time_utc"):
+            outcome_time_utc = summary["hit_time_utc"]
+            minutes_to_hit = summary.get("minutes_to_hit")
+            hold_sec = (minutes_to_hit * 60.0) if minutes_to_hit is not None else 1.0
+        else:
+            outcome_time_utc = outcome_ts.isoformat()
+            hold_sec = (outcome_ts - entry_ts).total_seconds()
+            summary["exit_time_utc"] = outcome_time_utc
+        summary["hold_seconds"] = max(1.0, hold_sec)
+        pnl = summary.get("pnl_pct")
+        summary["pnl_pct"] = float(pnl) if pnl is not None else 0.0
         orow = build_outcome_row(
             summary,
             trade_id=trade_id,
@@ -356,6 +366,15 @@ def run_fast0_for_symbol(
                         step="FAST0",
                         extra={"reason": entry_reason, "tick": tick, "context_score": context_score, "dist_to_peak_pct": dist_to_peak},
                     )
+                elif entry_ok_fired:
+                    log_info(
+                        logger,
+                        "FAST0_ENTRY_SUPPRESSED",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        step="FAST0",
+                        extra={"tick": tick, "reason": "already_fired"},
+                    )
                 entry_ok = entry_ok_pass and not entry_ok_fired
                 if entry_ok:
                     entry_ok_fired = True
@@ -408,7 +427,7 @@ def run_fast0_for_symbol(
                     entry_price = last_price
                     tp_price = entry_price * (1.0 - FAST0_TP_PCT)
                     sl_price = entry_price * (1.0 + FAST0_SL_PCT)
-                    trade_id = f"{run_id}_fast0_trade_{uuid.uuid4().hex[:8]}"
+                    trade_id = f"{event_id}_trade"
                     trade_row = {
                         "trade_id": trade_id,
                         "event_id": event_id,
