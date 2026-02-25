@@ -1579,6 +1579,26 @@ def run_watch_for_symbol(
                         except Exception as e:
                             log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
+                    # Paper: close position on OUTCOME (TP_hit/SL_hit)
+                    try:
+                        from trading.config import AUTO_TRADING_ENABLE, MODE
+                        if AUTO_TRADING_ENABLE and MODE == "paper":
+                            from trading.paper_outcome import close_from_outcome
+                            event_id_outcome = entry_payload.get("event_id") or run_id
+                            end_reason = summary.get("end_reason") or summary.get("outcome") or ""
+                            outcome_time_utc_val = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+                            close_from_outcome(
+                                strategy="short_pump",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                event_id=str(event_id_outcome),
+                                res=end_reason,
+                                pnl_pct=summary.get("pnl_pct"),
+                                ts_utc=outcome_time_utc_val,
+                            )
+                    except Exception:
+                        log_exception(logger, "TRADING_CLOSE_FROM_OUTCOME failed", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME")
+
                     _cleanup_symbol()
                     return summary
                 except Exception as e:

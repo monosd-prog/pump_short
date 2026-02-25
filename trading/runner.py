@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import csv
+import fcntl
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import List
@@ -22,6 +24,7 @@ from trading.config import (
     MODE,
     PAPER_EQUITY_USD,
     RISK_PCT,
+    RUNNER_LOCK_PATH,
     SIGNALS_QUEUE_PATH,
     STATE_PATH,
 )
@@ -44,6 +47,20 @@ def _ensure_dir(path: str) -> None:
     if p.suffix:
         p = p.parent
     p.mkdir(parents=True, exist_ok=True)
+
+
+def _acquire_lock() -> tuple[bool, int | None]:
+    """Acquire file lock. Return (True, fd) if acquired, (False, None) if already locked. Caller must release."""
+    _ensure_dir(RUNNER_LOCK_PATH)
+    try:
+        fd = os.open(RUNNER_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True, fd
+    except (BlockingIOError, OSError) as e:
+        if getattr(e, "errno", None) == 11 or "Resource temporarily unavailable" in str(e):
+            logger.info("run_once: lock held, exit cleanly")
+            return False, None
+        raise
 
 
 def get_latest_signals() -> List[Signal]:
@@ -113,6 +130,21 @@ def _append_trade_row(
 
 def run_once() -> None:
     """One iteration: fetch signals, dedupe, validate, risk check, PAPER open, log CSV."""
+    ok, lock_fd = _acquire_lock()
+    if not ok:
+        return
+    try:
+        _run_once_body()
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)
+                os.close(lock_fd)
+            except Exception:
+                pass
+
+
+def _run_once_body() -> None:
     state = load_state()
     equity = PAPER_EQUITY_USD
     last_signal_ids = state.setdefault("last_signal_ids", {})

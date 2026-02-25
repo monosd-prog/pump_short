@@ -217,6 +217,22 @@ def _run_fast0_outcome_watcher(
                 "FAST0_OUTCOME",
                 extra={"symbol": symbol, "trade_id": trade_id, "outcome": summary.get("outcome")},
             )
+            # Paper: close position on OUTCOME (TP_hit/SL_hit)
+            try:
+                from trading.config import AUTO_TRADING_ENABLE, MODE
+                if AUTO_TRADING_ENABLE and MODE == "paper":
+                    from trading.paper_outcome import close_from_outcome
+                    close_from_outcome(
+                        strategy=STRATEGY,
+                        symbol=symbol,
+                        run_id=run_id,
+                        event_id=event_id,
+                        res=end_reason,
+                        pnl_pct=summary.get("pnl_pct"),
+                        ts_utc=outcome_time_utc,
+                    )
+            except Exception:
+                log_exception(logger, "FAST0_TRADING_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
     except Exception as e:
         log_exception(logger, "FAST0_OUTCOME_ERROR", step="FAST0_OUTCOME", extra={"trade_id": trade_id})
     finally:

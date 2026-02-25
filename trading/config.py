@@ -28,5 +28,7 @@ STOP_DISTANCE_MAX_PCT = float(os.getenv("STOP_DISTANCE_MAX_PCT", "0.05"))
 _ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = os.getenv("TRADING_STATE_PATH", str(_ROOT / "datasets" / "trading_state.json"))
 LOG_PATH = os.getenv("TRADING_LOG_PATH", str(_ROOT / "datasets" / "trading_trades.csv"))
+CLOSES_PATH = os.getenv("TRADING_CLOSES_PATH", str(_ROOT / "datasets" / "trading_closes.csv"))
+RUNNER_LOCK_PATH = os.getenv("TRADING_RUNNER_LOCK_PATH", str(_ROOT / "datasets" / "trading_runner.lock"))
 # Queue path for enqueue_signal (default: datasets/signals_queue.jsonl)
 SIGNALS_QUEUE_PATH = os.getenv("SIGNALS_QUEUE_PATH", str(_ROOT / "datasets" / "signals_queue.jsonl"))

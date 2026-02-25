@@ -1,0 +1,10 @@
+[Unit]
+Description=Pump trading runner (paper/live) - consumes signal queue, opens/closes positions
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/pump_short
+EnvironmentFile=/root/pump_short/.env
+ExecStart=/root/pump_short/venv/bin/python -m trading.runner --once
+Restart=on-failure
