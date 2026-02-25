@@ -31,8 +31,8 @@ from short_pump.logging_utils import get_logger, log_exception, log_info
 from common.io_dataset import ensure_dataset_files, write_event_row, write_outcome_row, write_trade_row
 from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import wall_time_utc
-from notifications.tg_format import build_fast0_signal, format_tg
-from short_pump.telegram import send_telegram
+from notifications.tg_format import build_fast0_signal, format_fast0_outcome_message, format_tg
+from short_pump.telegram import FAST0_TG_OUTCOME_ENABLE, FAST0_TG_OUTCOME_MIN_DIST, send_telegram
 
 logger = get_logger(__name__)
 
@@ -142,6 +142,8 @@ def _run_fast0_outcome_watcher(
     entry_time_utc: str,
     base_dir: Optional[str],
     mode: str,
+    dist_to_peak_pct: Optional[float] = None,
+    context_score: Optional[float] = None,
 ) -> None:
     """Daemon thread: track TP/SL, write outcome row."""
     global _active_fast0_watchers
@@ -213,10 +215,52 @@ def _run_fast0_outcome_watcher(
                 schema_version=3,
                 base_dir=base_dir,
             )
+            res_val = end_reason
+            ep = summary.get("exit_price")
+            exit_price_val = float(ep) if ep is not None else (tp_price if res_val == "TP_hit" else sl_price if res_val == "SL_hit" else entry_price)
+            pnl_val = summary.get("pnl_pct", 0.0)
+            hold_val = summary.get("hold_seconds", 1.0)
+            dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else 0.0
+            ctx_val = float(context_score) if context_score is not None else 0.0
             logger.info(
-                "FAST0_OUTCOME",
-                extra={"symbol": symbol, "trade_id": trade_id, "outcome": summary.get("outcome")},
+                "FAST0_OUTCOME | symbol=%s | run_id=%s | res=%s | exit=%s | pnl_pct=%s | hold=%s | event_id=%s",
+                symbol,
+                run_id,
+                res_val,
+                exit_price_val,
+                f"{pnl_val:.2f}" if pnl_val is not None else "n/a",
+                f"{hold_val:.0f}" if hold_val is not None else "n/a",
+                event_id,
             )
+            if FAST0_TG_OUTCOME_ENABLE and res_val and res_val not in ("", "None"):
+                if dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
+                    try:
+                        msg = format_fast0_outcome_message(
+                            symbol=symbol,
+                            run_id=run_id,
+                            event_id=event_id,
+                            res=res_val,
+                            entry_price=entry_price,
+                            tp_price=tp_price,
+                            sl_price=sl_price,
+                            exit_price=exit_price_val,
+                            pnl_pct=pnl_val,
+                            hold_seconds=hold_val,
+                            dist_to_peak_pct=dist_val if dist_val else None,
+                            context_score=ctx_val if ctx_val else None,
+                        )
+                        send_telegram(
+                            msg,
+                            strategy=STRATEGY,
+                            side="SHORT",
+                            mode="FAST0",
+                            event_id=event_id,
+                            context_score=ctx_val if ctx_val else None,
+                            entry_ok=True,
+                            formatted=True,
+                        )
+                    except Exception:
+                        log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
             # Paper: close position on OUTCOME (TP_hit/SL_hit)
             try:
                 from trading.config import AUTO_TRADING_ENABLE, MODE
@@ -518,6 +562,8 @@ def run_fast0_for_symbol(
                             "entry_time_utc": entry_time_str,
                             "base_dir": base_dir_str,
                             "mode": mode,
+                            "dist_to_peak_pct": dist_to_peak,
+                            "context_score": context_score,
                         },
                         name=f"fast0_outcome_{cfg.symbol}_{trade_id[:16]}",
                         daemon=True,

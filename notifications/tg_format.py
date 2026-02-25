@@ -237,6 +237,32 @@ def format_fast0_entry_ok(
     return format_tg(sig)
 
 
+def format_fast0_outcome_message(
+    *,
+    symbol: str,
+    run_id: str,
+    event_id: str,
+    res: str,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    exit_price: float,
+    pnl_pct: float,
+    hold_seconds: float,
+    dist_to_peak_pct: float | None = None,
+    context_score: float | None = None,
+) -> str:
+    """Format FAST0 outcome for Telegram. Used when FAST0_TG_OUTCOME_ENABLE=1."""
+    header = f"{_emoji('SHORT')} SHORT | short_pump_fast0 | OUTCOME | res={res} | sym={symbol}"
+    lines = [
+        header,
+        f"run_id={run_id} eid={_short_eid(event_id)}",
+        f"entry={_fmt_num(entry_price)} tp={_fmt_num(tp_price)} sl={_fmt_num(sl_price)}",
+        f"pnl={_fmt_pct(pnl_pct)} | hold={_fmt_num(hold_seconds)}s",
+    ]
+    return "\n".join(lines)
+
+
 def format_outcome(
     *,
     strategy: str,
