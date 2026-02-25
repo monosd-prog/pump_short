@@ -1,12 +1,13 @@
-"""Close paper positions from OUTCOME events (TP_hit/SL_hit)."""
+"""Close paper positions from OUTCOME events (TP_hit/SL_hit) and TTL timeout."""
 from __future__ import annotations
 
 import csv
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
-from trading.config import CLOSES_PATH
+from trading.config import CLOSES_PATH, POSITION_TTL_SECONDS, TIMEOUT_EXIT_MODE
 from trading.paper import simulate_close
 from trading.state import load_state, record_close, save_state
 
@@ -120,3 +121,90 @@ def close_from_outcome(
         strategy, symbol, close_reason, exit_price, pnl_r, pnl_usd,
     )
     return True
+
+
+def _parse_opened_ts(opened_ts: str) -> datetime | None:
+    """Parse opened_ts (ISO or common str) to UTC-aware datetime. Return None on failure."""
+    if not opened_ts or not opened_ts.strip():
+        return None
+    s = opened_ts.strip()
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%d %H:%M:%S%z",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
+        try:
+            s_parse = s.replace("Z", "+00:00") if "Z" in fmt else s
+            dt = datetime.strptime(s_parse, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00").replace("+0000", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def close_on_timeout(
+    state: dict[str, Any],
+    now_ts_utc: str,
+    *,
+    log_path: Optional[str] = None,
+) -> bool:
+    """
+    Close open positions older than POSITION_TTL_SECONDS.
+    exit_price: entry if TIMEOUT_EXIT_MODE=="entry", else sl.
+    Returns True if any position was closed.
+    """
+    from trading.config import CLOSES_PATH as _closes_path
+
+    now_dt = _parse_opened_ts(now_ts_utc) or datetime.now(timezone.utc)
+    open_positions = state.get("open_positions") or {}
+    path = log_path or _closes_path
+    any_closed = False
+
+    for strategy, position in list(open_positions.items()):
+        opened_ts = position.get("opened_ts", "")
+        opened_dt = _parse_opened_ts(opened_ts)
+        if opened_dt is None:
+            logger.debug("close_on_timeout: skip strategy=%s unparseable opened_ts=%s", strategy, opened_ts)
+            continue
+        age_sec = (now_dt - opened_dt).total_seconds()
+        if age_sec < POSITION_TTL_SECONDS:
+            continue
+        exit_mode = TIMEOUT_EXIT_MODE if TIMEOUT_EXIT_MODE in ("entry", "sl") else "entry"
+        exit_price = float(position["entry"]) if exit_mode == "entry" else float(position["sl"])
+        ts_str = now_dt.strftime("%Y-%m-%d %H:%M:%S+00:00")
+        pnl_r, pnl_usd = simulate_close(position, exit_price, "timeout", ts_str)
+        record_close(state, strategy, "timeout", exit_price, pnl_r, pnl_usd, ts_str)
+        _append_close_row(
+            ts=ts_str,
+            strategy=strategy,
+            symbol=position.get("symbol", ""),
+            side=position.get("side", "SHORT"),
+            entry=position["entry"],
+            tp=position["tp"],
+            sl=position["sl"],
+            exit_price=exit_price,
+            close_reason="timeout",
+            pnl_r=pnl_r,
+            pnl_usd=pnl_usd,
+            run_id=position.get("run_id", ""),
+            event_id=position.get("event_id", "") or "",
+            log_path=path,
+        )
+        logger.info(
+            "close_on_timeout: closed strategy=%s symbol=%s age_sec=%.0f exit_mode=%s pnl_r=%.2f",
+            strategy, position.get("symbol", ""), age_sec, exit_mode, pnl_r,
+        )
+        any_closed = True
+
+    return any_closed

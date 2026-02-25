@@ -6,6 +6,7 @@ import fcntl
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -23,6 +24,8 @@ from trading.config import (
     MAX_TOTAL_RISK_PCT,
     MODE,
     PAPER_EQUITY_USD,
+    PROCESSED_PATH,
+    PROCESSING_PATH,
     RISK_PCT,
     RUNNER_LOCK_PATH,
     SIGNALS_QUEUE_PATH,
@@ -36,6 +39,7 @@ from trading.risk import (
     validate_stop_distance,
     can_open,
 )
+from trading.paper_outcome import close_on_timeout
 from trading.signal_io import signal_from_dict
 from trading.state import has_open_position, load_state, record_open, save_state
 
@@ -63,36 +67,72 @@ def _acquire_lock() -> tuple[bool, int | None]:
         raise
 
 
-def get_latest_signals() -> List[Signal]:
+def get_latest_signals() -> tuple[List[Signal], List[str]]:
     """
-    MVP: read signals from JSONL queue, return list and clear file (processed).
-    TODO: optional persistence of processed ids instead of truncate; live adapter feed.
+    Crash-safe: atomic rename QUEUE_PATH -> PROCESSING_PATH, read, return (signals, raw_lines).
+    At start: if PROCESSING_PATH exists (recovery from crash), process it first.
+    Dedupe unchanged. Caller must _finish_queue_processing(raw_lines) after successful run.
     """
     import json
 
-    signals: List[Signal] = []
-    try:
-        with open(SIGNALS_QUEUE_PATH, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    d = json.loads(line)
-                    signals.append(signal_from_dict(d))
-                except Exception as e:
-                    logger.warning("get_latest_signals: skip invalid line: %s", e)
-    except FileNotFoundError:
-        return signals
+    QUEUE_PATH = SIGNALS_QUEUE_PATH
+    path_to_read: str | None = None
+    raw_lines: List[str] = []
 
-    # Truncate after read (processed)
-    if signals:
-        try:
-            with open(SIGNALS_QUEUE_PATH, "w", encoding="utf-8") as f:
+    # Recovery: if PROCESSING_PATH exists and non-empty, process it first
+    if Path(PROCESSING_PATH).exists():
+        content = Path(PROCESSING_PATH).read_text(encoding="utf-8").strip()
+        if content:
+            path_to_read = PROCESSING_PATH
+            raw_lines = [ln for ln in content.splitlines() if ln.strip()]
+
+    # Normal: if no processing file, try to claim QUEUE_PATH
+    if path_to_read is None:
+        if not Path(QUEUE_PATH).exists():
+            return [], []
+        st = Path(QUEUE_PATH).stat()
+        if st.st_size == 0:
+            try:
+                os.remove(QUEUE_PATH)
+            except OSError:
                 pass
+            return [], []
+        try:
+            os.replace(QUEUE_PATH, PROCESSING_PATH)
+        except FileNotFoundError:
+            return [], []
+        path_to_read = PROCESSING_PATH
+        raw_lines = [ln for ln in Path(PROCESSING_PATH).read_text(encoding="utf-8").splitlines() if ln.strip()]
+
+    signals: List[Signal] = []
+    for line in raw_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+            signals.append(signal_from_dict(d))
         except Exception as e:
-            logger.warning("get_latest_signals: truncate failed: %s", e)
-    return signals
+            logger.warning("get_latest_signals: skip invalid line: %s", e)
+    return signals, raw_lines
+
+
+def _finish_queue_processing(raw_lines: List[str]) -> None:
+    """After successful processing: append to processed file (audit), remove processing file."""
+    _ensure_dir(PROCESSED_PATH)
+    if raw_lines:
+        try:
+            with open(PROCESSED_PATH, "a", encoding="utf-8") as f:
+                for ln in raw_lines:
+                    if ln.strip():
+                        f.write(ln if ln.endswith("\n") else ln + "\n")
+        except Exception as e:
+            logger.warning("_finish_queue_processing: append to processed failed: %s", e)
+    try:
+        if Path(PROCESSING_PATH).exists():
+            os.remove(PROCESSING_PATH)
+    except OSError as e:
+        logger.warning("_finish_queue_processing: remove processing failed: %s", e)
 
 
 def _dedupe_key(signal: Signal) -> str:
@@ -149,79 +189,87 @@ def _run_once_body() -> None:
     equity = PAPER_EQUITY_USD
     last_signal_ids = state.setdefault("last_signal_ids", {})
 
-    signals = get_latest_signals()
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00:00")
+    if close_on_timeout(state, now_utc):
+        save_state(state)
+
+    signals, raw_lines = get_latest_signals()
     if not signals:
         logger.debug("run_once: no signals")
+        _finish_queue_processing(raw_lines)
         return
 
-    for signal in signals:
-        dedupe_key = _dedupe_key(signal)
-        if last_signal_ids.get(signal.strategy) == dedupe_key:
-            logger.debug("run_once: dedupe skip strategy=%s key=%s", signal.strategy, dedupe_key)
-            continue
+    try:
+        for signal in signals:
+            dedupe_key = _dedupe_key(signal)
+            if last_signal_ids.get(signal.strategy) == dedupe_key:
+                logger.debug("run_once: dedupe skip strategy=%s key=%s", signal.strategy, dedupe_key)
+                continue
 
-        entry = signal.entry_price
-        tp = signal.tp_price
-        sl = signal.sl_price
-        if entry is None or tp is None or sl is None:
-            logger.warning(
-                "run_once: skip missing entry/tp/sl strategy=%s symbol=%s entry=%s tp=%s sl=%s",
-                signal.strategy, signal.symbol, entry, tp, sl,
-            )
-            continue
+            entry = signal.entry_price
+            tp = signal.tp_price
+            sl = signal.sl_price
+            if entry is None or tp is None or sl is None:
+                logger.warning(
+                    "run_once: skip missing entry/tp/sl strategy=%s symbol=%s entry=%s tp=%s sl=%s",
+                    signal.strategy, signal.symbol, entry, tp, sl,
+                )
+                continue
 
-        entry_f = float(entry)
-        sl_f = float(sl)
-        risk_usd = calc_risk_usd(equity, RISK_PCT)
-        stop_distance_pct = calc_stop_distance_pct(entry_f, sl_f)
-        ok, reason = validate_stop_distance(stop_distance_pct)
-        if not ok:
-            logger.warning("run_once: reject stop_distance strategy=%s %s", signal.strategy, reason)
-            continue
+            entry_f = float(entry)
+            sl_f = float(sl)
+            risk_usd = calc_risk_usd(equity, RISK_PCT)
+            stop_distance_pct = calc_stop_distance_pct(entry_f, sl_f)
+            ok, reason = validate_stop_distance(stop_distance_pct)
+            if not ok:
+                logger.warning("run_once: reject stop_distance strategy=%s %s", signal.strategy, reason)
+                continue
 
-        if not can_open(signal.strategy, state, equity, RISK_PCT, MAX_TOTAL_RISK_PCT):
-            logger.info("run_once: can_open=false strategy=%s", signal.strategy)
-            continue
+            if not can_open(signal.strategy, state, equity, RISK_PCT, MAX_TOTAL_RISK_PCT):
+                logger.info("run_once: can_open=false strategy=%s", signal.strategy)
+                continue
 
-        if has_open_position(state, signal.strategy):
-            logger.info("run_once: already open strategy=%s", signal.strategy)
-            continue
+            if has_open_position(state, signal.strategy):
+                logger.info("run_once: already open strategy=%s", signal.strategy)
+                continue
 
-        notional_usd = calc_notional_usd(risk_usd, stop_distance_pct)
+            notional_usd = calc_notional_usd(risk_usd, stop_distance_pct)
 
-        if MODE == "paper":
-            position = simulate_open(
-                signal,
-                qty_notional_usd=notional_usd,
-                risk_usd=risk_usd,
-                leverage=LEVERAGE,
-                opened_ts=signal.ts_utc or "",
-            )
-            record_open(state, position)
-            last_signal_ids[signal.strategy] = dedupe_key
-            _append_trade_row(
-                ts=signal.ts_utc or "",
-                strategy=signal.strategy,
-                symbol=signal.symbol,
-                side=signal.side or "SHORT",
-                entry=entry_f,
-                tp=float(tp),
-                sl=sl_f,
-                notional_usd=notional_usd,
-                risk_usd=risk_usd,
-                stop_pct=stop_distance_pct,
-                run_id=signal.run_id or "",
-                event_id=str(signal.event_id or ""),
-            )
-            logger.info(
-                "run_once: PAPER open strategy=%s symbol=%s entry=%.4f notional=%.2f risk_usd=%.2f",
-                signal.strategy, signal.symbol, entry_f, notional_usd, risk_usd,
-            )
-        else:
-            # TODO: live adapter place order, then record_open when fill
-            logger.warning("run_once: MODE=%s not implemented, skip", MODE)
+            if MODE == "paper":
+                position = simulate_open(
+                    signal,
+                    qty_notional_usd=notional_usd,
+                    risk_usd=risk_usd,
+                    leverage=LEVERAGE,
+                    opened_ts=signal.ts_utc or "",
+                )
+                record_open(state, position)
+                last_signal_ids[signal.strategy] = dedupe_key
+                _append_trade_row(
+                    ts=signal.ts_utc or "",
+                    strategy=signal.strategy,
+                    symbol=signal.symbol,
+                    side=signal.side or "SHORT",
+                    entry=entry_f,
+                    tp=float(tp),
+                    sl=sl_f,
+                    notional_usd=notional_usd,
+                    risk_usd=risk_usd,
+                    stop_pct=stop_distance_pct,
+                    run_id=signal.run_id or "",
+                    event_id=str(signal.event_id or ""),
+                )
+                logger.info(
+                    "run_once: PAPER open strategy=%s symbol=%s entry=%.4f notional=%.2f risk_usd=%.2f",
+                    signal.strategy, signal.symbol, entry_f, notional_usd, risk_usd,
+                )
+            else:
+                # TODO: live adapter place order, then record_open when fill
+                logger.warning("run_once: MODE=%s not implemented, skip", MODE)
 
-    save_state(state)
+        save_state(state)
+    finally:
+        _finish_queue_processing(raw_lines)
 
 
 def main() -> None:

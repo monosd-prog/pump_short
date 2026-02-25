@@ -24,6 +24,10 @@ MAX_TOTAL_RISK_PCT = float(os.getenv("MAX_TOTAL_RISK_PCT", "0.005"))  # 0.5% tot
 STOP_DISTANCE_MIN_PCT = float(os.getenv("STOP_DISTANCE_MIN_PCT", "0.002"))
 STOP_DISTANCE_MAX_PCT = float(os.getenv("STOP_DISTANCE_MAX_PCT", "0.05"))
 
+# TTL failsafe: auto-close PAPER positions older than TTL
+POSITION_TTL_SECONDS = int(os.getenv("POSITION_TTL_SECONDS", "1800"))  # 30 min
+TIMEOUT_EXIT_MODE = os.getenv("TIMEOUT_EXIT_MODE", "entry").strip().lower()  # "entry" or "sl"
+
 # Paths (relative to project root or absolute)
 _ROOT = Path(__file__).resolve().parent.parent
 STATE_PATH = os.getenv("TRADING_STATE_PATH", str(_ROOT / "datasets" / "trading_state.json"))
@@ -32,3 +36,5 @@ CLOSES_PATH = os.getenv("TRADING_CLOSES_PATH", str(_ROOT / "datasets" / "trading
 RUNNER_LOCK_PATH = os.getenv("TRADING_RUNNER_LOCK_PATH", str(_ROOT / "datasets" / "trading_runner.lock"))
 # Queue path for enqueue_signal (default: datasets/signals_queue.jsonl)
 SIGNALS_QUEUE_PATH = os.getenv("SIGNALS_QUEUE_PATH", str(_ROOT / "datasets" / "signals_queue.jsonl"))
+PROCESSING_PATH = SIGNALS_QUEUE_PATH + ".processing"
+PROCESSED_PATH = SIGNALS_QUEUE_PATH + ".processed"
