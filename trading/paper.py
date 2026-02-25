@@ -50,29 +50,23 @@ def simulate_close(
 ) -> tuple[float, float]:
     """
     Compute PnL in R and USD. Returns (pnl_r, pnl_usd).
-    SHORT: pnl_r = (entry - exit) / (entry - sl)
-    LONG:  pnl_r = (exit - entry) / (sl - entry)
-    Guard against divide-by-zero (use abs of denominator).
+    risk_per_unit = abs(entry - sl). Guard if zero -> return 0.
+    SHORT: pnl_r = (entry - exit) / risk_per_unit
+    LONG:  pnl_r = (exit - entry) / risk_per_unit
+    pnl_usd = pnl_r * risk_usd (keep sign)
     """
     entry = position["entry"]
     sl = position["sl"]
     side = (position.get("side") or "SHORT").upper()
     risk_usd = position.get("risk_usd", 0.0)
-
+    risk_per_unit = abs(entry - sl)
+    if risk_per_unit < 1e-12:
+        logger.warning("simulate_close: zero risk_per_unit (entry=%.4f sl=%.4f), pnl_r=0", entry, sl)
+        return 0.0, 0.0
     if side == "SHORT":
-        num = entry - exit_price
-        denom = entry - sl
+        pnl_r = (entry - exit_price) / risk_per_unit
     else:
-        num = exit_price - entry
-        denom = sl - entry
-
-    denom_abs = abs(denom)
-    if denom_abs < 1e-12:
-        pnl_r = 0.0
-        logger.warning("simulate_close: zero denominator (entry=%.4f sl=%.4f), pnl_r=0", entry, sl)
-    else:
-        pnl_r = num / denom
-
+        pnl_r = (exit_price - entry) / risk_per_unit
     pnl_usd = pnl_r * risk_usd
     return pnl_r, pnl_usd
 
