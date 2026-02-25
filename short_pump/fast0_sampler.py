@@ -31,7 +31,7 @@ from short_pump.logging_utils import get_logger, log_exception, log_info
 from common.io_dataset import ensure_dataset_files, write_event_row, write_outcome_row, write_trade_row
 from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import wall_time_utc
-from notifications.tg_format import format_fast0_entry_ok
+from notifications.tg_format import build_fast0_signal, format_tg
 from short_pump.telegram import send_telegram
 
 logger = get_logger(__name__)
@@ -451,21 +451,26 @@ def run_fast0_for_symbol(
                         schema_version=3,
                         base_dir=base_dir_str,
                     )
+                    # One Signal for both TG and trading queue (same as who gets TG)
+                    sig = build_fast0_signal(
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        dist_to_peak_pct=dist_to_peak,
+                        context_score=context_score,
+                        cvd_30s=cvd_30s,
+                        cvd_1m=cvd_1m,
+                        liq_short_usd_30s=liq_short_usd_30s,
+                        liq_long_usd_30s=liq_long_usd_30s,
+                        ts_utc=payload.get("time_utc", now_utc),
+                        event_id=event_id,
+                        entry_price=entry_price,
+                        tp_price=tp_price,
+                        sl_price=sl_price,
+                    )
                     if FAST0_TG_ENTRY_ENABLE:
                         try:
                             send_telegram(
-                                format_fast0_entry_ok(
-                                    symbol=cfg.symbol,
-                                    run_id=run_id,
-                                    dist_to_peak_pct=dist_to_peak,
-                                    context_score=context_score,
-                                    cvd_30s=cvd_30s,
-                                    cvd_1m=cvd_1m,
-                                    liq_short_usd_30s=liq_short_usd_30s,
-                                    liq_long_usd_30s=liq_long_usd_30s,
-                                    ts_utc=payload.get("time_utc", now_utc),
-                                    event_id=event_id,
-                                ),
+                                format_tg(sig),
                                 strategy=STRATEGY,
                                 side="SHORT",
                                 mode="FAST0",
@@ -476,6 +481,14 @@ def run_fast0_for_symbol(
                             )
                         except Exception:
                             log_exception(logger, "FAST0_TG_SEND_ERROR", symbol=cfg.symbol, run_id=run_id, step="FAST0")
+                    # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)
+                    try:
+                        from trading.config import AUTO_TRADING_ENABLE
+                        if AUTO_TRADING_ENABLE:
+                            from trading.queue import enqueue_signal
+                            enqueue_signal(sig)
+                    except Exception:
+                        log_exception(logger, "FAST0_TRADING_ENQUEUE_ERROR", symbol=cfg.symbol, run_id=run_id, step="FAST0")
                     t = threading.Thread(
                         target=_run_fast0_outcome_watcher,
                         kwargs={

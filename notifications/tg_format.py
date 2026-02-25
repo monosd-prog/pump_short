@@ -58,6 +58,102 @@ def format_armed_short(*, symbol: str, run_id: str, event_id: str, time_utc: str
     return "\n".join(lines)
 
 
+def build_short_pump_signal(
+    *,
+    strategy: str,
+    side: str,
+    symbol: str,
+    run_id: str,
+    event_id: str,
+    time_utc: str,
+    price: Any,
+    entry_price: Any,
+    tp_price: Any,
+    sl_price: Any,
+    tp_pct: Any,
+    sl_pct: Any,
+    entry_type: str | None = None,
+    context_score: Any = None,
+    ctx_parts: Any = None,
+    liq_short_usd_30s: Any = None,
+    liq_long_usd_30s: Any = None,
+    oi_change_fast_pct: Any = None,
+    cvd_delta_ratio_30s: Any = None,
+    cvd_delta_ratio_1m: Any = None,
+    dist_to_peak_pct: Any = None,
+    stage: int | None = None,
+    debug_payload: Any = None,
+) -> Signal:
+    """Build Signal for short_pump ENTRY_OK. Same kwargs as format_entry_ok. Used for TG and enqueue."""
+    ctx_line = _compact_ctx(ctx_parts)
+    extras: Dict[str, Any] = {}
+    if ctx_line:
+        extras["ctx_line"] = ctx_line
+    if os.getenv("TG_DEBUG_JSON") == "1":
+        extras["debug"] = debug_payload
+    return Signal(
+        strategy=strategy,
+        symbol=symbol,
+        side=side,
+        ts_utc=time_utc,
+        run_id=run_id,
+        event_id=event_id,
+        entry_price=float(entry_price) if entry_price is not None else None,
+        tp_price=float(tp_price) if tp_price is not None else None,
+        sl_price=float(sl_price) if sl_price is not None else None,
+        tp_pct=float(tp_pct) if tp_pct is not None else None,
+        sl_pct=float(sl_pct) if sl_pct is not None else None,
+        stage=stage,
+        dist_to_peak_pct=float(dist_to_peak_pct) if dist_to_peak_pct is not None else None,
+        context_score=float(context_score) if context_score is not None else None,
+        cvd_30s=float(cvd_delta_ratio_30s) if cvd_delta_ratio_30s is not None else None,
+        cvd_1m=float(cvd_delta_ratio_1m) if cvd_delta_ratio_1m is not None else None,
+        liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
+        liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
+        extras=extras,
+    )
+
+
+def build_fast0_signal(
+    *,
+    symbol: str,
+    run_id: str,
+    dist_to_peak_pct: Any,
+    context_score: Any,
+    cvd_30s: Any,
+    cvd_1m: Any,
+    liq_short_usd_30s: Any = None,
+    liq_long_usd_30s: Any = None,
+    ts_utc: str | None = None,
+    event_id: str | None = None,
+    entry_price: Any = None,
+    tp_price: Any = None,
+    sl_price: Any = None,
+) -> Signal:
+    """Build Signal for fast0 ENTRY_OK. entry/tp/sl optional (runner will skip if missing); still enqueue."""
+    return Signal(
+        strategy="short_pump_fast0",
+        symbol=symbol,
+        side="SHORT",
+        ts_utc=ts_utc or "",
+        run_id=run_id,
+        event_id=event_id,
+        entry_price=float(entry_price) if entry_price is not None else None,
+        tp_price=float(tp_price) if tp_price is not None else None,
+        sl_price=float(sl_price) if sl_price is not None else None,
+        tp_pct=None,
+        sl_pct=None,
+        stage=None,
+        dist_to_peak_pct=float(dist_to_peak_pct) if dist_to_peak_pct is not None else None,
+        context_score=float(context_score) if context_score is not None else None,
+        cvd_30s=float(cvd_30s) if cvd_30s is not None else None,
+        cvd_1m=float(cvd_1m) if cvd_1m is not None else None,
+        liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
+        liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
+        extras={},
+    )
+
+
 def format_entry_ok(
     *,
     strategy: str,
@@ -84,33 +180,30 @@ def format_entry_ok(
     stage: int | None = None,
     debug_payload: Any = None,
 ) -> str:
-    ctx_line = _compact_ctx(ctx_parts)
-    extras: Dict[str, Any] = {}
-    if ctx_line:
-        extras["ctx_line"] = ctx_line
-    if os.getenv("TG_DEBUG_JSON") == "1":
-        extras["debug"] = debug_payload
-
-    sig = Signal(
+    sig = build_short_pump_signal(
         strategy=strategy,
-        symbol=symbol,
         side=side,
-        ts_utc=time_utc,
+        symbol=symbol,
         run_id=run_id,
         event_id=event_id,
-        entry_price=float(entry_price) if entry_price is not None else None,
-        tp_price=float(tp_price) if tp_price is not None else None,
-        sl_price=float(sl_price) if sl_price is not None else None,
-        tp_pct=float(tp_pct) if tp_pct is not None else None,
-        sl_pct=float(sl_pct) if sl_pct is not None else None,
+        time_utc=time_utc,
+        price=price,
+        entry_price=entry_price,
+        tp_price=tp_price,
+        sl_price=sl_price,
+        tp_pct=tp_pct,
+        sl_pct=sl_pct,
+        entry_type=entry_type,
+        context_score=context_score,
+        ctx_parts=ctx_parts,
+        liq_short_usd_30s=liq_short_usd_30s,
+        liq_long_usd_30s=liq_long_usd_30s,
+        oi_change_fast_pct=oi_change_fast_pct,
+        cvd_delta_ratio_30s=cvd_delta_ratio_30s,
+        cvd_delta_ratio_1m=cvd_delta_ratio_1m,
+        dist_to_peak_pct=dist_to_peak_pct,
         stage=stage,
-        dist_to_peak_pct=float(dist_to_peak_pct) if dist_to_peak_pct is not None else None,
-        context_score=float(context_score) if context_score is not None else None,
-        cvd_30s=float(cvd_delta_ratio_30s) if cvd_delta_ratio_30s is not None else None,
-        cvd_1m=float(cvd_delta_ratio_1m) if cvd_delta_ratio_1m is not None else None,
-        liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
-        liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
-        extras=extras,
+        debug_payload=debug_payload,
     )
     return format_tg(sig)
 
@@ -128,26 +221,18 @@ def format_fast0_entry_ok(
     ts_utc: str | None = None,
     event_id: str | None = None,
 ) -> str:
-    sig = Signal(
-        strategy="short_pump_fast0",
+    """Format only; no enqueue. Build signal via build_fast0_signal (no entry/tp/sl here)."""
+    sig = build_fast0_signal(
         symbol=symbol,
-        side="SHORT",
-        ts_utc=ts_utc or "",
         run_id=run_id,
+        dist_to_peak_pct=dist_to_peak_pct,
+        context_score=context_score,
+        cvd_30s=cvd_30s,
+        cvd_1m=cvd_1m,
+        liq_short_usd_30s=liq_short_usd_30s,
+        liq_long_usd_30s=liq_long_usd_30s,
+        ts_utc=ts_utc,
         event_id=event_id,
-        entry_price=None,
-        tp_price=None,
-        sl_price=None,
-        tp_pct=None,
-        sl_pct=None,
-        stage=None,
-        dist_to_peak_pct=float(dist_to_peak_pct) if dist_to_peak_pct is not None else None,
-        context_score=float(context_score) if context_score is not None else None,
-        cvd_30s=float(cvd_30s) if cvd_30s is not None else None,
-        cvd_1m=float(cvd_1m) if cvd_1m is not None else None,
-        liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
-        liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
-        extras={},
     )
     return format_tg(sig)
 

@@ -38,7 +38,7 @@ from short_pump.logging_utils import get_logger, log_exception, log_info, log_wa
 from common.outcome_tracker import build_outcome_row
 from short_pump.outcome import track_outcome_short
 from short_pump.telegram import TG_SEND_OUTCOME, send_telegram, tg_entry_filter
-from notifications.tg_format import format_armed_short, format_entry_ok, format_outcome
+from notifications.tg_format import build_short_pump_signal, format_armed_short, format_entry_ok, format_outcome, format_tg
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.runtime import wall_time_utc
 
@@ -1325,32 +1325,33 @@ def run_watch_for_symbol(
                             },
                         )
                     else:
+                        sig = build_short_pump_signal(
+                            strategy="short_pump",
+                            side="SHORT",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            event_id=str(event_id),
+                            time_utc=entry_payload.get("time_utc", ""),
+                            price=entry_payload.get("price", entry_price),
+                            entry_price=entry_price,
+                            tp_price=tp_price,
+                            sl_price=sl_price,
+                            tp_pct=entry_snapshot.get("tp_pct"),
+                            sl_pct=entry_snapshot.get("sl_pct"),
+                            entry_type=entry_type,
+                            context_score=context_score_msg,
+                            ctx_parts=entry_payload.get("context_parts"),
+                            liq_short_usd_30s=entry_payload.get("liq_short_usd_30s"),
+                            liq_long_usd_30s=entry_payload.get("liq_long_usd_30s"),
+                            oi_change_fast_pct=entry_payload.get("oi_change_fast_pct"),
+                            cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
+                            cvd_delta_ratio_1m=entry_payload.get("cvd_delta_ratio_1m"),
+                            dist_to_peak_pct=dist_to_peak,
+                            stage=st.stage,
+                            debug_payload=entry_payload,
+                        )
                         send_telegram(
-                            format_entry_ok(
-                                strategy="short_pump",
-                                side="SHORT",
-                                symbol=cfg.symbol,
-                                run_id=run_id,
-                                event_id=str(event_id),
-                                time_utc=entry_payload.get("time_utc", ""),
-                                price=entry_payload.get("price", entry_price),
-                                entry_price=entry_price,
-                                tp_price=tp_price,
-                                sl_price=sl_price,
-                                tp_pct=entry_snapshot.get("tp_pct"),
-                                sl_pct=entry_snapshot.get("sl_pct"),
-                                entry_type=entry_type,
-                                context_score=context_score_msg,
-                                ctx_parts=entry_payload.get("context_parts"),
-                                liq_short_usd_30s=entry_payload.get("liq_short_usd_30s"),
-                                liq_long_usd_30s=entry_payload.get("liq_long_usd_30s"),
-                                oi_change_fast_pct=entry_payload.get("oi_change_fast_pct"),
-                                cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
-                                cvd_delta_ratio_1m=entry_payload.get("cvd_delta_ratio_1m"),
-                                dist_to_peak_pct=dist_to_peak,
-                                stage=st.stage,
-                                debug_payload=entry_payload,
-                            ),
+                            format_tg(sig),
                             strategy="short_pump",
                             side="SHORT",
                             mode=mode,
@@ -1360,6 +1361,14 @@ def run_watch_for_symbol(
                             skip_reasons=None,
                             formatted=True,
                         )
+                        # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)
+                        try:
+                            from trading.config import AUTO_TRADING_ENABLE
+                            if AUTO_TRADING_ENABLE:
+                                from trading.queue import enqueue_signal
+                                enqueue_signal(sig)
+                        except Exception:
+                            log_exception(logger, "TRADING_ENQUEUE failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TRADING_ENQUEUE")
                 except Exception as e:
                     log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
                 
