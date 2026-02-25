@@ -4,6 +4,8 @@ import json
 import os
 from typing import Any, Dict, Iterable
 
+from short_pump.signals import Signal, format_tg
+
 
 def _emoji(side: str) -> str:
     return "🟥" if (side or "").strip().upper() == "SHORT" else "🟩"
@@ -77,36 +79,40 @@ def format_entry_ok(
     liq_long_usd_30s: Any = None,
     oi_change_fast_pct: Any = None,
     cvd_delta_ratio_30s: Any = None,
+    cvd_delta_ratio_1m: Any = None,
+    dist_to_peak_pct: Any = None,
+    stage: int | None = None,
     debug_payload: Any = None,
 ) -> str:
-    extra = f"type={entry_type} | " if entry_type else ""
-    header = f"{_emoji(side)} {side.upper()} | {strategy} | ENTRY_OK | {extra}sym={symbol}"
-    lines = [
-        header,
-        f"run_id={run_id} eid={_short_eid(event_id)}",
-        f"time={time_utc} price={_fmt_num(price)}",
-        f"entry={_fmt_num(entry_price)} tp={_fmt_num(tp_price)} ({_fmt_pct(tp_pct)}) sl={_fmt_num(sl_price)} ({_fmt_pct(sl_pct)})",
-    ]
     ctx_line = _compact_ctx(ctx_parts)
+    extras: Dict[str, Any] = {}
     if ctx_line:
-        lines.append(f"ctx={ctx_line}")
-    metrics = []
-    if liq_short_usd_30s is not None or liq_long_usd_30s is not None:
-        metrics.append(
-            f"liq_s_30s={_fmt_num(liq_short_usd_30s)} liq_l_30s={_fmt_num(liq_long_usd_30s)}"
-        )
-    if oi_change_fast_pct is not None:
-        metrics.append(f"oi_fast={_fmt_pct(oi_change_fast_pct)}")
-    if cvd_delta_ratio_30s is not None:
-        metrics.append(f"cvd_30s={_fmt_num(cvd_delta_ratio_30s, 3)}")
-    if metrics:
-        lines.append(" | ".join(metrics))
-    if context_score is not None:
-        lines.append(f"context_score={_fmt_num(context_score)}")
-    dbg = _maybe_debug_json("entry", debug_payload)
-    if dbg:
-        lines.append(dbg)
-    return "\n".join(lines)
+        extras["ctx_line"] = ctx_line
+    if os.getenv("TG_DEBUG_JSON") == "1":
+        extras["debug"] = debug_payload
+
+    sig = Signal(
+        strategy=strategy,
+        symbol=symbol,
+        side=side,
+        ts_utc=time_utc,
+        run_id=run_id,
+        event_id=event_id,
+        entry_price=float(entry_price) if entry_price is not None else None,
+        tp_price=float(tp_price) if tp_price is not None else None,
+        sl_price=float(sl_price) if sl_price is not None else None,
+        tp_pct=float(tp_pct) if tp_pct is not None else None,
+        sl_pct=float(sl_pct) if sl_pct is not None else None,
+        stage=stage,
+        dist_to_peak_pct=float(dist_to_peak_pct) if dist_to_peak_pct is not None else None,
+        context_score=float(context_score) if context_score is not None else None,
+        cvd_30s=float(cvd_delta_ratio_30s) if cvd_delta_ratio_30s is not None else None,
+        cvd_1m=float(cvd_delta_ratio_1m) if cvd_delta_ratio_1m is not None else None,
+        liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
+        liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
+        extras=extras,
+    )
+    return format_tg(sig)
 
 
 def format_fast0_entry_ok(
@@ -117,12 +123,33 @@ def format_fast0_entry_ok(
     context_score: Any,
     cvd_30s: Any,
     cvd_1m: Any,
+    liq_short_usd_30s: Any = None,
+    liq_long_usd_30s: Any = None,
+    ts_utc: str | None = None,
+    event_id: str | None = None,
 ) -> str:
-    return (
-        f"⚡ FAST0 ENTRY_OK | {symbol} | dist={_fmt_pct(dist_to_peak_pct)} | "
-        f"cs={_fmt_num(context_score)} | cvd30s={_fmt_num(cvd_30s, 3)} | "
-        f"cvd1m={_fmt_num(cvd_1m, 3)} | run_id={run_id}"
+    sig = Signal(
+        strategy="short_pump_fast0",
+        symbol=symbol,
+        side="SHORT",
+        ts_utc=ts_utc or "",
+        run_id=run_id,
+        event_id=event_id,
+        entry_price=None,
+        tp_price=None,
+        sl_price=None,
+        tp_pct=None,
+        sl_pct=None,
+        stage=None,
+        dist_to_peak_pct=float(dist_to_peak_pct) if dist_to_peak_pct is not None else None,
+        context_score=float(context_score) if context_score is not None else None,
+        cvd_30s=float(cvd_30s) if cvd_30s is not None else None,
+        cvd_1m=float(cvd_1m) if cvd_1m is not None else None,
+        liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
+        liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
+        extras={},
     )
+    return format_tg(sig)
 
 
 def format_outcome(
