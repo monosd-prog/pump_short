@@ -1,6 +1,7 @@
 """Trading runner: run_once consumes signals from queue, PAPER open, CSV log. CLI: python3 -m trading.runner --once."""
 from __future__ import annotations
 
+import argparse
 import csv
 import fcntl
 import logging
@@ -8,7 +9,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 # Ensure project root on path
 _ROOT = Path(__file__).resolve().parent.parent
@@ -18,9 +19,14 @@ if str(_ROOT) not in sys.path:
 from short_pump.signals import Signal
 
 from trading.config import (
+    EXECUTION_MODE,
     LEVERAGE,
     LOG_PATH,
+    MAX_CONCURRENT_TRADES,
+    MAX_DAILY_LOSS_USD,
+    MAX_LEVERAGE,
     MAX_OPEN_PER_STRATEGY,
+    MAX_RISK_USD_PER_TRADE,
     MAX_TOTAL_RISK_PCT,
     MODE,
     PAPER_EQUITY_USD,
@@ -31,17 +37,27 @@ from trading.config import (
     SIGNALS_QUEUE_PATH,
     STATE_PATH,
 )
-from trading.paper import simulate_open
+from trading.broker import get_broker
 from trading.risk import (
     calc_notional_usd,
+    calc_qty_and_notional_from_risk,
     calc_risk_usd,
     calc_stop_distance_pct,
+    risk_usd_for_live,
+    validate_notional_leverage,
     validate_stop_distance,
     can_open,
 )
 from trading.paper_outcome import close_on_timeout
 from trading.signal_io import signal_from_dict
-from trading.state import load_state, make_position_id, record_open, save_state
+from trading.state import (
+    count_open_positions,
+    get_daily_realized_pnl_usd,
+    load_state,
+    make_position_id,
+    record_open,
+    save_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +155,36 @@ def _dedupe_key(signal: Signal) -> str:
     return f"{signal.strategy}:{signal.run_id}:{getattr(signal, 'event_id', '') or ''}:{signal.symbol}"
 
 
+def _get_allowed_strategies() -> List[str]:
+    """Runtime list from STRATEGIES env (so CLI --strategies can override)."""
+    raw = os.getenv("STRATEGIES", "short_pump").strip()
+    out = [s.strip() for s in raw.split(",") if s.strip()]
+    return out if out else ["short_pump"]
+
+
+# Priority for multi-strategy selection: lower index = higher priority
+_STRATEGY_PRIORITY: dict[str, int] = {"short_pump_fast0": 0, "short_pump": 1}
+
+
+def _selection_key(signal: Signal) -> tuple:
+    """Sort key: priority (fast0 first), then context_score desc, dist_to_peak_pct desc, symbol asc."""
+    prio = _STRATEGY_PRIORITY.get(signal.strategy, 99)
+    ctx = getattr(signal, "context_score", None)
+    ctx_val = float(ctx) if ctx is not None else -1e9
+    dist = getattr(signal, "dist_to_peak_pct", None)
+    dist_val = float(dist) if dist is not None else -1e9
+    return (prio, -ctx_val, -dist_val, (signal.symbol or "").upper())
+
+
+def _pick_one_candidate(signals: List[Signal], allowed: List[str]) -> tuple[Optional[Signal], int]:
+    """Filter by allowed strategies, sort by priority + tie-breaks. Returns (picked signal, n_candidates)."""
+    candidates = [s for s in signals if (s.strategy or "").strip() in allowed]
+    if not candidates:
+        return None, 0
+    candidates.sort(key=_selection_key)
+    return candidates[0], len(candidates)
+
+
 def _append_trade_row(
     ts: str,
     strategy: str,
@@ -207,81 +253,148 @@ def _run_once_body() -> None:
         _finish_queue_processing(raw_lines)
         return
 
+    allowed = _get_allowed_strategies()
+    signal, n_candidates = _pick_one_candidate(signals, allowed)
+    if signal is None:
+        logger.debug("run_once: no candidates in allowed strategies %s", allowed)
+        _finish_queue_processing(raw_lines)
+        return
+
+    if n_candidates > 1:
+        logger.info(
+            "SELECTED_SIGNAL | picked_strategy=%s picked_symbol=%s n_candidates=%d",
+            signal.strategy, signal.symbol, n_candidates,
+        )
+
     try:
-        for signal in signals:
-            position_id = _dedupe_key(signal)
-            processed = last_signal_ids.get(signal.strategy) or []
-            if not isinstance(processed, list):
-                processed = [processed] if processed else []
-            if position_id in processed:
-                logger.debug("run_once: dedupe skip strategy=%s position_id=%s", signal.strategy, position_id)
-                continue
+        position_id = _dedupe_key(signal)
+        processed = last_signal_ids.get(signal.strategy) or []
+        if not isinstance(processed, list):
+            processed = [processed] if processed else []
+        if position_id in processed:
+            logger.debug("run_once: dedupe skip strategy=%s position_id=%s", signal.strategy, position_id)
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
 
-            entry = signal.entry_price
-            tp = signal.tp_price
-            sl = signal.sl_price
-            if entry is None or tp is None or sl is None:
-                logger.warning(
-                    "run_once: skip missing entry/tp/sl strategy=%s symbol=%s entry=%s tp=%s sl=%s",
-                    signal.strategy, signal.symbol, entry, tp, sl,
+        entry = signal.entry_price
+        tp = signal.tp_price
+        sl = signal.sl_price
+        if entry is None or tp is None or sl is None:
+            logger.warning(
+                "run_once: skip missing entry/tp/sl strategy=%s symbol=%s entry=%s tp=%s sl=%s",
+                signal.strategy, signal.symbol, entry, tp, sl,
+            )
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
+
+        entry_f = float(entry)
+        sl_f = float(sl)
+        risk_usd = calc_risk_usd(equity, RISK_PCT)
+        stop_distance_pct = calc_stop_distance_pct(entry_f, sl_f)
+        ok, reason = validate_stop_distance(stop_distance_pct)
+        if not ok:
+            logger.warning("run_once: reject stop_distance strategy=%s %s", signal.strategy, reason)
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
+
+        if EXECUTION_MODE == "live":
+            risk_usd = risk_usd_for_live(equity)
+            _qty, notional_usd = calc_qty_and_notional_from_risk(risk_usd, entry_f, sl_f)
+            ok_lev, reason_lev = validate_notional_leverage(notional_usd, equity, MAX_LEVERAGE)
+            if not ok_lev:
+                logger.info(
+                    "LIVE_REJECTED | reason=%s strategy=%s symbol=%s",
+                    reason_lev, signal.strategy, signal.symbol,
                 )
-                continue
-
-            entry_f = float(entry)
-            sl_f = float(sl)
-            risk_usd = calc_risk_usd(equity, RISK_PCT)
-            stop_distance_pct = calc_stop_distance_pct(entry_f, sl_f)
-            ok, reason = validate_stop_distance(stop_distance_pct)
-            if not ok:
-                logger.warning("run_once: reject stop_distance strategy=%s %s", signal.strategy, reason)
-                continue
-
+                _finish_queue_processing(raw_lines)
+                save_state(state)
+                return
+            leverage_use = min(LEVERAGE, MAX_LEVERAGE)
+            today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            daily_pnl = get_daily_realized_pnl_usd(state, today_utc)
+            if daily_pnl <= -MAX_DAILY_LOSS_USD:
+                logger.info(
+                    "LIVE_BLOCKED_DAILY_LOSS | daily_pnl=%.2f limit=%.2f",
+                    daily_pnl, -MAX_DAILY_LOSS_USD,
+                )
+                _finish_queue_processing(raw_lines)
+                save_state(state)
+                return
+            if count_open_positions(state, None) >= MAX_CONCURRENT_TRADES:
+                logger.info(
+                    "LIVE_REJECTED | reason=max_concurrent_trades strategy=%s symbol=%s",
+                    signal.strategy, signal.symbol,
+                )
+                _finish_queue_processing(raw_lines)
+                save_state(state)
+                return
+        else:
             if not can_open(signal.strategy, state, equity, RISK_PCT, MAX_TOTAL_RISK_PCT):
                 logger.info("run_once: can_open=false strategy=%s", signal.strategy)
-                continue
-
+                _finish_queue_processing(raw_lines)
+                save_state(state)
+                return
+            risk_usd = calc_risk_usd(equity, RISK_PCT)
             notional_usd = calc_notional_usd(risk_usd, stop_distance_pct)
+            leverage_use = LEVERAGE
 
-            if MODE == "paper":
-                position = simulate_open(
-                    signal,
-                    qty_notional_usd=notional_usd,
-                    risk_usd=risk_usd,
-                    leverage=LEVERAGE,
-                    opened_ts=signal.ts_utc or "",
-                )
-                pid = record_open(state, position)
-                if pid:
-                    lst = last_signal_ids.setdefault(signal.strategy, [])
-                    if not isinstance(lst, list):
-                        lst = [lst] if lst else []
-                    if pid not in lst:
-                        lst.append(pid)
-                    last_signal_ids[signal.strategy] = lst
-                _append_trade_row(
-                    ts=signal.ts_utc or "",
-                    strategy=signal.strategy,
-                    symbol=signal.symbol,
-                    side=signal.side or "SHORT",
-                    entry=entry_f,
-                    tp=float(tp),
-                    sl=sl_f,
-                    notional_usd=notional_usd,
-                    risk_usd=risk_usd,
-                    stop_pct=stop_distance_pct,
-                    run_id=signal.run_id or "",
-                    event_id=str(signal.event_id or ""),
-                    volume_1m=getattr(signal, "volume_1m", None),
-                    volume_sma_20=getattr(signal, "volume_sma_20", None),
-                    volume_zscore_20=getattr(signal, "volume_zscore_20", None),
-                )
+        broker = get_broker(EXECUTION_MODE)
+        position = broker.open_position(
+            signal,
+            qty_notional_usd=notional_usd,
+            risk_usd=risk_usd,
+            leverage=leverage_use,
+            opened_ts=signal.ts_utc or "",
+        )
+        if position is None:
+            if EXECUTION_MODE == "live":
                 logger.info(
-                    "run_once: PAPER open strategy=%s symbol=%s position_id=%s entry=%.4f notional=%.2f risk_usd=%.2f",
-                    signal.strategy, signal.symbol, pid or position_id, entry_f, notional_usd, risk_usd,
+                    "LIVE_REJECTED | reason=broker strategy=%s symbol=%s",
+                    signal.strategy, signal.symbol,
                 )
-            else:
-                # TODO: live adapter place order, then record_open when fill
-                logger.warning("run_once: MODE=%s not implemented, skip", MODE)
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
+        if EXECUTION_MODE == "live":
+            logger.info(
+                "LIVE_ACCEPTED | strategy=%s symbol=%s position_id=%s entry=%.4f notional=%.2f risk_usd=%.2f",
+                signal.strategy, signal.symbol,
+                make_position_id(signal.strategy, signal.run_id or "", str(signal.event_id or ""), signal.symbol),
+                float(position.get("entry", entry_f)), notional_usd, risk_usd,
+            )
+        pid = record_open(state, position)
+        if pid:
+            lst = last_signal_ids.setdefault(signal.strategy, [])
+            if not isinstance(lst, list):
+                lst = [lst] if lst else []
+            if pid not in lst:
+                lst.append(pid)
+            last_signal_ids[signal.strategy] = lst
+        entry_log = float(position.get("entry", entry_f))
+        _append_trade_row(
+            ts=signal.ts_utc or "",
+            strategy=signal.strategy,
+            symbol=signal.symbol,
+            side=signal.side or "SHORT",
+            entry=entry_log,
+            tp=float(position.get("tp", tp)),
+            sl=float(position.get("sl", sl_f)),
+            notional_usd=notional_usd,
+            risk_usd=risk_usd,
+            stop_pct=stop_distance_pct,
+            run_id=position.get("run_id", signal.run_id or ""),
+            event_id=str(position.get("event_id", signal.event_id or "")),
+            volume_1m=getattr(signal, "volume_1m", None),
+            volume_sma_20=getattr(signal, "volume_sma_20", None),
+            volume_zscore_20=getattr(signal, "volume_zscore_20", None),
+        )
+        logger.info(
+            "run_once: open strategy=%s symbol=%s position_id=%s entry=%.4f notional=%.2f risk_usd=%.2f",
+            signal.strategy, signal.symbol, pid or position_id, entry_log, notional_usd, risk_usd,
+        )
 
         save_state(state)
     finally:
@@ -290,10 +403,21 @@ def _run_once_body() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
-    if "--once" in sys.argv:
+    parser = argparse.ArgumentParser(description="Trading runner: consume signals, open paper/live positions")
+    parser.add_argument("--once", action="store_true", help="Run one iteration and exit")
+    parser.add_argument(
+        "--strategies",
+        type=str,
+        default=None,
+        help='Comma-separated strategies (e.g. "short_pump,short_pump_fast0"). Overrides env STRATEGIES.',
+    )
+    args = parser.parse_args()
+    if args.strategies is not None:
+        os.environ["STRATEGIES"] = args.strategies
+    if args.once:
         run_once()
     else:
-        print("Usage: python3 -m trading.runner --once")
+        print("Usage: python3 -m trading.runner --once [--strategies short_pump,short_pump_fast0]")
         sys.exit(1)
 
 

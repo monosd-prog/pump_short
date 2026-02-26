@@ -184,6 +184,22 @@ Defaults:
 
 ---
 
+## Paper execution (Variant #3)
+
+Execution can be **paper** (simulated fills + gating) or **live** (exchange orders). Default is paper.
+
+- **Configure:** `EXECUTION_MODE=paper` (default) or `EXECUTION_MODE=live`. Optional: `PAPER_FEE_BPS=6`, `PAPER_SLIPPAGE_BPS=2`.
+- **Gating:**  
+  - **short_pump:** trade only if `stage==4` and `dist_to_peak_pct >= 3.5` (same as ACTIVE MODE in reports).  
+  - **short_pump_fast0:** trade only if `liq_long_usd_30s > 0`.  
+  All other entries are rejected and logged with reason.
+- **Run runner:** `python3 -m trading.runner --once` (consumes queue, applies gating, opens paper positions, logs to `trading_trades.csv` and state). Paper outcomes are written to `datasets/date=.../strategy=.../outcomes_v3.csv` so analytics stays identical.
+- **Dry-run (gating only, no open):**  
+  `python3 scripts/run_paper_dry_run.py --root /path/to/datasets --minutes 60`  
+  Prints accepted/rejected counts by reason. Use `--events /path/to/events_v3.csv` to point at a single file.
+
+---
+
 ## Конфигурация (.env)
 
 Пример:

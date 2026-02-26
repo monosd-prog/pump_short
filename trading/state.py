@@ -143,6 +143,43 @@ def record_open(state: dict[str, Any], position: dict[str, Any]) -> str | None:
     return pid
 
 
+def _date_from_ts_utc(ts_utc: str) -> str:
+    """Extract YYYY-MM-DD from ts_utc (ISO or space-separated)."""
+    if not ts_utc or not str(ts_utc).strip():
+        return ""
+    s = str(ts_utc).strip()
+    if "T" in s:
+        part = s.split("T")[0]
+    elif " " in s:
+        part = s.split(" ")[0]
+    else:
+        part = s[:10]
+    if len(part) >= 10 and part[4] == "-" and part[7] == "-":
+        return part[:10]
+    return ""
+
+
+def get_daily_realized_pnl_usd(state: dict[str, Any], date_utc: str) -> float:
+    """Cumulative realized PnL in USD for the given UTC date (YYYY-MM-DD)."""
+    daily = state.get("daily_realized_pnl_usd") or {}
+    if not isinstance(daily, dict):
+        return 0.0
+    return float(daily.get(date_utc, 0) or 0)
+
+
+def update_daily_pnl(state: dict[str, Any], ts_utc: str, pnl_usd: float) -> None:
+    """Add pnl_usd to daily_realized_pnl_usd for the date in ts_utc."""
+    date_key = _date_from_ts_utc(ts_utc)
+    if not date_key:
+        return
+    state.setdefault("daily_realized_pnl_usd", {})
+    if not isinstance(state["daily_realized_pnl_usd"], dict):
+        state["daily_realized_pnl_usd"] = {}
+    state["daily_realized_pnl_usd"][date_key] = (
+        state["daily_realized_pnl_usd"].get(date_key, 0) + pnl_usd
+    )
+
+
 def record_close(
     state: dict[str, Any],
     strategy: str,
@@ -160,6 +197,7 @@ def record_close(
         del strat_pos[position_id]
         if not strat_pos:
             op.pop(strategy, None)
+    update_daily_pnl(state, ts_utc, pnl_usd)
     logger.info(
         "record_close | strategy=%s position_id=%s reason=%s exit=%.4f pnl_r=%.2f pnl_usd=%.2f ts=%s",
         strategy, position_id, close_reason, exit_price, pnl_r, pnl_usd, ts_utc,

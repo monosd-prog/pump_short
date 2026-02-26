@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import shutil
 import time
@@ -9,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from trading.config import CLOSES_PATH, POSITION_TTL_SECONDS, TIMEOUT_EXIT_MODE
+from trading.config import CLOSES_PATH, DATASET_BASE_DIR, POSITION_TTL_SECONDS, TIMEOUT_EXIT_MODE
 from trading.paper import simulate_close
 from trading.state import load_state, make_position_id, record_close, save_state
 
@@ -258,7 +259,93 @@ def close_from_outcome(
         "close_from_outcome: closed strategy=%s symbol=%s position_id=%s reason=%s exit=%.4f pnl_r=%.2f pnl_usd=%.2f",
         strategy, symbol, position_id, close_reason, exit_price, pnl_r, pnl_usd,
     )
+    _write_paper_outcome_to_datasets(
+        position, close_reason, exit_price, pnl_r, ts_utc,
+        mfe_pct=outcome_meta.get("mfe_pct") if outcome_meta else None,
+        mae_pct=outcome_meta.get("mae_pct") if outcome_meta else None,
+    )
     return True
+
+
+def _hold_seconds(opened_ts: str, outcome_ts_utc: str) -> float:
+    """Compute hold duration in seconds. Returns 0 if parse fails."""
+    open_dt = _parse_opened_ts(opened_ts)
+    out_dt = _parse_opened_ts(outcome_ts_utc)
+    if open_dt is None or out_dt is None:
+        return 0.0
+    return max(0.0, (out_dt - open_dt).total_seconds())
+
+
+def _write_paper_outcome_to_datasets(
+    position: dict[str, Any],
+    close_reason: str,
+    exit_price: float,
+    pnl_r: float,
+    outcome_ts_utc: str,
+    mfe_pct: Optional[float] = None,
+    mae_pct: Optional[float] = None,
+    base_dir: Optional[str] = None,
+) -> None:
+    """Write paper close to datasets/outcomes_v3.csv so analytics stays identical to live."""
+    try:
+        from common.outcome_tracker import build_outcome_row
+        from common.io_dataset import write_outcome_row
+    except ImportError:
+        logger.debug("write_paper_outcome_to_datasets: skip (no common.outcome_tracker/io_dataset)")
+        return
+    strategy = position.get("strategy", "")
+    symbol = position.get("symbol", "")
+    side = (position.get("side") or "SHORT").strip()
+    entry = float(position.get("entry", 0))
+    sl = float(position.get("sl", 0))
+    run_id = position.get("run_id", "")
+    event_id = (position.get("event_id") or "") or ""
+    trade_id = position.get("trade_id") or make_position_id(strategy, run_id, event_id, symbol)
+    mode = position.get("mode", "live")
+    opened_ts = position.get("opened_ts", "")
+    hold_sec = _hold_seconds(opened_ts, outcome_ts_utc)
+    if entry <= 0:
+        return
+    if side.upper() == "SHORT":
+        pnl_pct = (entry - exit_price) / entry * 100.0
+    else:
+        pnl_pct = (exit_price - entry) / entry * 100.0
+    outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "TIMEOUT")
+    summary = {
+        "end_reason": outcome_str,
+        "outcome": outcome_str,
+        "pnl_pct": pnl_pct,
+        "hold_seconds": hold_sec,
+        "mae_pct": float(mae_pct) if mae_pct is not None else 0.0,
+        "mfe_pct": float(mfe_pct) if mfe_pct is not None else 0.0,
+        "entry_price": entry,
+        "tp_price": position.get("tp"),
+        "sl_price": sl,
+        "exit_price": exit_price,
+        "trade_type": "PAPER",
+        "details_payload": json.dumps({"timeout": close_reason == "timeout", "tp_hit": close_reason == "tp", "sl_hit": close_reason == "sl"}),
+    }
+    orow = build_outcome_row(
+        summary,
+        trade_id=trade_id,
+        event_id=event_id,
+        run_id=run_id,
+        symbol=symbol,
+        strategy=strategy,
+        mode=mode,
+        side=side,
+        outcome_time_utc=outcome_ts_utc,
+    )
+    if orow:
+        write_outcome_row(
+            orow,
+            strategy=strategy,
+            mode=mode,
+            wall_time_utc=outcome_ts_utc,
+            schema_version=3,
+            base_dir=base_dir or DATASET_BASE_DIR,
+        )
+        logger.debug("write_paper_outcome_to_datasets: wrote trade_id=%s outcome=%s", trade_id, outcome_str)
 
 
 def _parse_opened_ts(opened_ts: str) -> datetime | None:
@@ -353,6 +440,10 @@ def close_on_timeout(
             logger.info(
                 "close_on_timeout: closed strategy=%s symbol=%s position_id=%s age_sec=%.0f exit_mode=%s pnl_r=%.2f",
                 strategy, position.get("symbol", ""), position_id, age_sec, exit_mode, pnl_r,
+            )
+            _write_paper_outcome_to_datasets(
+                position, "timeout", exit_price, pnl_r, ts_str,
+                mfe_pct=0.0, mae_pct=0.0,
             )
             any_closed = True
 

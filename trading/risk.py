@@ -5,7 +5,9 @@ import logging
 from typing import Any
 
 from trading.config import (
+    MAX_LEVERAGE,
     MAX_OPEN_PER_STRATEGY,
+    MAX_RISK_USD_PER_TRADE,
     MAX_TOTAL_RISK_PCT,
     RISK_PCT,
     STOP_DISTANCE_MAX_PCT,
@@ -40,6 +42,41 @@ def calc_margin_usd(notional_usd: float, leverage: int) -> float:
     if leverage <= 0:
         return 0.0
     return notional_usd / leverage
+
+
+def calc_qty_and_notional_from_risk(risk_usd: float, entry_price: float, sl_price: float) -> tuple[float, float]:
+    """
+    Position size from risk and SL distance: qty = risk_usd / abs(entry - sl), notional = qty * entry.
+    Returns (qty, notional_usd). Returns (0, 0) if entry/sl invalid.
+    """
+    if entry_price <= 0:
+        return 0.0, 0.0
+    sl_dist = abs(entry_price - sl_price)
+    if sl_dist < 1e-12:
+        return 0.0, 0.0
+    qty = risk_usd / sl_dist
+    notional_usd = qty * entry_price
+    return qty, notional_usd
+
+
+def validate_notional_leverage(
+    notional_usd: float,
+    equity_usd: float,
+    leverage: int,
+) -> tuple[bool, str]:
+    """True if notional <= equity * leverage (max exposure). Else (False, reason)."""
+    if equity_usd <= 0 or leverage <= 0:
+        return False, "invalid equity or leverage"
+    max_notional = equity_usd * leverage
+    if notional_usd > max_notional:
+        return False, f"notional {notional_usd:.2f} > max {max_notional:.2f} (equity*leverage)"
+    return True, ""
+
+
+def risk_usd_for_live(equity: float) -> float:
+    """Risk per trade for LIVE: cap at MAX_RISK_USD_PER_TRADE."""
+    from_pct = equity * RISK_PCT
+    return min(from_pct, MAX_RISK_USD_PER_TRADE) if MAX_RISK_USD_PER_TRADE > 0 else from_pct
 
 
 def validate_stop_distance(stop_distance_pct: float) -> tuple[bool, str]:
