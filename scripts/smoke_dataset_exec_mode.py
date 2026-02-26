@@ -1,6 +1,8 @@
-"""Smoke: dataset path contains mode=<exec_mode> (paper/live) from EXECUTION_MODE."""
+"""Smoke: dataset path contains mode=<exec_mode> (paper/live) from EXECUTION_MODE; source_mode=exec_mode in CSV."""
 from __future__ import annotations
 
+import csv
+import json
 import os
 import sys
 import tempfile
@@ -56,6 +58,25 @@ def main() -> None:
             f"EXECUTION_MODE=paper must not write under mode=live; found: {live_under_mode_live}"
         )
         print("OK: no files under .../mode=live/ when exec_mode=paper")
+
+        # --- 2b) In mode=paper dir, CSV source_mode must be paper (no source_mode=live)
+        for ev_file in Path(path_paper).glob("events*.csv"):
+            with open(ev_file, encoding="utf-8") as f:
+                r = csv.DictReader(f)
+                for row in r:
+                    sm = row.get("source_mode", "")
+                    assert sm == "paper", (
+                        f"EXECUTION_MODE=paper must not have source_mode=live in CSV; "
+                        f"found source_mode={sm!r} in {ev_file}"
+                    )
+                    # signal_source_mode (original) preserved in payload_json
+                    pj = row.get("payload_json", "{}")
+                    try:
+                        p = json.loads(pj)
+                        assert p.get("signal_source_mode") == "live", f"expected signal_source_mode=live in {pj}"
+                    except json.JSONDecodeError:
+                        pass
+        print("OK: no source_mode=live in mode=paper CSV when exec_mode=paper; signal_source_mode in payload")
 
         # Live path assert
         os.environ["EXECUTION_MODE"] = "live"

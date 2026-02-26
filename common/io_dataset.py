@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 from datetime import datetime
@@ -20,6 +21,18 @@ from common.dataset_schema import (
     normalize_trade_v2,
     normalize_trade_v3,
 )
+
+
+def _inject_signal_source_mode(payload_json_str: str, signal_source_mode: str) -> str:
+    """Add signal_source_mode to payload_json; keep existing keys (e.g. source, pump_webhook)."""
+    try:
+        payload = json.loads(payload_json_str) if payload_json_str else {}
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    payload["signal_source_mode"] = signal_source_mode
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _get_exec_mode() -> str:
@@ -122,9 +135,11 @@ def write_event_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
-    """mode = source_mode (live/FAST0/ARMED); path uses exec_mode (paper|live). Row gets mode=exec_mode, source_mode=passed mode."""
+    """mode = signal source (live/FAST0/ARMED); path uses exec_mode. CSV source_mode=exec_mode; original in payload_json.signal_source_mode."""
     exec_mode = _get_exec_mode()
-    row = {**row, "mode": exec_mode, "source_mode": mode}
+    payload_raw = row.get("entry_payload") or row.get("payload_json") or "{}"
+    payload_json = _inject_signal_source_mode(payload_raw, mode)
+    row = {**row, "mode": exec_mode, "source_mode": exec_mode, "payload_json": payload_json}
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
     if schema_version == 3:
         path = os.path.join(dir_path, "events_v3.csv")
@@ -152,6 +167,7 @@ def write_trade_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
+    """CSV source_mode=exec_mode; signal source (live/FAST0/ARMED) in details if needed."""
     exec_mode = _get_exec_mode()
     row = {
         "trade_type": row.get("trade_type", ""),
@@ -160,7 +176,7 @@ def write_trade_row(
         "paper_tp_price": row.get("paper_tp_price", ""),
         "paper_sl_price": row.get("paper_sl_price", ""),
         "mode": exec_mode,
-        "source_mode": mode,
+        "source_mode": exec_mode,
         **row,
     }
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
@@ -190,12 +206,13 @@ def write_outcome_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
+    """CSV source_mode=exec_mode; signal source in details_json if needed."""
     exec_mode = _get_exec_mode()
     row = {
         "trade_type": row.get("trade_type", ""),
         "details_payload": row.get("details_payload", ""),
         "mode": exec_mode,
-        "source_mode": mode,
+        "source_mode": exec_mode,
         **row,
     }
     if not row.get("outcome_time_utc"):
