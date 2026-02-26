@@ -12,7 +12,7 @@ _repo_root = Path(__file__).resolve().parents[1]
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from common.io_dataset import get_dataset_dir, write_event_row
+from common.io_dataset import get_dataset_dir, write_event_row, write_outcome_row, write_trade_row
 
 
 def main() -> None:
@@ -48,9 +48,51 @@ def main() -> None:
                 "payload_json": "{}",
             },
             strategy=strategy,
-            mode="live",  # source_mode; path must still be mode=paper
+            mode="live",  # signal source; path + CSV mode/source_mode = paper
             wall_time_utc=wall_time_utc,
             base_dir=base,
+        )
+        write_trade_row(
+            {
+                "trade_id": "smoke_trade_1",
+                "event_id": "evt_smoke_1",
+                "run_id": "smoke_exec_mode",
+                "symbol": "BTCUSDT",
+                "strategy": strategy,
+                "side": "SHORT",
+                "entry_time_utc": wall_time_utc,
+                "entry_price": 1000.0,
+                "tp_price": 994.0,
+                "sl_price": 1006.0,
+                "trade_type": "PAPER",
+            },
+            strategy=strategy,
+            mode="live",
+            wall_time_utc=wall_time_utc,
+            base_dir=base,
+            schema_version=3,
+        )
+        write_outcome_row(
+            {
+                "trade_id": "smoke_trade_1",
+                "event_id": "evt_smoke_1",
+                "run_id": "smoke_exec_mode",
+                "symbol": "BTCUSDT",
+                "strategy": strategy,
+                "side": "SHORT",
+                "outcome_time_utc": wall_time_utc,
+                "outcome": "TP",
+                "pnl_pct": 0.6,
+                "hold_seconds": 120.0,
+                "mae_pct": 0.0,
+                "mfe_pct": 0.7,
+                "details_json": "{}",
+            },
+            strategy=strategy,
+            mode="live",
+            wall_time_utc=wall_time_utc,
+            base_dir=base,
+            schema_version=3,
         )
         live_files = list(Path(base).rglob("*"))
         live_under_mode_live = [p for p in live_files if "mode=live" in p.parts]
@@ -77,6 +119,24 @@ def main() -> None:
                     except json.JSONDecodeError:
                         pass
         print("OK: no source_mode=live in mode=paper CSV when exec_mode=paper; signal_source_mode in payload")
+
+        # --- 2c) trades_v3.csv and outcomes_v3.csv: mode=paper, source_mode=paper when exec_mode=paper
+        for csv_name in ("trades_v3.csv", "outcomes_v3.csv"):
+            csv_path = Path(path_paper) / csv_name
+            if not csv_path.exists():
+                continue
+            with open(csv_path, encoding="utf-8") as f:
+                r = csv.DictReader(f)
+                for row in r:
+                    m = row.get("mode", "")
+                    sm = row.get("source_mode", "")
+                    assert m == "paper", (
+                        f"EXECUTION_MODE=paper: {csv_name} must have mode=paper; found mode={m!r}"
+                    )
+                    assert sm == "paper", (
+                        f"EXECUTION_MODE=paper: {csv_name} must have source_mode=paper; found source_mode={sm!r}"
+                    )
+        print("OK: trades_v3.csv and outcomes_v3.csv have mode=paper, source_mode=paper when exec_mode=paper")
 
         # Live path assert
         os.environ["EXECUTION_MODE"] = "live"

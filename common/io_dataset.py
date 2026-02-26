@@ -167,7 +167,7 @@ def write_trade_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
-    """CSV source_mode=exec_mode; signal source (live/FAST0/ARMED) in details if needed."""
+    """CSV mode=exec_mode, source_mode=exec_mode; signal source in details if needed."""
     exec_mode = _get_exec_mode()
     row = {
         "trade_type": row.get("trade_type", ""),
@@ -175,9 +175,9 @@ def write_trade_row(
         "paper_entry_price": row.get("paper_entry_price", ""),
         "paper_tp_price": row.get("paper_tp_price", ""),
         "paper_sl_price": row.get("paper_sl_price", ""),
+        **row,
         "mode": exec_mode,
         "source_mode": exec_mode,
-        **row,
     }
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
     if schema_version == 3:
@@ -206,14 +206,14 @@ def write_outcome_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
-    """CSV source_mode=exec_mode; signal source in details_json if needed."""
+    """CSV mode=exec_mode, source_mode=exec_mode; signal source in details_json if needed."""
     exec_mode = _get_exec_mode()
     row = {
         "trade_type": row.get("trade_type", ""),
         "details_payload": row.get("details_payload", ""),
+        **row,
         "mode": exec_mode,
         "source_mode": exec_mode,
-        **row,
     }
     if not row.get("outcome_time_utc"):
         row["outcome_time_utc"] = wall_time_utc
