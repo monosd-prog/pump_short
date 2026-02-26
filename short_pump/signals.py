@@ -24,6 +24,9 @@ class Signal:
     cvd_1m: Optional[float]
     liq_long_usd_30s: Optional[float]
     liq_short_usd_30s: Optional[float]
+    volume_1m: Optional[float] = None
+    volume_sma_20: Optional[float] = None
+    volume_zscore_20: Optional[float] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 
 

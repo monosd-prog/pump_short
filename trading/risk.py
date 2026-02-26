@@ -11,6 +11,7 @@ from trading.config import (
     STOP_DISTANCE_MAX_PCT,
     STOP_DISTANCE_MIN_PCT,
 )
+from trading.state import count_open_positions, total_risk_usd
 
 logger = logging.getLogger(__name__)
 
@@ -58,23 +59,20 @@ def can_open(
     max_total_risk_pct: float,
 ) -> bool:
     """
-    True if we can open a new position: max 1 per strategy and total risk cap.
-    total_risk = risk_pct * equity * num_open_positions must not exceed max_total_risk_pct * equity.
+    True if we can open a new position:
+    - count of open positions for strategy < MAX_OPEN_PER_STRATEGY
+    - total risk_usd across ALL positions + new risk <= max_total_risk_pct * equity
     """
-    open_positions = state.get("open_positions") or {}
-    if strategy in open_positions:
-        logger.debug("can_open=false: strategy=%s already has open position", strategy)
+    n_for_strategy = count_open_positions(state, strategy)
+    if n_for_strategy >= MAX_OPEN_PER_STRATEGY:
+        logger.debug("can_open=false: strategy=%s count=%d >= MAX_OPEN_PER_STRATEGY=%d", strategy, n_for_strategy, MAX_OPEN_PER_STRATEGY)
         return False
-    n_open = len(open_positions)
-    if n_open >= 1 and MAX_OPEN_PER_STRATEGY == 1:
-        # We allow multiple strategies but 1 per strategy; so we only block if this strategy is open
-        pass
-    total_risk_current = n_open * risk_pct * equity
-    total_risk_after = (n_open + 1) * risk_pct * equity
-    if total_risk_after > max_total_risk_pct * equity:
+    total_risk = total_risk_usd(state)
+    new_risk = risk_pct * equity
+    if total_risk + new_risk > max_total_risk_pct * equity:
         logger.debug(
-            "can_open=false: total_risk_after %.2f > max %.2f",
-            total_risk_after, max_total_risk_pct * equity,
+            "can_open=false: total_risk %.2f + new %.2f > max %.2f",
+            total_risk, new_risk, max_total_risk_pct * equity,
         )
         return False
     return True

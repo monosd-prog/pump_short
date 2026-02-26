@@ -129,6 +129,9 @@ def build_fast0_signal(
     entry_price: Any = None,
     tp_price: Any = None,
     sl_price: Any = None,
+    volume_1m: Any = None,
+    volume_sma_20: Any = None,
+    volume_zscore_20: Any = None,
 ) -> Signal:
     """Build Signal for fast0 ENTRY_OK. entry/tp/sl optional (runner will skip if missing); still enqueue."""
     return Signal(
@@ -150,6 +153,9 @@ def build_fast0_signal(
         cvd_1m=float(cvd_1m) if cvd_1m is not None else None,
         liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
         liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
+        volume_1m=float(volume_1m) if volume_1m is not None else None,
+        volume_sma_20=float(volume_sma_20) if volume_sma_20 is not None else None,
+        volume_zscore_20=float(volume_zscore_20) if volume_zscore_20 is not None else None,
         extras={},
     )
 

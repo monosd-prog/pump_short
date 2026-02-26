@@ -41,7 +41,7 @@ from trading.risk import (
 )
 from trading.paper_outcome import close_on_timeout
 from trading.signal_io import signal_from_dict
-from trading.state import has_open_position, load_state, record_open, save_state
+from trading.state import load_state, make_position_id, record_open, save_state
 
 logger = logging.getLogger(__name__)
 
@@ -152,19 +152,27 @@ def _append_trade_row(
     stop_pct: float,
     run_id: str,
     event_id: str,
+    volume_1m: float | None = None,
+    volume_sma_20: float | None = None,
+    volume_zscore_20: float | None = None,
 ) -> None:
     _ensure_dir(LOG_PATH)
     file_exists = Path(LOG_PATH).exists()
+    v1 = f"{volume_1m:.2f}" if volume_1m is not None else ""
+    v20 = f"{volume_sma_20:.2f}" if volume_sma_20 is not None else ""
+    vz = f"{volume_zscore_20:.2f}" if volume_zscore_20 is not None else ""
     with open(LOG_PATH, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if not file_exists:
             w.writerow([
                 "ts", "strategy", "symbol", "side", "entry", "tp", "sl",
                 "notional_usd", "risk_usd", "stop_pct", "run_id", "event_id",
+                "volume_1m", "volume_sma_20", "volume_zscore_20",
             ])
         w.writerow([
             ts, strategy, symbol, side, f"{entry:.6f}", f"{tp:.6f}", f"{sl:.6f}",
             f"{notional_usd:.2f}", f"{risk_usd:.2f}", f"{stop_pct:.6f}", run_id, event_id or "",
+            v1, v20, vz,
         ])
 
 
@@ -201,9 +209,12 @@ def _run_once_body() -> None:
 
     try:
         for signal in signals:
-            dedupe_key = _dedupe_key(signal)
-            if last_signal_ids.get(signal.strategy) == dedupe_key:
-                logger.debug("run_once: dedupe skip strategy=%s key=%s", signal.strategy, dedupe_key)
+            position_id = _dedupe_key(signal)
+            processed = last_signal_ids.get(signal.strategy) or []
+            if not isinstance(processed, list):
+                processed = [processed] if processed else []
+            if position_id in processed:
+                logger.debug("run_once: dedupe skip strategy=%s position_id=%s", signal.strategy, position_id)
                 continue
 
             entry = signal.entry_price
@@ -229,10 +240,6 @@ def _run_once_body() -> None:
                 logger.info("run_once: can_open=false strategy=%s", signal.strategy)
                 continue
 
-            if has_open_position(state, signal.strategy):
-                logger.info("run_once: already open strategy=%s", signal.strategy)
-                continue
-
             notional_usd = calc_notional_usd(risk_usd, stop_distance_pct)
 
             if MODE == "paper":
@@ -243,8 +250,14 @@ def _run_once_body() -> None:
                     leverage=LEVERAGE,
                     opened_ts=signal.ts_utc or "",
                 )
-                record_open(state, position)
-                last_signal_ids[signal.strategy] = dedupe_key
+                pid = record_open(state, position)
+                if pid:
+                    lst = last_signal_ids.setdefault(signal.strategy, [])
+                    if not isinstance(lst, list):
+                        lst = [lst] if lst else []
+                    if pid not in lst:
+                        lst.append(pid)
+                    last_signal_ids[signal.strategy] = lst
                 _append_trade_row(
                     ts=signal.ts_utc or "",
                     strategy=signal.strategy,
@@ -258,10 +271,13 @@ def _run_once_body() -> None:
                     stop_pct=stop_distance_pct,
                     run_id=signal.run_id or "",
                     event_id=str(signal.event_id or ""),
+                    volume_1m=getattr(signal, "volume_1m", None),
+                    volume_sma_20=getattr(signal, "volume_sma_20", None),
+                    volume_zscore_20=getattr(signal, "volume_zscore_20", None),
                 )
                 logger.info(
-                    "run_once: PAPER open strategy=%s symbol=%s entry=%.4f notional=%.2f risk_usd=%.2f",
-                    signal.strategy, signal.symbol, entry_f, notional_usd, risk_usd,
+                    "run_once: PAPER open strategy=%s symbol=%s position_id=%s entry=%.4f notional=%.2f risk_usd=%.2f",
+                    signal.strategy, signal.symbol, pid or position_id, entry_f, notional_usd, risk_usd,
                 )
             else:
                 # TODO: live adapter place order, then record_open when fill
