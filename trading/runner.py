@@ -238,7 +238,22 @@ def run_once() -> None:
                 pass
 
 
+def _fmt_opt(val: Optional[float | int], fmt: str = "%s") -> str:
+    """Format optional value for journald log; use N/A if None."""
+    if val is None:
+        return "N/A"
+    try:
+        return fmt % (val,) if "%" in fmt else str(val)
+    except (TypeError, ValueError):
+        return str(val) if val is not None else "N/A"
+
+
 def _run_once_body() -> None:
+    ts_iso = datetime.now(timezone.utc).isoformat()
+    allowed = _get_allowed_strategies()
+    strategies_str = ",".join(allowed)
+    print(f"RUNNER_TICK | mode={EXECUTION_MODE} strategies={strategies_str} ts={ts_iso}", flush=True)
+
     state = load_state()
     equity = PAPER_EQUITY_USD
     last_signal_ids = state.setdefault("last_signal_ids", {})
@@ -248,17 +263,33 @@ def _run_once_body() -> None:
         save_state(state)
 
     signals, raw_lines = get_latest_signals()
-    if not signals:
-        logger.debug("run_once: no signals")
-        _finish_queue_processing(raw_lines)
-        return
+    n_signals = len(signals)
+    if signals:
+        signal, n_candidates = _pick_one_candidate(signals, allowed)
+    else:
+        signal, n_candidates = None, 0
 
-    allowed = _get_allowed_strategies()
-    signal, n_candidates = _pick_one_candidate(signals, allowed)
+    print(f"RUNNER_QUEUE | n_signals={n_signals} n_candidates={n_candidates}", flush=True)
+
     if signal is None:
+        if n_candidates == 0:
+            print(f"RUNNER_NO_CANDIDATES | n_signals={n_signals} allowed={allowed}", flush=True)
         logger.debug("run_once: no candidates in allowed strategies %s", allowed)
         _finish_queue_processing(raw_lines)
         return
+
+    print(
+        "RUNNER_PICKED | strategy=%s symbol=%s context_score=%s dist_to_peak_pct=%s stage=%s liq_long_usd_30s=%s"
+        % (
+            signal.strategy or "N/A",
+            signal.symbol or "N/A",
+            _fmt_opt(getattr(signal, "context_score", None), "%.4f"),
+            _fmt_opt(getattr(signal, "dist_to_peak_pct", None), "%.2f"),
+            _fmt_opt(getattr(signal, "stage", None)),
+            _fmt_opt(getattr(signal, "liq_long_usd_30s", None), "%.0f"),
+        ),
+        flush=True,
+    )
 
     if n_candidates > 1:
         logger.info(
