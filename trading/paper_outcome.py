@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import csv
 import logging
+import shutil
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from trading.config import CLOSES_PATH, POSITION_TTL_SECONDS, TIMEOUT_EXIT_MODE
 from trading.paper import simulate_close
@@ -13,12 +15,63 @@ from trading.state import load_state, make_position_id, record_close, save_state
 
 logger = logging.getLogger(__name__)
 
+CLOSES_FULL_HEADER = [
+    "ts", "strategy", "symbol", "side", "entry", "tp", "sl", "exit_price",
+    "close_reason", "pnl_r", "pnl_usd", "run_id", "event_id",
+    "mfe_pct", "mae_pct", "mfe_r", "mae_r",
+]
+CLOSES_EXTRA_COLUMNS = ["mfe_pct", "mae_pct", "mfe_r", "mae_r"]
+
 
 def _ensure_dir(path: str) -> None:
     p = Path(path)
     if p.suffix:
         p = p.parent
     p.mkdir(parents=True, exist_ok=True)
+
+
+def _ensure_closes_header(path: str) -> Literal["created", "migrated", "ok"]:
+    """
+    Ensure trading_closes CSV has full header including mfe_pct, mae_pct, mfe_r, mae_r.
+    - If file does not exist → create with full header.
+    - If exists and header lacks mfe_pct → backup to path.bak_TIMESTAMP, rewrite with extended header and rows.
+    - If already correct → do nothing.
+    Returns "created" | "migrated" | "ok".
+    """
+    p = Path(path)
+    _ensure_dir(path)
+    if not p.exists():
+        with open(p, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(CLOSES_FULL_HEADER)
+        return "created"
+    with open(p, "r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        first = next(reader, None)
+    if first is None:
+        with open(p, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(CLOSES_FULL_HEADER)
+        return "created"
+    header = first
+    if "mfe_pct" in header:
+        return "ok"
+    bak = f"{path}.bak_{int(time.time())}"
+    shutil.copy2(p, bak)
+    logger.info("trading_closes header migration: backup %s -> %s", path, bak)
+    new_header = list(header) + list(CLOSES_EXTRA_COLUMNS)
+    rows = [new_header]
+    with open(p, "r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        next(reader)
+        for row in reader:
+            while len(row) < len(new_header):
+                row.append("")
+            rows.append(row[: len(new_header)])
+    with open(p, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerows(rows)
+    return "migrated"
 
 
 def _append_close_row(
@@ -42,30 +95,12 @@ def _append_close_row(
     mfe_r: float | None = None,
     mae_r: float | None = None,
 ) -> None:
-    _ensure_dir(log_path)
+    _ensure_closes_header(log_path)
     file_exists = Path(log_path).exists()
     with open(log_path, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if not file_exists:
-            w.writerow([
-                "ts",
-                "strategy",
-                "symbol",
-                "side",
-                "entry",
-                "tp",
-                "sl",
-                "exit_price",
-                "close_reason",
-                "pnl_r",
-                "pnl_usd",
-                "run_id",
-                "event_id",
-                "mfe_pct",
-                "mae_pct",
-                "mfe_r",
-                "mae_r",
-            ])
+            w.writerow(CLOSES_FULL_HEADER)
         mfe_pct_str = f"{float(mfe_pct):.4f}" if mfe_pct is not None else ""
         mae_pct_str = f"{float(mae_pct):.4f}" if mae_pct is not None else ""
         mfe_r_str = f"{float(mfe_r):.4f}" if mfe_r is not None else ""
