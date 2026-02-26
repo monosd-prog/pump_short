@@ -22,16 +22,28 @@ from common.dataset_schema import (
 )
 
 
+def _get_exec_mode() -> str:
+    """Execution mode (paper|live) for dataset path. From env EXECUTION_MODE / AUTO_TRADING_MODE."""
+    mode = (os.getenv("EXECUTION_MODE") or os.getenv("AUTO_TRADING_MODE") or "paper").strip().lower()
+    return mode if mode in ("paper", "live") else "paper"
+
+
+def get_dataset_dir(strategy: str, wall_time_utc: str, base_dir: str | None = None) -> str:
+    """Public: dataset directory for strategy/date; path segment mode=<exec_mode>. For tests and logging."""
+    return _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
+
+
 def _dataset_dir(
-    strategy: str, mode: str, wall_time_utc: str, base_dir: str | None = None
+    strategy: str, wall_time_utc: str, base_dir: str | None = None
 ) -> str:
-    # date partition from wall_time_utc
+    """Build dataset dir: date=.../strategy=.../mode=<exec_mode>. Path reflects execution mode (paper/live)."""
     try:
         dt = datetime.fromisoformat(wall_time_utc.replace("Z", "+00:00"))
         day = dt.strftime("%Y%m%d")
     except Exception:
         day = "unknown_date"
-    rel_parts = (f"date={day}", f"strategy={strategy}", f"mode={mode}")
+    exec_mode = _get_exec_mode()
+    rel_parts = (f"date={day}", f"strategy={strategy}", f"mode={exec_mode}")
     if base_dir:
         return os.path.join(base_dir, *rel_parts)
     return os.path.join("datasets", *rel_parts)
@@ -58,7 +70,7 @@ def ensure_dataset_files(
 ) -> None:
     if schema_version < 2:
         return
-    dir_path = _dataset_dir(strategy, mode, wall_time_utc, base_dir=base_dir)
+    dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
     os.makedirs(dir_path, exist_ok=True)
     if schema_version == 3:
         targets = [
@@ -91,10 +103,10 @@ def ensure_dataset_files(
         )
     )
     logging.getLogger(__name__).info(
-        "DATASET_ENSURE_OK | schema_version=%s | strategy=%s | mode=%s | event_file=%s | has_1m_fields=%s | wall_time_utc=%s",
+        "DATASET_ENSURE_OK | schema_version=%s | strategy=%s | exec_mode=%s | event_file=%s | has_1m_fields=%s | wall_time_utc=%s",
         schema_version,
         strategy,
-        mode,
+        _get_exec_mode(),
         event_filename,
         has_1m_fields,
         wall_time_utc,
@@ -110,7 +122,10 @@ def write_event_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
-    dir_path = _dataset_dir(strategy, mode, wall_time_utc, base_dir=base_dir)
+    """mode = source_mode (live/FAST0/ARMED); path uses exec_mode (paper|live). Row gets mode=exec_mode, source_mode=passed mode."""
+    exec_mode = _get_exec_mode()
+    row = {**row, "mode": exec_mode, "source_mode": mode}
+    dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
     if schema_version == 3:
         path = os.path.join(dir_path, "events_v3.csv")
         row_v3 = normalize_event_v3(row)
@@ -137,15 +152,18 @@ def write_trade_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
+    exec_mode = _get_exec_mode()
     row = {
         "trade_type": row.get("trade_type", ""),
         "paper_entry_time_utc": row.get("paper_entry_time_utc", ""),
         "paper_entry_price": row.get("paper_entry_price", ""),
         "paper_tp_price": row.get("paper_tp_price", ""),
         "paper_sl_price": row.get("paper_sl_price", ""),
+        "mode": exec_mode,
+        "source_mode": mode,
         **row,
     }
-    dir_path = _dataset_dir(strategy, mode, wall_time_utc, base_dir=base_dir)
+    dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
     if schema_version == 3:
         path = os.path.join(dir_path, "trades_v3.csv")
         row_v3 = normalize_trade_v3(row)
@@ -172,14 +190,17 @@ def write_outcome_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
+    exec_mode = _get_exec_mode()
     row = {
         "trade_type": row.get("trade_type", ""),
         "details_payload": row.get("details_payload", ""),
+        "mode": exec_mode,
+        "source_mode": mode,
         **row,
     }
     if not row.get("outcome_time_utc"):
         row["outcome_time_utc"] = wall_time_utc
-    dir_path = _dataset_dir(strategy, mode, wall_time_utc, base_dir=base_dir)
+    dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir)
     if schema_version == 3:
         path = os.path.join(dir_path, "outcomes_v3.csv")
         row_v3 = normalize_outcome_v3(row)

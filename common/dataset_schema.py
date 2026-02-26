@@ -11,6 +11,7 @@ EVENT_FIELDS_V2 = [
     "symbol",
     "strategy",
     "mode",
+    "source_mode",
     "side",
     "wall_time_utc",
     "time_utc",
@@ -52,6 +53,7 @@ TRADE_FIELDS_V2 = [
     "symbol",
     "strategy",
     "mode",
+    "source_mode",
     "side",
     "entry_time_utc",
     "entry_price",
@@ -68,6 +70,7 @@ OUTCOME_FIELDS_V2 = [
     "symbol",
     "strategy",
     "mode",
+    "source_mode",
     "side",
     "outcome_time_utc",
     "outcome",
@@ -95,6 +98,7 @@ def normalize_event_v2(row: Dict[str, Any]) -> Dict[str, Any]:
             "schema_version": 2,
             "entry_ok": int(bool(row.get("entry_ok", False))),
             "payload_json": payload_json,
+            "source_mode": row.get("source_mode", ""),
         },
     )
 
@@ -109,6 +113,7 @@ def normalize_event_v3(row: Dict[str, Any]) -> Dict[str, Any]:
             "entry_ok": int(bool(row.get("entry_ok", False))),
             "outcome_label": row.get("outcome_label", ""),
             "payload_json": payload_json,
+            "source_mode": row.get("source_mode", ""),
         },
     )
 
@@ -121,6 +126,7 @@ def normalize_trade_v2(row: Dict[str, Any]) -> Dict[str, Any]:
             "schema_version": 2,
             "entry_time_utc": row.get("entry_time_utc") or row.get("time_utc") or "",
             "entry_price": row.get("entry_price") or row.get("price") or "",
+            "source_mode": row.get("source_mode", ""),
         },
     )
 
@@ -133,6 +139,7 @@ def normalize_trade_v3(row: Dict[str, Any]) -> Dict[str, Any]:
             "schema_version": SCHEMA_VERSION,
             "entry_time_utc": row.get("entry_time_utc") or row.get("time_utc") or "",
             "entry_price": row.get("entry_price") or row.get("price") or "",
+            "source_mode": row.get("source_mode", ""),
         },
     )
 
@@ -151,6 +158,7 @@ def normalize_outcome_v2(row: Dict[str, Any]) -> Dict[str, Any]:
             ),
             "outcome": row.get("end_reason") or row.get("outcome") or "UNKNOWN",
             "details_json": row.get("details_payload") or row.get("details_json") or "",
+            "source_mode": row.get("source_mode", ""),
         },
     )
 
@@ -169,5 +177,6 @@ def normalize_outcome_v3(row: Dict[str, Any]) -> Dict[str, Any]:
             ),
             "outcome": row.get("end_reason") or row.get("outcome") or "UNKNOWN",
             "details_json": row.get("details_payload") or row.get("details_json") or "",
+            "source_mode": row.get("source_mode", ""),
         },
     )
