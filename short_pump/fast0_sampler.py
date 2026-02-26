@@ -86,6 +86,32 @@ def _volume_from_candles(candles: pd.DataFrame, last_n: int) -> float:
     return float(candles["volume"].tail(last_n).sum())
 
 
+def _volume_1m_features(candles_1m: Optional[pd.DataFrame], lookback: int = 20) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """
+    From 1m klines compute: volume_1m (latest), volume_sma_20, volume_zscore_20.
+    Returns (volume_1m, volume_sma_20, volume_zscore_20); use None when unavailable.
+    """
+    if candles_1m is None or candles_1m.empty or "volume" not in candles_1m.columns:
+        return None, None, None
+    try:
+        vol = candles_1m["volume"].astype(float)
+    except (TypeError, ValueError):
+        return None, None, None
+    n = min(lookback, len(vol))
+    if n < 2:
+        v1 = float(vol.iloc[-1]) if len(vol) >= 1 else None
+        return (v1, float(vol.mean()) if len(vol) >= 1 else None, None)
+    window = vol.iloc[-n:]
+    volume_1m = float(vol.iloc[-1])
+    volume_sma = float(window.mean())
+    std = window.std(ddof=1)
+    if std is None or pd.isna(std) or float(std) == 0:
+        volume_zscore: Optional[float] = None
+    else:
+        volume_zscore = float((volume_1m - volume_sma) / float(std))
+    return (volume_1m, volume_sma, volume_zscore)
+
+
 def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str]:
     """
     Returns (pass, reason). pass=True if thresholds met, else (False, reason).
@@ -274,6 +300,12 @@ def _run_fast0_outcome_watcher(
                         res=end_reason,
                         pnl_pct=summary.get("pnl_pct"),
                         ts_utc=outcome_time_utc,
+                        outcome_meta={
+                            "mfe_pct": summary.get("mfe_pct"),
+                            "mae_pct": summary.get("mae_pct"),
+                            "mfe_r": summary.get("mfe_r"),
+                            "mae_r": summary.get("mae_r"),
+                        },
                     )
             except Exception:
                 log_exception(logger, "FAST0_TRADING_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
@@ -373,9 +405,10 @@ def run_fast0_for_symbol(
                 oi_change_5m = oi_change_pct(oi, lookback_minutes=5) if oi is not None and not oi.empty else None
                 oi_change_1m = oi_change_pct(oi, lookback_minutes=1) if oi is not None and not oi.empty else None
 
-                # Volumes
+                # Volumes (1m: latest, sma_20, zscore_20 for signal/ML)
                 volume_5m = _volume_from_candles(candles_5m, 1) if candles_5m is not None else 0.0
-                volume_1m = _volume_from_candles(candles_1m, 1) if candles_1m is not None else 0.0
+                volume_1m_val, volume_sma_20, volume_zscore_20 = _volume_1m_features(candles_1m, lookback=20)
+                volume_1m = float(volume_1m_val) if volume_1m_val is not None else _volume_from_candles(candles_1m, 1) if candles_1m is not None else 0.0
                 vol_z = dbg5.get("vol_z")
 
                 # Orderbook
@@ -406,6 +439,8 @@ def run_fast0_for_symbol(
                     "liq_long_usd_1m": liq_long_usd_1m,
                     "volume_1m": volume_1m,
                     "volume_5m": volume_5m,
+                    "volume_sma_20": volume_sma_20,
+                    "volume_zscore_20": volume_zscore_20,
                     "volume_zscore": vol_z,
                     "orderbook_imbalance_10": ob_imbalance,
                     "spread_bps": spread_bps,
@@ -526,6 +561,9 @@ def run_fast0_for_symbol(
                         entry_price=entry_price,
                         tp_price=tp_price,
                         sl_price=sl_price,
+                        volume_1m=volume_1m_val,
+                        volume_sma_20=volume_sma_20,
+                        volume_zscore_20=volume_zscore_20,
                     )
                     if FAST0_TG_ENTRY_ENABLE:
                         try:

@@ -37,7 +37,7 @@ from short_pump.liquidations import (
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 from common.outcome_tracker import build_outcome_row
 from short_pump.outcome import track_outcome_short
-from short_pump.telegram import TG_SEND_OUTCOME, send_telegram, tg_entry_filter
+from short_pump.telegram import TG_ARMED_ENABLE, TG_SEND_OUTCOME, is_tradeable_short_pump, send_telegram, tg_entry_filter
 from notifications.tg_format import build_short_pump_signal, format_armed_short, format_entry_ok, format_outcome, format_tg
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.runtime import wall_time_utc
@@ -652,25 +652,26 @@ def run_watch_for_symbol(
                         },
                         extra={"oi_change_5m_pct": dbg5.get("oi_change_5m_pct")},
                     )
-                    send_telegram(
-                        format_armed_short(
-                            symbol=cfg.symbol,
-                            run_id=run_id,
-                            event_id=f"{run_id}_armed",
-                            time_utc=dbg5.get("time_utc") or wall_time_utc(),
-                            price=dbg5.get("price") or last_price,
-                            dist_to_peak_pct=armed_dist,
+                    if TG_ARMED_ENABLE:
+                        send_telegram(
+                            format_armed_short(
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                event_id=f"{run_id}_armed",
+                                time_utc=dbg5.get("time_utc") or wall_time_utc(),
+                                price=dbg5.get("price") or last_price,
+                                dist_to_peak_pct=armed_dist,
+                                context_score=context_score,
+                            ),
+                            strategy="short_pump",
+                            side="SHORT",
+                            mode="ARMED",
+                            event_id=run_id,
                             context_score=context_score,
-                        ),
-                        strategy="short_pump",
-                        side="SHORT",
-                        mode="ARMED",
-                        event_id=run_id,
-                        context_score=context_score,
-                        entry_ok=True,
-                        skip_reasons=None,
-                        formatted=True,
-                    )
+                            entry_ok=True,
+                            skip_reasons=None,
+                            formatted=True,
+                        )
 
                 # 1m polling (skip in FAST_ONLY)
                 if cfg.entry_mode != "FAST_ONLY":
@@ -1305,12 +1306,14 @@ def run_watch_for_symbol(
                     trade_type=entry_payload.get("trade_type", ""),
                 )
 
+                tradeable = is_tradeable_short_pump(st.stage, entry_payload.get("dist_to_peak_pct"))
+                entry_payload["tradeable"] = tradeable
                 try:
                     entry_source = entry_payload.get("entry_source", "unknown")
                     mode = "FAST" if entry_source == "fast" else "ARMED"
                     context_score_msg = entry_payload.get("context_score", context_score)
                     dist_to_peak = entry_payload.get("dist_to_peak_pct")
-                    if not tg_entry_filter(st.stage, dist_to_peak):
+                    if not tradeable:
                         log_info(
                             logger,
                             "TG_ENTRY_OK_FILTERED",
@@ -1321,7 +1324,7 @@ def run_watch_for_symbol(
                             extra={
                                 "event_id": str(event_id),
                                 "dist_to_peak_pct": dist_to_peak,
-                                "reason": "stage!=4 or dist_to_peak_pct<3.5",
+                                "reason": "not tradeable (stage!=4 or dist<TG_ENTRY_DIST_MIN)",
                             },
                         )
                     else:
@@ -1371,7 +1374,20 @@ def run_watch_for_symbol(
                             log_exception(logger, "TRADING_ENQUEUE failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TRADING_ENQUEUE")
                 except Exception as e:
                     log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
-                
+
+                if not tradeable:
+                    log_info(
+                        logger,
+                        "OUTCOME_SKIPPED_NOT_TRADEABLE",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="OUTCOME",
+                        extra={"dist_to_peak_pct": dist_to_peak, "event_id": str(event_id)},
+                    )
+                    _cleanup_symbol()
+                    return {"run_id": run_id, "symbol": cfg.symbol, "end_reason": "SKIPPED_NOT_TRADEABLE"}
+
                 try:
                     summary = track_outcome_short(
                         cfg=cfg,
@@ -1595,6 +1611,12 @@ def run_watch_for_symbol(
                                 res=end_reason,
                                 pnl_pct=summary.get("pnl_pct"),
                                 ts_utc=outcome_time_utc_val,
+                                outcome_meta={
+                                    "mfe_pct": summary.get("mfe_pct"),
+                                    "mae_pct": summary.get("mae_pct"),
+                                    "mfe_r": summary.get("mfe_r"),
+                                    "mae_r": summary.get("mae_r"),
+                                },
                             )
                     except Exception:
                         log_exception(logger, "TRADING_CLOSE_FROM_OUTCOME failed", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME")
