@@ -10,8 +10,8 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+from common.io_dataset import ensure_dataset_files, get_dataset_dir
 from common.runtime import code_version, wall_time_utc
-from common.io_dataset import ensure_dataset_files
 from short_pump.config import Config
 from short_pump.logging_utils import get_logger
 from short_pump.runtime import Runtime
@@ -20,7 +20,8 @@ from short_pump.runtime import Runtime
 ENABLE_LONG_PULLBACK = os.getenv("ENABLE_LONG_PULLBACK", "0").strip().lower() in ("1", "true", "yes", "y", "on")
 # FAST_FROM_PUMP: stage0 fast sampling right after pump for research/dataset only (no auto-trade)
 ENABLE_FAST_FROM_PUMP = os.getenv("ENABLE_FAST_FROM_PUMP", "0").strip().lower() in ("1", "true", "yes", "y", "on")
-# Datasets root for fast0 (redirects fast0 writes; short_pump unchanged)
+# Datasets root for fast0 (redirects fast0 writes; short_pump unchanged).
+# Env: DATASETS_ROOT (default: /root/pump_short/datasets).
 DATASETS_ROOT = os.getenv("DATASETS_ROOT", "/root/pump_short/datasets").rstrip("/")
 
 # Initialize logging early
@@ -44,6 +45,13 @@ def _enabled_strategies() -> list[str]:
 @app.on_event("startup")
 async def _log_enabled_strategies() -> None:
     logger.info("Enabled strategies: %s", ", ".join(_enabled_strategies()))
+    exec_mode = (os.getenv("EXECUTION_MODE") or os.getenv("AUTO_TRADING_MODE") or "paper").strip().lower()
+    base_abs = os.path.abspath(DATASETS_ROOT)
+    example_dir = get_dataset_dir("short_pump_fast0", wall_time_utc(), base_dir=DATASETS_ROOT)
+    logger.info(
+        "DATASET_DIR | exec_mode=%s base_dir=%s example=%s",
+        exec_mode, base_abs, example_dir,
+    )
 
 _LONG_TTL_SEC = 30 * 60
 _active_long_symbols: Dict[str, float] = {}

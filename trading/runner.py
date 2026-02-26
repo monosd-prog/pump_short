@@ -18,6 +18,7 @@ if str(_ROOT) not in sys.path:
 
 from short_pump.signals import Signal
 
+from common.io_dataset import get_dataset_dir
 from trading.config import (
     DATASET_BASE_DIR,
     EXECUTION_MODE,
@@ -254,8 +255,13 @@ def _run_once_body() -> None:
     allowed = _get_allowed_strategies()
     strategies_str = ",".join(allowed)
     print(f"RUNNER_TICK | mode={EXECUTION_MODE} strategies={strategies_str} ts={ts_iso}", flush=True)
-    # Dataset path uses exec_mode: .../date=.../strategy=.../mode=paper or mode=live
-    print(f"DATASET_DIR | path={DATASET_BASE_DIR}/date=*/strategy=*/mode={EXECUTION_MODE} exec_mode={EXECUTION_MODE}", flush=True)
+    base_abs = os.path.abspath(DATASET_BASE_DIR)
+    example_dir = get_dataset_dir("short_pump", ts_iso, base_dir=DATASET_BASE_DIR)
+    print(
+        f"DATASET_DIR | exec_mode={EXECUTION_MODE} base_dir={base_abs} "
+        f"example={example_dir}",
+        flush=True,
+    )
 
     state = load_state()
     equity = PAPER_EQUITY_USD

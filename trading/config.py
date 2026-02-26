@@ -50,7 +50,8 @@ PAPER_SLIPPAGE_BPS = int(os.getenv("PAPER_SLIPPAGE_BPS", "2"))
 POSITION_TTL_SECONDS = int(os.getenv("POSITION_TTL_SECONDS", "1800"))  # 30 min
 TIMEOUT_EXIT_MODE = os.getenv("TIMEOUT_EXIT_MODE", "entry").strip().lower()  # "entry" or "sl"
 
-# Datasets root for writing outcomes (same pipeline as live)
+# Datasets root for writing outcomes (same pipeline as live).
+# Env: DATASET_BASE_DIR (default: {project_root}/datasets).
 DATASET_BASE_DIR = os.getenv("DATASET_BASE_DIR", str(_ROOT / "datasets"))
 STATE_PATH = os.getenv("TRADING_STATE_PATH", str(_ROOT / "datasets" / "trading_state.json"))
 LOG_PATH = os.getenv("TRADING_LOG_PATH", str(_ROOT / "datasets" / "trading_trades.csv"))
