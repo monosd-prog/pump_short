@@ -13,7 +13,7 @@ os.environ["BYBIT_API_KEY"] = "test_key"
 os.environ["BYBIT_API_SECRET"] = "test_secret"
 os.environ["BYBIT_TESTNET"] = "true"
 
-from trading.bybit_live import BybitLiveBroker, _sign
+from trading.bybit_live import BybitLiveBroker, _sign, side_to_position_idx
 
 
 def test_sign() -> None:
@@ -33,6 +33,29 @@ def test_broker_init() -> None:
     print("OK: BybitLiveBroker init (dry_run)")
 
 
+def test_side_to_position_idx() -> None:
+    """side -> positionIdx: LONG/Buy -> 1, SHORT/Sell -> 2."""
+    assert side_to_position_idx("LONG") == 1
+    assert side_to_position_idx("Buy") == 1
+    assert side_to_position_idx("BUY") == 1
+    assert side_to_position_idx("SHORT") == 2
+    assert side_to_position_idx("Sell") == 2
+    assert side_to_position_idx("SELL") == 2
+    assert side_to_position_idx("") == 2
+    print("OK: side_to_position_idx mapping")
+
+
+def test_hedge_position_idx_in_payload() -> None:
+    """When mode=hedge, _get_position_idx returns 1 or 2; payload would contain positionIdx."""
+    b = BybitLiveBroker(api_key="k", api_secret="s", dry_run=True)
+    b._position_mode = "hedge"
+    assert b._get_position_idx("BTCUSDT", "SHORT") == 2
+    assert b._get_position_idx("BTCUSDT", "LONG") == 1
+    assert b._get_position_idx("BTCUSDT", "Sell") == 2
+    assert b._get_position_idx("BTCUSDT", "Buy") == 1
+    print("OK: hedge mode positionIdx in payload (1=LONG, 2=SHORT)")
+
+
 def test_broker_get_broker_factory() -> None:
     """get_broker returns BybitLiveBroker when mode=live."""
     from trading.broker import get_broker
@@ -44,6 +67,8 @@ def test_broker_get_broker_factory() -> None:
 
 def main() -> None:
     test_sign()
+    test_side_to_position_idx()
+    test_hedge_position_idx_in_payload()
     test_broker_init()
     test_broker_get_broker_factory()
     print("smoke_bybit_live: OK")

@@ -76,10 +76,25 @@ def _norm_symbol(symbol: str) -> str:
     return (symbol or "").strip().upper()
 
 
+def side_to_position_idx(side: str) -> int:
+    """
+    Map side to Bybit positionIdx for hedge mode.
+    LONG/Buy -> 1, SHORT/Sell -> 2.
+    oneway uses 0 (caller handles).
+    """
+    s = (side or "").strip().upper()
+    if s in ("LONG", "BUY"):
+        return 1
+    if s in ("SHORT", "SELL"):
+        return 2
+    return 2  # default SHORT for our strategies
+
+
 class BybitLiveBroker:
     """
     Live execution via Bybit REST v5 (linear USDT perpetuals).
     Requires BYBIT_API_KEY, BYBIT_API_SECRET. BYBIT_TESTNET=true for testnet.
+    BYBIT_POSITION_MODE: hedge | oneway | auto (default). Auto detects from position list.
     """
 
     def __init__(
@@ -92,12 +107,54 @@ class BybitLiveBroker:
         self.api_secret = api_secret
         self.dry_run = dry_run
         self._base = _base_url()
+        self._position_mode: Optional[str] = None  # "hedge" | "oneway"
+        _mode = (os.getenv("BYBIT_POSITION_MODE") or "auto").strip().lower()
+        if _mode in ("hedge", "oneway"):
+            self._position_mode = _mode
         logger.info(
-            "LIVE_BROKER_ENABLED | base=%s testnet=%s dry_run=%s",
+            "LIVE_BROKER_ENABLED | base=%s testnet=%s dry_run=%s position_mode=%s",
             self._base,
             "testnet" in self._base,
             dry_run,
+            self._position_mode or "auto",
         )
+
+    def _ensure_position_mode(self, symbol: str) -> str:
+        """Detect hedge vs oneway if auto. Returns 'hedge' or 'oneway'."""
+        if self._position_mode:
+            return self._position_mode
+        try:
+            params = {"category": CATEGORY, "symbol": _norm_symbol(symbol)}
+            j = _request("GET", "/v5/position/list", self.api_key, self.api_secret, params=params)
+            lst = j.get("result", {}).get("list", []) or []
+            for pos in lst:
+                idx = pos.get("positionIdx")
+                try:
+                    idx_i = int(idx) if idx is not None else -1
+                except (TypeError, ValueError):
+                    idx_i = -1
+                if idx_i in (1, 2):
+                    self._position_mode = "hedge"
+                    logger.info("LIVE_BROKER_ENABLED | position_mode=hedge (auto-detected)")
+                    return "hedge"
+            if lst:
+                self._position_mode = "oneway"
+                logger.info("LIVE_BROKER_ENABLED | position_mode=oneway (auto-detected)")
+                return "oneway"
+            self._position_mode = "hedge"
+            logger.info("LIVE_BROKER_ENABLED | position_mode=hedge (auto, no positions)")
+            return "hedge"
+        except Exception as e:
+            logger.warning("LIVE_BROKER | position_mode auto-detect failed: %s, assuming hedge", e)
+            self._position_mode = "hedge"
+            return "hedge"
+
+    def _get_position_idx(self, symbol: str, side: str) -> int:
+        """Return positionIdx for orders: 0=oneway, 1=LONG, 2=SHORT."""
+        mode = self._ensure_position_mode(symbol)
+        if mode == "oneway":
+            return 0
+        return side_to_position_idx(side)
 
     def get_instrument(self, symbol: str) -> dict:
         """Fetch instrument info. Returns lotSizeFilter, priceFilter."""
@@ -139,7 +196,7 @@ class BybitLiveBroker:
         return equity
 
     def set_leverage(self, symbol: str, leverage: int) -> None:
-        """Set leverage for symbol (one-way mode)."""
+        """Set leverage for symbol. In hedge mode, sets both buy/sell to same value (idempotent)."""
         if self.dry_run:
             logger.info("LIVE_DRY_RUN | set_leverage symbol=%s leverage=%s (skipped)", symbol, leverage)
             return
@@ -177,8 +234,9 @@ class BybitLiveBroker:
         qty: float,
         reduce_only: bool = False,
         order_link_id: Optional[str] = None,
+        position_idx: Optional[int] = None,
     ) -> Optional[dict]:
-        """Place market order. Returns {orderId, orderLinkId} or None."""
+        """Place market order. positionIdx: 0=oneway, 1=LONG, 2=SHORT. Auto-computed if None."""
         if self.dry_run:
             logger.info(
                 "LIVE_DRY_RUN | place_market_order symbol=%s side=%s qty=%s (skipped)",
@@ -190,6 +248,7 @@ class BybitLiveBroker:
             side_up = "Sell"
         elif side_up.upper() == "LONG":
             side_up = "Buy"
+        idx = position_idx if position_idx is not None else self._get_position_idx(symbol, side)
         data = {
             "category": CATEGORY,
             "symbol": _norm_symbol(symbol),
@@ -197,6 +256,7 @@ class BybitLiveBroker:
             "orderType": "Market",
             "qty": str(qty),
             "reduceOnly": reduce_only,
+            "positionIdx": idx,
         }
         if order_link_id:
             data["orderLinkId"] = order_link_id
@@ -204,12 +264,15 @@ class BybitLiveBroker:
             j = _request("POST", "/v5/order/create", self.api_key, self.api_secret, data=data)
             res = j.get("result", {})
             logger.info(
-                "LIVE_ORDER_PLACE | symbol=%s side=%s qty=%s orderId=%s",
-                symbol, side_up, qty, res.get("orderId"),
+                "LIVE_ORDER_PLACE | symbol=%s side=%s qty=%s orderId=%s positionIdx=%s",
+                symbol, side_up, qty, res.get("orderId"), idx,
             )
             return res
         except Exception as e:
-            logger.warning("LIVE_ORDER_REJECT | symbol=%s side=%s qty=%s reason=%s", symbol, side, qty, e)
+            logger.warning(
+                "LIVE_ORDER_REJECT | symbol=%s side=%s qty=%s positionIdx=%s reason=%s",
+                symbol, side, qty, idx, e,
+            )
             raise
 
     def place_limit_order(
@@ -221,8 +284,9 @@ class BybitLiveBroker:
         reduce_only: bool = False,
         post_only: bool = False,
         order_link_id: Optional[str] = None,
+        position_idx: Optional[int] = None,
     ) -> Optional[dict]:
-        """Place limit order."""
+        """Place limit order. positionIdx: 0=oneway, 1=LONG, 2=SHORT. Auto-computed if None."""
         if self.dry_run:
             logger.info(
                 "LIVE_DRY_RUN | place_limit_order symbol=%s side=%s qty=%s price=%s (skipped)",
@@ -234,6 +298,7 @@ class BybitLiveBroker:
             side_up = "Sell"
         elif side_up.upper() == "LONG":
             side_up = "Buy"
+        idx = position_idx if position_idx is not None else self._get_position_idx(symbol, side)
         data = {
             "category": CATEGORY,
             "symbol": _norm_symbol(symbol),
@@ -243,6 +308,7 @@ class BybitLiveBroker:
             "price": str(price),
             "timeInForce": "PostOnly" if post_only else "GTC",
             "reduceOnly": reduce_only,
+            "positionIdx": idx,
         }
         if order_link_id:
             data["orderLinkId"] = order_link_id
@@ -250,12 +316,15 @@ class BybitLiveBroker:
             j = _request("POST", "/v5/order/create", self.api_key, self.api_secret, data=data)
             res = j.get("result", {})
             logger.info(
-                "LIVE_ORDER_PLACE | symbol=%s side=%s qty=%s price=%s orderId=%s",
-                symbol, side_up, qty, price, res.get("orderId"),
+                "LIVE_ORDER_PLACE | symbol=%s side=%s qty=%s price=%s orderId=%s positionIdx=%s",
+                symbol, side_up, qty, price, res.get("orderId"), idx,
             )
             return res
         except Exception as e:
-            logger.warning("LIVE_ORDER_REJECT | symbol=%s side=%s qty=%s price=%s reason=%s", symbol, side, qty, price, e)
+            logger.warning(
+                "LIVE_ORDER_REJECT | symbol=%s side=%s qty=%s price=%s positionIdx=%s reason=%s",
+                symbol, side, qty, price, idx, e,
+            )
             raise
 
     def cancel_order(self, symbol: str, order_id: str) -> None:
@@ -291,6 +360,8 @@ class BybitLiveBroker:
             return None
 
         symbol = _norm_symbol(getattr(signal, "symbol", "") or "")
+        side = (getattr(signal, "side", None) or "SHORT").strip().upper()
+        position_idx = self._get_position_idx(symbol, side)
         entry_price = float(signal.entry_price or 0)
         tp = float(signal.tp_price or 0)
         sl = float(signal.sl_price or 0)
@@ -311,29 +382,26 @@ class BybitLiveBroker:
         qty = round_qty_down(raw_qty, limits["lot_step"], limits["qty_precision"])
         if qty < limits["min_qty"]:
             logger.info(
-                "LIVE_ORDER_REJECT | symbol=%s reason=qty_below_min qty=%.6f minQty=%.6f",
-                symbol, qty, limits["min_qty"],
+                "LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=qty_below_min qty=%.6f minQty=%.6f",
+                symbol, position_idx, qty, limits["min_qty"],
             )
             return None
         notional = qty * entry_price
         if notional < limits["min_notional_usd"]:
             logger.info(
-                "LIVE_ORDER_REJECT | symbol=%s reason=notional_below_min notional=%.2f minNotional=%.2f",
-                symbol, notional, limits["min_notional_usd"],
+                "LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=notional_below_min notional=%.2f minNotional=%.2f",
+                symbol, position_idx, notional, limits["min_notional_usd"],
             )
             return None
-
-        side = (getattr(signal, "side", None) or "SHORT").strip().upper()
-        set_leverage = "Sell" if side == "SHORT" else "Buy"
 
         self.set_leverage(symbol, leverage)
         if self.dry_run:
             logger.info("LIVE_DRY_RUN | place_market_order skipped | symbol=%s side=%s qty=%s", symbol, side, qty)
             return None
         try:
-            self.place_market_order(symbol, side, qty, reduce_only=False)
+            self.place_market_order(symbol, side, qty, reduce_only=False, position_idx=position_idx)
         except Exception as e:
-            logger.warning("LIVE_ORDER_REJECT | symbol=%s reason=%s", symbol, e)
+            logger.warning("LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=%s", symbol, position_idx, e)
             return None
 
         trade_id = str(uuid.uuid4())
