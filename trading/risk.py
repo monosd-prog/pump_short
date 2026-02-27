@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Tuple
 
 from trading.config import (
+    FIXED_POSITION_USD,
     MAX_LEVERAGE,
     MAX_OPEN_PER_STRATEGY,
     MAX_RISK_USD_PER_TRADE,
@@ -13,6 +14,7 @@ from trading.config import (
     STOP_DISTANCE_MAX_PCT,
     STOP_DISTANCE_MIN_PCT,
 )
+from trading.instrument import get_instrument_limits, round_qty_down
 from trading.state import count_open_positions, total_risk_usd
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,53 @@ def calc_margin_usd(notional_usd: float, leverage: int) -> float:
     if leverage <= 0:
         return 0.0
     return notional_usd / leverage
+
+
+def calc_position_size(
+    entry_price: float,
+    sl_price: float,
+    equity: float,
+    symbol: str,
+    risk_pct: float,
+    stop_distance_pct: float,
+    *,
+    risk_usd_override: float | None = None,
+) -> Tuple[float, float, str | None]:
+    """
+    Compute notional_usd and risk_usd. Returns (notional_usd, risk_usd, reject_reason).
+    reject_reason is None on success.
+    If FIXED_POSITION_USD > 0: fixed sizing with lot rounding and min checks.
+    Else: risk-based sizing (RISK_PCT).
+    """
+    if FIXED_POSITION_USD > 0:
+        notional_usd = FIXED_POSITION_USD
+        raw_qty = notional_usd / entry_price if entry_price > 0 else 0.0
+        limits = get_instrument_limits(symbol)
+        final_qty = round_qty_down(raw_qty, limits.lot_step, limits.qty_precision)
+        if final_qty < limits.min_qty:
+            logger.info(
+                "FIXED_SIZE_BELOW_MIN | symbol=%s reason=qty_below_minQty raw_qty=%.6f final_qty=%.6f minQty=%.6f minNotional=%.2f",
+                symbol, raw_qty, final_qty, limits.min_qty, limits.min_notional_usd,
+            )
+            return 0.0, 0.0, "FIXED_SIZE_BELOW_MIN"
+        result_notional = final_qty * entry_price
+        if result_notional < limits.min_notional_usd:
+            logger.info(
+                "FIXED_SIZE_BELOW_MIN | symbol=%s reason=notional_below_minNotional notional=%.2f minNotional=%.2f",
+                symbol, result_notional, limits.min_notional_usd,
+            )
+            return 0.0, 0.0, "FIXED_SIZE_BELOW_MIN"
+        risk_usd = result_notional * stop_distance_pct
+        logger.info(
+            "FIXED_POSITION_SIZING | notional_usd=%.2f | price=%.6f | raw_qty=%.6f | final_qty=%.6f | minQty=%.6f | minNotional=%.2f",
+            result_notional, entry_price, raw_qty, final_qty, limits.min_qty, limits.min_notional_usd,
+        )
+        return result_notional, risk_usd, None
+
+    # Risk-based
+    risk_usd = risk_usd_override if risk_usd_override is not None else calc_risk_usd(equity, risk_pct)
+    notional_usd = calc_notional_usd(risk_usd, stop_distance_pct)
+    return notional_usd, risk_usd, None
 
 
 def calc_qty_and_notional_from_risk(risk_usd: float, entry_price: float, sl_price: float) -> tuple[float, float]:

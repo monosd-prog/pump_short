@@ -22,6 +22,7 @@ from common.io_dataset import get_dataset_dir
 from trading.config import (
     DATASET_BASE_DIR,
     EXECUTION_MODE,
+    FIXED_POSITION_USD,
     LEVERAGE,
     LOG_PATH,
     MAX_CONCURRENT_TRADES,
@@ -41,8 +42,7 @@ from trading.config import (
 )
 from trading.broker import get_broker
 from trading.risk import (
-    calc_notional_usd,
-    calc_qty_and_notional_from_risk,
+    calc_position_size,
     calc_risk_usd,
     calc_stop_distance_pct,
     risk_usd_for_live,
@@ -255,6 +255,8 @@ def _run_once_body() -> None:
     allowed = _get_allowed_strategies()
     strategies_str = ",".join(allowed)
     print(f"RUNNER_TICK | mode={EXECUTION_MODE} strategies={strategies_str} ts={ts_iso}", flush=True)
+    if FIXED_POSITION_USD > 0:
+        logger.info("FIXED_POSITION_USD=%.2f (fixed sizing enabled)", FIXED_POSITION_USD)
     base_abs = os.path.abspath(DATASET_BASE_DIR)
     example_dir = get_dataset_dir("short_pump", ts_iso, base_dir=DATASET_BASE_DIR)
     print(
@@ -331,7 +333,6 @@ def _run_once_body() -> None:
 
         entry_f = float(entry)
         sl_f = float(sl)
-        risk_usd = calc_risk_usd(equity, RISK_PCT)
         stop_distance_pct = calc_stop_distance_pct(entry_f, sl_f)
         ok, reason = validate_stop_distance(stop_distance_pct)
         if not ok:
@@ -340,9 +341,26 @@ def _run_once_body() -> None:
             save_state(state)
             return
 
+        risk_usd_override = risk_usd_for_live(equity) if EXECUTION_MODE == "live" else None
+        notional_usd, risk_usd, reject_reason = calc_position_size(
+            entry_f,
+            sl_f,
+            equity,
+            signal.symbol or "",
+            RISK_PCT,
+            stop_distance_pct,
+            risk_usd_override=risk_usd_override,
+        )
+        if reject_reason:
+            logger.info(
+                "run_once: reject sizing reason=%s strategy=%s symbol=%s",
+                reject_reason, signal.strategy, signal.symbol,
+            )
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
+
         if EXECUTION_MODE == "live":
-            risk_usd = risk_usd_for_live(equity)
-            _qty, notional_usd = calc_qty_and_notional_from_risk(risk_usd, entry_f, sl_f)
             ok_lev, reason_lev = validate_notional_leverage(notional_usd, equity, MAX_LEVERAGE)
             if not ok_lev:
                 logger.info(
@@ -372,13 +390,12 @@ def _run_once_body() -> None:
                 save_state(state)
                 return
         else:
-            if not can_open(signal.strategy, state, equity, RISK_PCT, MAX_TOTAL_RISK_PCT):
+            risk_pct_for_can_open = (risk_usd / equity) if equity > 0 else RISK_PCT
+            if not can_open(signal.strategy, state, equity, risk_pct_for_can_open, MAX_TOTAL_RISK_PCT):
                 logger.info("run_once: can_open=false strategy=%s", signal.strategy)
                 _finish_queue_processing(raw_lines)
                 save_state(state)
                 return
-            risk_usd = calc_risk_usd(equity, RISK_PCT)
-            notional_usd = calc_notional_usd(risk_usd, stop_distance_pct)
             leverage_use = LEVERAGE
 
         broker = get_broker(EXECUTION_MODE)

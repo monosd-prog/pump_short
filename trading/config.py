@@ -22,6 +22,13 @@ LEVERAGE = int(os.getenv("TRADING_LEVERAGE", "4"))
 
 # Risk
 RISK_PCT = float(os.getenv("TRADING_RISK_PCT", "0.0025"))  # 0.25% per trade (1R)
+try:
+    _fp = os.getenv("FIXED_POSITION_USD") or "0"
+    FIXED_POSITION_USD = float(str(_fp).replace(",", "."))
+except (TypeError, ValueError):
+    FIXED_POSITION_USD = 0.0
+if FIXED_POSITION_USD < 0:
+    FIXED_POSITION_USD = 0.0
 MAX_OPEN_PER_STRATEGY = int(os.getenv("MAX_OPEN_PER_STRATEGY", "1"))
 MAX_TOTAL_RISK_PCT = float(os.getenv("MAX_TOTAL_RISK_PCT", "0.005"))  # 0.5% total
 
