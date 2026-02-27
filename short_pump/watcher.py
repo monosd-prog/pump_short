@@ -1294,6 +1294,29 @@ def run_watch_for_symbol(
                     payload=entry_payload,
                     extra=None,
                 )
+                tradeable = is_tradeable_short_pump(st.stage, entry_payload.get("dist_to_peak_pct"))
+                entry_payload["tradeable"] = tradeable
+                dist_to_peak = entry_payload.get("dist_to_peak_pct")
+                if not tradeable:
+                    log_info(
+                        logger,
+                        "PAPER_REJECTED_SHORT_PUMP_GATE",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="ENTRY_DECISION",
+                        extra={
+                            "stage": st.stage,
+                            "dist_to_peak_pct": dist_to_peak,
+                            "run_id": run_id,
+                            "symbol": cfg.symbol,
+                            "event_id": str(event_id),
+                            "reason": "stage!=4 or dist<TG_ENTRY_DIST_MIN",
+                        },
+                    )
+                    _cleanup_symbol()
+                    return {"run_id": run_id, "symbol": cfg.symbol, "end_reason": "SKIPPED_NOT_TRADEABLE"}
+
                 _ds_trade(
                     run_id=run_id,
                     symbol=cfg.symbol,
@@ -1305,88 +1328,56 @@ def run_watch_for_symbol(
                     sl_price=sl_price,
                     trade_type=entry_payload.get("trade_type", ""),
                 )
-
-                tradeable = is_tradeable_short_pump(st.stage, entry_payload.get("dist_to_peak_pct"))
-                entry_payload["tradeable"] = tradeable
                 try:
                     entry_source = entry_payload.get("entry_source", "unknown")
                     mode = "FAST" if entry_source == "fast" else "ARMED"
                     context_score_msg = entry_payload.get("context_score", context_score)
-                    dist_to_peak = entry_payload.get("dist_to_peak_pct")
-                    if not tradeable:
-                        log_info(
-                            logger,
-                            "TG_ENTRY_OK_FILTERED",
-                            symbol=cfg.symbol,
-                            run_id=run_id,
-                            stage=st.stage,
-                            step="TELEGRAM",
-                            extra={
-                                "event_id": str(event_id),
-                                "dist_to_peak_pct": dist_to_peak,
-                                "reason": "not tradeable (stage!=4 or dist<TG_ENTRY_DIST_MIN)",
-                            },
-                        )
-                    else:
-                        sig = build_short_pump_signal(
-                            strategy="short_pump",
-                            side="SHORT",
-                            symbol=cfg.symbol,
-                            run_id=run_id,
-                            event_id=str(event_id),
-                            time_utc=entry_payload.get("time_utc", ""),
-                            price=entry_payload.get("price", entry_price),
-                            entry_price=entry_price,
-                            tp_price=tp_price,
-                            sl_price=sl_price,
-                            tp_pct=entry_snapshot.get("tp_pct"),
-                            sl_pct=entry_snapshot.get("sl_pct"),
-                            entry_type=entry_type,
-                            context_score=context_score_msg,
-                            ctx_parts=entry_payload.get("context_parts"),
-                            liq_short_usd_30s=entry_payload.get("liq_short_usd_30s"),
-                            liq_long_usd_30s=entry_payload.get("liq_long_usd_30s"),
-                            oi_change_fast_pct=entry_payload.get("oi_change_fast_pct"),
-                            cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
-                            cvd_delta_ratio_1m=entry_payload.get("cvd_delta_ratio_1m"),
-                            dist_to_peak_pct=dist_to_peak,
-                            stage=st.stage,
-                            debug_payload=entry_payload,
-                        )
-                        send_telegram(
-                            format_tg(sig),
-                            strategy="short_pump",
-                            side="SHORT",
-                            mode=mode,
-                            event_id=str(event_id),
-                            context_score=float(context_score_msg) if context_score_msg is not None else None,
-                            entry_ok=True,
-                            skip_reasons=None,
-                            formatted=True,
-                        )
-                        # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)
-                        try:
-                            from trading.config import AUTO_TRADING_ENABLE
-                            if AUTO_TRADING_ENABLE:
-                                from trading.queue import enqueue_signal
-                                enqueue_signal(sig)
-                        except Exception:
-                            log_exception(logger, "TRADING_ENQUEUE failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TRADING_ENQUEUE")
-                except Exception as e:
-                    log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
-
-                if not tradeable:
-                    log_info(
-                        logger,
-                        "OUTCOME_SKIPPED_NOT_TRADEABLE",
+                    sig = build_short_pump_signal(
+                        strategy="short_pump",
+                        side="SHORT",
                         symbol=cfg.symbol,
                         run_id=run_id,
+                        event_id=str(event_id),
+                        time_utc=entry_payload.get("time_utc", ""),
+                        price=entry_payload.get("price", entry_price),
+                        entry_price=entry_price,
+                        tp_price=tp_price,
+                        sl_price=sl_price,
+                        tp_pct=entry_snapshot.get("tp_pct"),
+                        sl_pct=entry_snapshot.get("sl_pct"),
+                        entry_type=entry_type,
+                        context_score=context_score_msg,
+                        ctx_parts=entry_payload.get("context_parts"),
+                        liq_short_usd_30s=entry_payload.get("liq_short_usd_30s"),
+                        liq_long_usd_30s=entry_payload.get("liq_long_usd_30s"),
+                        oi_change_fast_pct=entry_payload.get("oi_change_fast_pct"),
+                        cvd_delta_ratio_30s=entry_payload.get("cvd_delta_ratio_30s"),
+                        cvd_delta_ratio_1m=entry_payload.get("cvd_delta_ratio_1m"),
+                        dist_to_peak_pct=dist_to_peak,
                         stage=st.stage,
-                        step="OUTCOME",
-                        extra={"dist_to_peak_pct": dist_to_peak, "event_id": str(event_id)},
+                        debug_payload=entry_payload,
                     )
-                    _cleanup_symbol()
-                    return {"run_id": run_id, "symbol": cfg.symbol, "end_reason": "SKIPPED_NOT_TRADEABLE"}
+                    send_telegram(
+                        format_tg(sig),
+                        strategy="short_pump",
+                        side="SHORT",
+                        mode=mode,
+                        event_id=str(event_id),
+                        context_score=float(context_score_msg) if context_score_msg is not None else None,
+                        entry_ok=True,
+                        skip_reasons=None,
+                        formatted=True,
+                    )
+                    # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)
+                    try:
+                        from trading.config import AUTO_TRADING_ENABLE
+                        if AUTO_TRADING_ENABLE:
+                            from trading.queue import enqueue_signal
+                            enqueue_signal(sig)
+                    except Exception:
+                        log_exception(logger, "TRADING_ENQUEUE failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TRADING_ENQUEUE")
+                except Exception as e:
+                    log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
                 try:
                     summary = track_outcome_short(
