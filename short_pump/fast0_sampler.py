@@ -116,6 +116,13 @@ def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str
     """
     Returns (pass, reason). pass=True if thresholds met, else (False, reason).
     """
+    liq = payload.get("liq_long_usd_30s")
+    try:
+        liq_val = float(liq) if liq is not None else 0.0
+    except (TypeError, ValueError):
+        liq_val = 0.0
+    if not (liq_val > 0):
+        return False, "liq_gate"
     if tick < FAST0_ENTRY_MIN_TICK:
         return False, f"tick<{FAST0_ENTRY_MIN_TICK}"
     cs = payload.get("context_score")
@@ -170,6 +177,7 @@ def _run_fast0_outcome_watcher(
     mode: str,
     dist_to_peak_pct: Optional[float] = None,
     context_score: Optional[float] = None,
+    liq_long_usd_30s: Optional[float] = None,
 ) -> None:
     """Daemon thread: track TP/SL, write outcome row."""
     global _active_fast0_watchers
@@ -258,35 +266,46 @@ def _run_fast0_outcome_watcher(
                 f"{hold_val:.0f}" if hold_val is not None else "n/a",
                 event_id,
             )
+            liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else 0.0
             if FAST0_TG_OUTCOME_ENABLE and res_val and res_val not in ("", "None"):
-                if dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
-                    try:
-                        msg = format_fast0_outcome_message(
-                            symbol=symbol,
-                            run_id=run_id,
-                            event_id=event_id,
-                            res=res_val,
-                            entry_price=entry_price,
-                            tp_price=tp_price,
-                            sl_price=sl_price,
-                            exit_price=exit_price_val,
-                            pnl_pct=pnl_val,
-                            hold_seconds=hold_val,
-                            dist_to_peak_pct=dist_val if dist_val else None,
-                            context_score=ctx_val if ctx_val else None,
-                        )
-                        send_telegram(
-                            msg,
-                            strategy=STRATEGY,
-                            side="SHORT",
-                            mode="FAST0",
-                            event_id=event_id,
-                            context_score=ctx_val if ctx_val else None,
-                            entry_ok=True,
-                            formatted=True,
-                        )
-                    except Exception:
-                        log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+                if not (liq_val > 0):
+                    log_info(
+                        logger,
+                        "TG_FAST0_SKIPPED_LIQ_GATE",
+                        symbol=symbol,
+                        run_id=run_id,
+                        step="FAST0_OUTCOME",
+                        extra={"liq_long_usd_30s": liq_val, "event_id": event_id, "reason": "liq<=0"},
+                    )
+                elif liq_val > 0:
+                    if dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
+                        try:
+                            msg = format_fast0_outcome_message(
+                                symbol=symbol,
+                                run_id=run_id,
+                                event_id=event_id,
+                                res=res_val,
+                                entry_price=entry_price,
+                                tp_price=tp_price,
+                                sl_price=sl_price,
+                                exit_price=exit_price_val,
+                                pnl_pct=pnl_val,
+                                hold_seconds=hold_val,
+                                dist_to_peak_pct=dist_val if dist_val else None,
+                                context_score=ctx_val if ctx_val else None,
+                            )
+                            send_telegram(
+                                msg,
+                                strategy=STRATEGY,
+                                side="SHORT",
+                                mode="FAST0",
+                                event_id=event_id,
+                                context_score=ctx_val if ctx_val else None,
+                                entry_ok=True,
+                                formatted=True,
+                            )
+                        except Exception:
+                            log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
             # Paper: close position on OUTCOME (TP_hit/SL_hit)
             try:
                 from trading.config import AUTO_TRADING_ENABLE, MODE
@@ -453,14 +472,30 @@ def run_fast0_for_symbol(
 
                 entry_ok_pass, entry_reason = should_fast0_entry_ok(payload, tick)
                 if not entry_ok_pass:
-                    log_info(
-                        logger,
-                        "FAST0_ENTRY_FILTERED",
-                        symbol=cfg.symbol,
-                        run_id=run_id,
-                        step="FAST0",
-                        extra={"reason": entry_reason, "tick": tick, "context_score": context_score, "dist_to_peak_pct": dist_to_peak},
-                    )
+                    if entry_reason == "liq_gate":
+                        liq_val = float(payload.get("liq_long_usd_30s") or 0)
+                        log_info(
+                            logger,
+                            "FAST0_REJECTED_LIQ_GATE",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            step="FAST0",
+                            extra={
+                                "liq_long_usd_30s": liq_val,
+                                "tick": tick,
+                                "event_id": event_id,
+                                "reason": "liq_long_usd_30s<=0",
+                            },
+                        )
+                    else:
+                        log_info(
+                            logger,
+                            "FAST0_ENTRY_FILTERED",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            step="FAST0",
+                            extra={"reason": entry_reason, "tick": tick, "context_score": context_score, "dist_to_peak_pct": dist_to_peak},
+                        )
                 elif entry_ok_fired:
                     log_info(
                         logger,
@@ -474,6 +509,7 @@ def run_fast0_for_symbol(
                 if entry_ok:
                     entry_ok_fired = True
                 payload["entry_ok"] = entry_ok
+                skip_reasons = "" if entry_ok else (entry_reason if not entry_ok_pass else "fast0_sample")
 
                 row = {
                     "run_id": run_id,
@@ -486,7 +522,7 @@ def run_fast0_for_symbol(
                     "time_utc": payload.get("time_utc", ""),
                     "stage": 0,
                     "entry_ok": 1 if entry_ok else 0,
-                    "skip_reasons": "" if entry_ok else "fast0_sample",
+                    "skip_reasons": skip_reasons,
                     "context_score": context_score if context_score is not None else "",
                     "price": last_price,
                     "dist_to_peak_pct": dist_to_peak,
@@ -566,19 +602,35 @@ def run_fast0_for_symbol(
                         volume_zscore_20=volume_zscore_20,
                     )
                     if FAST0_TG_ENTRY_ENABLE:
-                        try:
-                            send_telegram(
-                                format_tg(sig),
-                                strategy=STRATEGY,
-                                side="SHORT",
-                                mode="FAST0",
-                                event_id=event_id,
-                                context_score=context_score,
-                                entry_ok=True,
-                                formatted=True,
+                        liq_tg = float(payload.get("liq_long_usd_30s") or 0)
+                        if not (liq_tg > 0):
+                            log_info(
+                                logger,
+                                "TG_FAST0_SKIPPED_LIQ_GATE",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                step="FAST0",
+                                extra={
+                                    "liq_long_usd_30s": liq_tg,
+                                    "tick": tick,
+                                    "event_id": event_id,
+                                    "reason": "liq<=0",
+                                },
                             )
-                        except Exception:
-                            log_exception(logger, "FAST0_TG_SEND_ERROR", symbol=cfg.symbol, run_id=run_id, step="FAST0")
+                        else:
+                            try:
+                                send_telegram(
+                                    format_tg(sig),
+                                    strategy=STRATEGY,
+                                    side="SHORT",
+                                    mode="FAST0",
+                                    event_id=event_id,
+                                    context_score=context_score,
+                                    entry_ok=True,
+                                    formatted=True,
+                                )
+                            except Exception:
+                                log_exception(logger, "FAST0_TG_SEND_ERROR", symbol=cfg.symbol, run_id=run_id, step="FAST0")
                     # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)
                     try:
                         from trading.config import AUTO_TRADING_ENABLE
@@ -602,6 +654,7 @@ def run_fast0_for_symbol(
                             "mode": mode,
                             "dist_to_peak_pct": dist_to_peak,
                             "context_score": context_score,
+                            "liq_long_usd_30s": liq_long_usd_30s,
                         },
                         name=f"fast0_outcome_{cfg.symbol}_{trade_id[:16]}",
                         daemon=True,

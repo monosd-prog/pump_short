@@ -43,6 +43,16 @@ def is_tradeable_short_pump(stage: int, dist_to_peak_pct: float | None = None) -
         return False
 
 
+def is_fast0_tg_entry_allowed(payload: dict) -> bool:
+    """True if FAST0 TG ENTRY_OK/OUTCOME may be sent: liq_long_usd_30s > 0. Gates TG for short_pump_fast0."""
+    try:
+        liq = payload.get("liq_long_usd_30s")
+        v = float(liq) if liq is not None else 0.0
+        return v > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def tg_entry_filter(stage, dist_to_peak_pct) -> bool:
     """Return True if ENTRY_OK should send Telegram (stage and dist satisfy thresholds)."""
     try:
