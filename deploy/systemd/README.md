@@ -14,12 +14,9 @@ Runs the trading runner on a timer: consumes signals from queue, opens paper pos
    sudo nano /etc/systemd/system/pump-trading-runner.service
    ```
 
-3. Create `.env` in project root with:
-   ```
-   AUTO_TRADING_ENABLE=1
-   AUTO_TRADING_MODE=paper
-   # ... other vars (PAPER_EQUITY_USD, etc.)
-   ```
+3. Create `.env` in project root:
+   - Paper: see README for PAPER_EQUITY_USD, etc.
+   - Live: copy `pump-short-live.env.example` and fill BYBIT_API_KEY, BYBIT_API_SECRET, BYBIT_TESTNET
 
 4. Enable and start timer:
    ```bash

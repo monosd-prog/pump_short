@@ -95,21 +95,6 @@ class ExecutionAdapter(ABC):
         pass
 
 
-class LiveBroker(ExecutionAdapter):
-    """Live exchange orders. TODO: wire to Bybit/OKX client."""
-
-    def open_position(
-        self,
-        signal: Any,
-        qty_notional_usd: float,
-        risk_usd: float,
-        leverage: int,
-        opened_ts: str,
-    ) -> Optional[dict[str, Any]]:
-        logger.warning("LiveBroker.open_position not implemented; rejecting")
-        return None
-
-
 class PaperBroker(ExecutionAdapter):
     """
     Paper execution: gating (Variant #3) + simulated fills with fee/slippage.
@@ -192,10 +177,20 @@ class PaperBroker(ExecutionAdapter):
         return position
 
 
-def get_broker(mode: str) -> ExecutionAdapter:
-    """Factory: mode 'live' -> LiveBroker, else PaperBroker with config."""
+def get_broker(mode: str, dry_run_live: bool = False) -> ExecutionAdapter:
+    """Factory: mode 'live' -> BybitLiveBroker, else PaperBroker with config."""
     if (mode or "").strip().lower() == "live":
-        return LiveBroker()
+        try:
+            from trading.bybit_live import BybitLiveBroker
+            api_key = (os.getenv("BYBIT_API_KEY") or "").strip()
+            api_secret = (os.getenv("BYBIT_API_SECRET") or "").strip()
+            if not api_key or not api_secret:
+                logger.error("LIVE_BROKER_ENABLED=false | BYBIT_API_KEY or BYBIT_API_SECRET missing")
+                raise ValueError("BYBIT_API_KEY and BYBIT_API_SECRET required for live mode")
+            return BybitLiveBroker(api_key=api_key, api_secret=api_secret, dry_run=dry_run_live)
+        except Exception as e:
+            logger.exception("get_broker live failed: %s", e)
+            raise
     fee_bps = int(os.getenv("PAPER_FEE_BPS", str(DEFAULT_PAPER_FEE_BPS)))
     slippage_bps = int(os.getenv("PAPER_SLIPPAGE_BPS", str(DEFAULT_PAPER_SLIPPAGE_BPS)))
     return PaperBroker(fee_bps=fee_bps, slippage_bps=slippage_bps)

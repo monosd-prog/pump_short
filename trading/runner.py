@@ -20,6 +20,7 @@ from short_pump.signals import Signal
 
 from common.io_dataset import get_dataset_dir
 from trading.config import (
+    AUTO_TRADING_ENABLE,
     DATASET_BASE_DIR,
     EXECUTION_MODE,
     FIXED_POSITION_USD,
@@ -224,13 +225,13 @@ def _append_trade_row(
         ])
 
 
-def run_once() -> None:
-    """One iteration: fetch signals, dedupe, validate, risk check, PAPER open, log CSV."""
+def run_once(*, dry_run_live: bool = False) -> None:
+    """One iteration: fetch signals, dedupe, validate, risk check, open position, log CSV."""
     ok, lock_fd = _acquire_lock()
     if not ok:
         return
     try:
-        _run_once_body()
+        _run_once_body(dry_run_live=dry_run_live)
     finally:
         if lock_fd is not None:
             try:
@@ -250,7 +251,7 @@ def _fmt_opt(val: Optional[float | int], fmt: str = "%s") -> str:
         return str(val) if val is not None else "N/A"
 
 
-def _run_once_body() -> None:
+def _run_once_body(*, dry_run_live: bool = False) -> None:
     ts_iso = datetime.now(timezone.utc).isoformat()
     allowed = _get_allowed_strategies()
     strategies_str = ",".join(allowed)
@@ -267,6 +268,19 @@ def _run_once_body() -> None:
 
     state = load_state()
     equity = PAPER_EQUITY_USD
+    if EXECUTION_MODE == "live":
+        try:
+            broker_for_equity = get_broker(EXECUTION_MODE, dry_run_live=dry_run_live)
+            if hasattr(broker_for_equity, "get_balance"):
+                equity = float(broker_for_equity.get_balance())
+        except ValueError as e:
+            if "BYBIT_API" in str(e):
+                logger.error("LIVE_BROKER_ENABLED=false | %s", e)
+                return
+            raise
+        except Exception as e:
+            logger.error("LIVE_BALANCE | failed to fetch equity: %s", e)
+            return
     last_signal_ids = state.setdefault("last_signal_ids", {})
 
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00:00")
@@ -398,7 +412,16 @@ def _run_once_body() -> None:
                 return
             leverage_use = LEVERAGE
 
-        broker = get_broker(EXECUTION_MODE)
+        if EXECUTION_MODE == "live" and not dry_run_live and not AUTO_TRADING_ENABLE:
+            logger.info(
+                "LIVE_ORDER_REJECT | reason=AUTO_TRADING_ENABLE not set (require 1 to place orders) strategy=%s symbol=%s",
+                signal.strategy, signal.symbol,
+            )
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
+
+        broker = get_broker(EXECUTION_MODE, dry_run_live=dry_run_live)
         position = broker.open_position(
             signal,
             qty_notional_usd=notional_usd,
@@ -463,6 +486,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Trading runner: consume signals, open paper/live positions")
     parser.add_argument("--once", action="store_true", help="Run one iteration and exit")
     parser.add_argument(
+        "--dry-run-live",
+        action="store_true",
+        help="Live mode: only get_balance + instrument + set_leverage, no orders",
+    )
+    parser.add_argument(
         "--strategies",
         type=str,
         default=None,
@@ -472,9 +500,9 @@ def main() -> None:
     if args.strategies is not None:
         os.environ["STRATEGIES"] = args.strategies
     if args.once:
-        run_once()
+        run_once(dry_run_live=args.dry_run_live)
     else:
-        print("Usage: python3 -m trading.runner --once [--strategies short_pump,short_pump_fast0]")
+        print("Usage: python3 -m trading.runner --once [--strategies short_pump,short_pump_fast0] [--dry-run-live]")
         sys.exit(1)
 
 
