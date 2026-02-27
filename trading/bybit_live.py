@@ -76,6 +76,12 @@ def _norm_symbol(symbol: str) -> str:
     return (symbol or "").strip().upper()
 
 
+def _round_price_to_tick(price: float, tick_size: float) -> float:
+    """Round price to valid tick step. tick_size fallback 0.0001."""
+    ts = tick_size if tick_size and tick_size > 0 else 0.0001
+    return round(price / ts) * ts
+
+
 def side_to_position_idx(side: str) -> int:
     """
     Map side to Bybit positionIdx for hedge mode.
@@ -327,6 +333,54 @@ class BybitLiveBroker:
             )
             raise
 
+    def set_trading_stop(
+        self,
+        symbol: str,
+        position_idx: int,
+        take_profit: float | None,
+        stop_loss: float | None,
+    ) -> dict:
+        """
+        Set TP/SL on position. POST /v5/position/trading-stop.
+        take_profit/stop_loss: prices; None or 0 = cancel that side.
+        Returns result dict. Logs LIVE_TPSL_SET on success, LIVE_ORDER_REJECT on error.
+        """
+        if self.dry_run:
+            logger.info(
+                "LIVE_DRY_RUN | set_trading_stop symbol=%s positionIdx=%s tp=%s sl=%s (skipped)",
+                symbol, position_idx, take_profit, stop_loss,
+            )
+            return {}
+        data = {
+            "category": CATEGORY,
+            "symbol": _norm_symbol(symbol),
+            "positionIdx": position_idx,
+            "tpslMode": "Full",
+            "tpTriggerBy": "LastPrice",
+            "slTriggerBy": "LastPrice",
+        }
+        if take_profit is not None and take_profit > 0:
+            data["takeProfit"] = str(take_profit)
+        else:
+            data["takeProfit"] = "0"
+        if stop_loss is not None and stop_loss > 0:
+            data["stopLoss"] = str(stop_loss)
+        else:
+            data["stopLoss"] = "0"
+        try:
+            _request("POST", "/v5/position/trading-stop", self.api_key, self.api_secret, data=data)
+            logger.info(
+                "LIVE_TPSL_SET | symbol=%s positionIdx=%s takeProfit=%s stopLoss=%s",
+                symbol, position_idx, data["takeProfit"], data["stopLoss"],
+            )
+            return {"takeProfit": data["takeProfit"], "stopLoss": data["stopLoss"]}
+        except RuntimeError as e:
+            logger.warning(
+                "LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=set_trading_stop_failed %s",
+                symbol, position_idx, e,
+            )
+            raise
+
     def cancel_order(self, symbol: str, order_id: str) -> None:
         """Cancel order by orderId."""
         if self.dry_run:
@@ -397,12 +451,32 @@ class BybitLiveBroker:
         self.set_leverage(symbol, leverage)
         if self.dry_run:
             logger.info("LIVE_DRY_RUN | place_market_order skipped | symbol=%s side=%s qty=%s", symbol, side, qty)
+            logger.info("LIVE_DRY_RUN | set_trading_stop skipped (dry_run)")
             return None
         try:
             self.place_market_order(symbol, side, qty, reduce_only=False, position_idx=position_idx)
         except Exception as e:
             logger.warning("LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=%s", symbol, position_idx, e)
             return None
+
+        tick_size = limits.get("tick_size") or 0.0001
+        tp_rounded = _round_price_to_tick(tp, tick_size)
+        sl_rounded = _round_price_to_tick(sl, tick_size)
+        if tp_rounded <= 0 or sl_rounded <= 0:
+            logger.warning(
+                "LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=invalid_tpsl tp=%.6f sl=%.6f",
+                symbol, position_idx, tp_rounded, sl_rounded,
+            )
+        elif abs(tp_rounded - sl_rounded) < 1e-12:
+            logger.warning(
+                "LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=invalid_tpsl tp_eq_sl",
+                symbol, position_idx,
+            )
+        else:
+            try:
+                self.set_trading_stop(symbol, position_idx, tp_rounded, sl_rounded)
+            except Exception:
+                pass
 
         trade_id = str(uuid.uuid4())
         position = {

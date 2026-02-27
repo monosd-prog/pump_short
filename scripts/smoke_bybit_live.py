@@ -13,7 +13,7 @@ os.environ["BYBIT_API_KEY"] = "test_key"
 os.environ["BYBIT_API_SECRET"] = "test_secret"
 os.environ["BYBIT_TESTNET"] = "true"
 
-from trading.bybit_live import BybitLiveBroker, _sign, side_to_position_idx
+from trading.bybit_live import BybitLiveBroker, _round_price_to_tick, _sign, side_to_position_idx
 
 
 def test_sign() -> None:
@@ -56,6 +56,22 @@ def test_hedge_position_idx_in_payload() -> None:
     print("OK: hedge mode positionIdx in payload (1=LONG, 2=SHORT)")
 
 
+def test_round_price_to_tick() -> None:
+    """Price rounding to tick step."""
+    assert _round_price_to_tick(1.2345, 0.01) == 1.23
+    assert _round_price_to_tick(1.2365, 0.01) == 1.24
+    assert _round_price_to_tick(95000.5, 0.1) == 95000.5
+    print("OK: _round_price_to_tick")
+
+
+def test_set_trading_stop_dry_run() -> None:
+    """set_trading_stop with dry_run=True returns empty, no network call."""
+    b = BybitLiveBroker(api_key="k", api_secret="s", dry_run=True)
+    res = b.set_trading_stop("BTCUSDT", 2, 95000.0, 105000.0)
+    assert res == {}
+    print("OK: set_trading_stop dry_run returns {} (no network)")
+
+
 def test_broker_get_broker_factory() -> None:
     """get_broker returns BybitLiveBroker when mode=live."""
     from trading.broker import get_broker
@@ -68,7 +84,9 @@ def test_broker_get_broker_factory() -> None:
 def main() -> None:
     test_sign()
     test_side_to_position_idx()
+    test_round_price_to_tick()
     test_hedge_position_idx_in_payload()
+    test_set_trading_stop_dry_run()
     test_broker_init()
     test_broker_get_broker_factory()
     print("smoke_bybit_live: OK")
