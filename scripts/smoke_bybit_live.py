@@ -110,6 +110,82 @@ def test_broker_get_broker_factory() -> None:
     print("OK: get_broker('live') returns BybitLiveBroker")
 
 
+def test_resolve_live_outcome_tp_hit() -> None:
+    """resolve_live_outcome parses mocked closed-pnl and returns TP_hit for SHORT profit."""
+    from trading.bybit_live_outcome import resolve_live_outcome
+
+    mock_closed = [
+        {
+            "symbol": "POWERUSDT",
+            "side": "Sell",
+            "avgEntryPrice": "2.10",
+            "avgExitPrice": "2.07",
+            "closedPnl": "1.43",
+            "updatedTime": "1730473200000",
+            "orderId": "close-order-1",
+        },
+    ]
+    broker = Mock()
+    broker.get_closed_pnl = Mock(return_value=mock_closed)
+
+    result = resolve_live_outcome(
+        symbol="POWERUSDT",
+        order_id="entry-order-1",
+        position_idx=2,
+        opened_ts="2024-11-01 12:00:00+00:00",
+        entry_price=2.10,
+        tp_price=2.07,
+        sl_price=2.13,
+        side="SHORT",
+        broker=broker,
+        timeout_sec=2,
+        poll_sec=0.1,
+    )
+    assert result is not None
+    assert result.get("status") == "TP_hit"
+    assert abs(float(result.get("exit_price", 0)) - 2.07) < 0.001
+    assert float(result.get("pnl_pct", 0)) > 0
+    print("OK: resolve_live_outcome TP_hit for SHORT")
+
+
+def test_resolve_live_outcome_sl_hit() -> None:
+    """resolve_live_outcome parses mocked closed-pnl and returns SL_hit for SHORT loss."""
+    from trading.bybit_live_outcome import resolve_live_outcome
+
+    mock_closed = [
+        {
+            "symbol": "POWERUSDT",
+            "side": "Sell",
+            "avgEntryPrice": "2.10",
+            "avgExitPrice": "2.1198183",
+            "closedPnl": "-0.94",
+            "updatedTime": "1730473300000",
+            "orderId": "close-order-2",
+        },
+    ]
+    broker = Mock()
+    broker.get_closed_pnl = Mock(return_value=mock_closed)
+
+    result = resolve_live_outcome(
+        symbol="POWERUSDT",
+        order_id="entry-order-1",
+        position_idx=2,
+        opened_ts="2024-11-01 12:00:00+00:00",
+        entry_price=2.10,
+        tp_price=2.07,
+        sl_price=2.13,
+        side="SHORT",
+        broker=broker,
+        timeout_sec=2,
+        poll_sec=0.1,
+    )
+    assert result is not None
+    assert result.get("status") == "SL_hit"
+    assert abs(float(result.get("exit_price", 0)) - 2.1198183) < 0.0001
+    assert float(result.get("pnl_pct", 0)) < 0
+    print("OK: resolve_live_outcome SL_hit for SHORT")
+
+
 def _make_short_signal(
     entry: float = 100_000.0, tp: float = 98_000.0, sl: float = 102_000.0
 ) -> object:
@@ -243,6 +319,8 @@ def main() -> None:
     test_set_trading_stop_dry_run()
     test_set_leverage_retcode_110043()
     test_set_leverage_other_retcode_raises()
+    test_resolve_live_outcome_tp_hit()
+    test_resolve_live_outcome_sl_hit()
     test_open_position_tpsl_fail_then_retry_fail_closes()
     test_open_position_tpsl_fail_then_retry_success()
     test_broker_init()

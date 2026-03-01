@@ -179,7 +179,7 @@ def _run_fast0_outcome_watcher(
     context_score: Optional[float] = None,
     liq_long_usd_30s: Optional[float] = None,
 ) -> None:
-    """Daemon thread: track TP/SL, write outcome row."""
+    """Daemon thread: track TP/SL, write outcome row. For LIVE: prefer Bybit resolver; fallback to candles."""
     global _active_fast0_watchers
     with _fast0_watchers_lock:
         if _active_fast0_watchers >= FAST0_MAX_WATCHERS:
@@ -201,6 +201,109 @@ def _run_fast0_outcome_watcher(
                 entry_ts = entry_ts.tz_localize("UTC")
         except Exception:
             entry_ts = pd.Timestamp.now(tz="UTC")
+
+        # LIVE: try Bybit resolver first (position must be in state with order_id)
+        bybit_result = None
+        if (mode or "").strip().lower() == "live":
+            wait_sec = 0
+            position = None
+            while wait_sec < 60:
+                try:
+                    from trading.state import load_state
+                    from trading.state import make_position_id
+                    state = load_state()
+                    open_positions = state.get("open_positions") or {}
+                    strat_pos = open_positions.get(STRATEGY) or {}
+                    pid = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
+                    position = strat_pos.get(pid) if isinstance(strat_pos, dict) else None
+                    if position and position.get("order_id") and position.get("position_idx") is not None:
+                        break
+                    position = None
+                    for _k, p in (strat_pos.items() if isinstance(strat_pos, dict) else []):
+                        if not isinstance(p, dict):
+                            continue
+                        if p.get("symbol") != symbol or p.get("run_id") != run_id:
+                            continue
+                        if str(p.get("event_id") or "") != str(event_id or ""):
+                            continue
+                        position = p
+                        break
+                except Exception:
+                    position = None
+                time.sleep(5)
+                wait_sec += 5
+
+            if position and position.get("order_id") and position.get("position_idx") is not None:
+                try:
+                    from trading.bybit_live_outcome import resolve_live_outcome
+                    bybit_result = resolve_live_outcome(
+                        symbol=symbol,
+                        order_id=position["order_id"],
+                        position_idx=int(position["position_idx"]),
+                        opened_ts=entry_time_utc,
+                        entry_price=entry_price,
+                        tp_price=tp_price,
+                        sl_price=sl_price,
+                        side=position.get("side", "SHORT"),
+                    )
+                    if bybit_result:
+                        res_val = bybit_result.get("status", "unknown")
+                        if res_val in ("TP_hit", "SL_hit"):
+                            exit_price_val = float(bybit_result.get("exit_price", 0))
+                            pnl_val = float(bybit_result.get("pnl_pct", 0))
+                            outcome_time_utc = bybit_result.get("exit_ts", datetime.now(timezone.utc).isoformat())
+                            logger.info(
+                                "LIVE_OUTCOME_RESOLVED | source=bybit | res=%s | exit=%.4f | pnl_pct=%.2f | orderId=%s | positionIdx=%s",
+                                res_val, exit_price_val, pnl_val,
+                                bybit_result.get("order_id", ""), position.get("position_idx"),
+                            )
+                            try:
+                                from trading.paper_outcome import close_from_live_outcome
+                                close_from_live_outcome(
+                                    strategy=STRATEGY,
+                                    symbol=symbol,
+                                    run_id=run_id,
+                                    event_id=event_id,
+                                    res=res_val,
+                                    exit_price=exit_price_val,
+                                    pnl_pct=pnl_val,
+                                    ts_utc=outcome_time_utc,
+                                )
+                            except Exception:
+                                log_exception(logger, "FAST0_LIVE_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+                            if FAST0_TG_OUTCOME_ENABLE and res_val:
+                                dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else 0.0
+                                ctx_val = float(context_score) if context_score is not None else 0.0
+                                if dist_val >= FAST0_TG_OUTCOME_MIN_DIST and (liq_long_usd_30s or 0) > 0:
+                                    try:
+                                        msg = format_fast0_outcome_message(
+                                            symbol=symbol, run_id=run_id, event_id=event_id,
+                                            res=res_val, entry_price=entry_price, tp_price=tp_price, sl_price=sl_price,
+                                            exit_price=exit_price_val, pnl_pct=pnl_val, hold_seconds=0,
+                                            dist_to_peak_pct=dist_val, context_score=ctx_val,
+                                        )
+                                        send_telegram(msg, strategy=STRATEGY, side="SHORT", mode="FAST0", event_id=event_id, context_score=ctx_val, entry_ok=True, formatted=True)
+                                    except Exception:
+                                        log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+                            return
+                except Exception as e:
+                    log_exception(logger, "FAST0_BYBIT_OUTCOME_ERROR", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME", extra={"error": str(e)})
+                    logger.info(
+                        "LIVE_OUTCOME_FALLBACK | source=candles | reason=bybit_err | symbol=%s run_id=%s",
+                        symbol, run_id,
+                    )
+                if not bybit_result:
+                    logger.info(
+                        "LIVE_OUTCOME_FALLBACK | source=candles | reason=bybit_timeout | symbol=%s run_id=%s",
+                        symbol, run_id,
+                    )
+            else:
+                fallback_reason = "no_position" if not position else "no_order_id"
+                logger.info(
+                    "LIVE_OUTCOME_FALLBACK | source=candles | reason=%s | symbol=%s run_id=%s",
+                    fallback_reason, symbol, run_id,
+                )
+
         summary = track_outcome(
             cfg,
             side="short",
@@ -257,7 +360,7 @@ def _run_fast0_outcome_watcher(
             dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else 0.0
             ctx_val = float(context_score) if context_score is not None else 0.0
             logger.info(
-                "FAST0_OUTCOME | symbol=%s | run_id=%s | res=%s | exit=%s | pnl_pct=%s | hold=%s | event_id=%s",
+                "FAST0_OUTCOME | symbol=%s | run_id=%s | res=%s | exit=%s | pnl_pct=%s | hold=%s | event_id=%s | outcome_source=candles | tp_sl_same_candle=%s | conflict_policy=%s",
                 symbol,
                 run_id,
                 res_val,
@@ -265,6 +368,8 @@ def _run_fast0_outcome_watcher(
                 f"{pnl_val:.2f}" if pnl_val is not None else "n/a",
                 f"{hold_val:.0f}" if hold_val is not None else "n/a",
                 event_id,
+                summary.get("tp_sl_same_candle", "n/a"),
+                summary.get("conflict_policy", "n/a"),
             )
             liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else 0.0
             if FAST0_TG_OUTCOME_ENABLE and res_val and res_val not in ("", "None"):

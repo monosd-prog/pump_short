@@ -183,6 +183,139 @@ def _mfe_mae_r_from_pct(
     return mfe_r, mae_r
 
 
+def close_from_live_outcome(
+    strategy: str,
+    symbol: str,
+    run_id: str,
+    event_id: str,
+    res: str,
+    exit_price: float,
+    pnl_pct: float,
+    ts_utc: str,
+    *,
+    log_path: Optional[str] = None,
+) -> bool:
+    """
+    Close LIVE position from Bybit-resolved outcome. Uses actual exit_price and pnl_pct from exchange.
+    Returns True if closed, False if position not found.
+    """
+    if res not in ("TP_hit", "SL_hit"):
+        logger.debug("close_from_live_outcome: skip res=%s", res)
+        return False
+    close_reason = "tp" if res == "TP_hit" else "sl"
+    state = load_state()
+    open_positions = state.get("open_positions") or {}
+    found = _find_position_for_outcome(open_positions, strategy, symbol, run_id, event_id)
+    if found is None:
+        logger.warning("close_from_live_outcome: no matching position strategy=%s symbol=%s run_id=%s event_id=%s", strategy, symbol, run_id, event_id)
+        return False
+
+    position_id, position = found
+    entry = float(position["entry"])
+    sl = float(position["sl"])
+    side = (position.get("side") or "SHORT").strip().upper()
+    risk_abs = abs(entry - sl)
+    risk_pct = (risk_abs / entry * 100.0) if entry > 0 else 1.0
+    pnl_r = (float(pnl_pct) / risk_pct) if risk_pct > 0 else 0.0
+    notional = float(position.get("notional_usd") or 0)
+    pnl_usd = notional * (float(pnl_pct) / 100.0) if notional else 0.0
+
+    record_close(state, strategy, position_id, close_reason, exit_price, pnl_r, pnl_usd, ts_utc)
+    save_state(state)
+
+    path = log_path or CLOSES_PATH
+    _append_close_row(
+        ts=ts_utc,
+        strategy=strategy,
+        symbol=symbol,
+        side=position.get("side", "SHORT"),
+        entry=entry,
+        tp=position["tp"],
+        sl=position["sl"],
+        exit_price=exit_price,
+        close_reason=close_reason,
+        pnl_r=pnl_r,
+        pnl_usd=pnl_usd,
+        run_id=run_id,
+        event_id=event_id or "",
+        log_path=path,
+        mfe_pct=None,
+        mae_pct=None,
+        mfe_r=None,
+        mae_r=None,
+    )
+    logger.info(
+        "close_from_live_outcome: closed strategy=%s symbol=%s position_id=%s reason=%s exit=%.4f pnl_r=%.2f pnl_usd=%.2f",
+        strategy, symbol, position_id, close_reason, exit_price, pnl_r, pnl_usd,
+    )
+    _write_live_outcome_to_datasets(position, close_reason, exit_price, pnl_r, pnl_pct, ts_utc)
+    return True
+
+
+def _write_live_outcome_to_datasets(
+    position: dict[str, Any],
+    close_reason: str,
+    exit_price: float,
+    pnl_r: float,
+    pnl_pct: float,
+    outcome_ts_utc: str,
+    base_dir: Optional[str] = None,
+) -> None:
+    """Write live close to datasets/outcomes_v3.csv with trade_type=LIVE."""
+    try:
+        from common.outcome_tracker import build_outcome_row
+        from common.io_dataset import write_outcome_row
+    except ImportError:
+        logger.debug("_write_live_outcome_to_datasets: skip (no common)")
+        return
+    strategy = position.get("strategy", "")
+    symbol = position.get("symbol", "")
+    side = (position.get("side") or "SHORT").strip()
+    entry = float(position.get("entry", 0))
+    sl = float(position.get("sl", 0))
+    run_id = position.get("run_id", "")
+    event_id = (position.get("event_id") or "") or ""
+    trade_id = position.get("trade_id") or make_position_id(strategy, run_id, event_id, symbol)
+    mode = position.get("mode", "live")
+    opened_ts = position.get("opened_ts", "")
+    hold_sec = _hold_seconds(opened_ts, outcome_ts_utc)
+    outcome_str = "TP_hit" if close_reason == "tp" else "SL_hit"
+    summary = {
+        "end_reason": outcome_str,
+        "outcome": outcome_str,
+        "pnl_pct": pnl_pct,
+        "hold_seconds": hold_sec,
+        "mae_pct": 0.0,
+        "mfe_pct": 0.0,
+        "entry_price": entry,
+        "tp_price": position.get("tp"),
+        "sl_price": sl,
+        "exit_price": exit_price,
+        "trade_type": "LIVE",
+        "details_payload": '{"source":"bybit","tp_hit":%s,"sl_hit":%s}' % ("true" if close_reason == "tp" else "false", "true" if close_reason == "sl" else "false"),
+    }
+    orow = build_outcome_row(
+        summary,
+        trade_id=trade_id,
+        event_id=event_id,
+        run_id=run_id,
+        symbol=symbol,
+        strategy=strategy,
+        mode=mode,
+        side=side,
+        outcome_time_utc=outcome_ts_utc,
+    )
+    if orow:
+        write_outcome_row(
+            orow,
+            strategy=strategy,
+            mode=mode,
+            wall_time_utc=outcome_ts_utc,
+            schema_version=3,
+            base_dir=base_dir or DATASET_BASE_DIR,
+        )
+
+
 def close_from_outcome(
     strategy: str,
     symbol: str,

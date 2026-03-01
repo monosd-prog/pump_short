@@ -473,6 +473,48 @@ class BybitLiveBroker:
             )
             raise
 
+    def get_closed_pnl(
+        self,
+        symbol: str,
+        start_time_ms: Optional[int] = None,
+        end_time_ms: Optional[int] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Fetch closed PnL records. Returns list of {symbol, orderId, side, avgEntryPrice, avgExitPrice, closedPnl, updatedTime, execType}."""
+        if self.dry_run:
+            return []
+        params = {"category": CATEGORY, "symbol": _norm_symbol(symbol), "limit": str(min(limit, 100))}
+        if start_time_ms is not None:
+            params["startTime"] = str(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = str(end_time_ms)
+        try:
+            j = _request("GET", "/v5/position/closed-pnl", self.api_key, self.api_secret, params=params)
+        except Exception as e:
+            logger.warning("get_closed_pnl failed symbol=%s: %s", symbol, e)
+            return []
+        lst = j.get("result", {}).get("list", []) or []
+        return lst
+
+    def get_executions(self, symbol: str, order_id: Optional[str] = None, start_time_ms: Optional[int] = None, end_time_ms: Optional[int] = None, limit: int = 50) -> list[dict]:
+        """Fetch execution records. orderId has highest priority if provided. Returns list of {execPrice, execQty, execTime, closedSize, ...}."""
+        if self.dry_run:
+            return []
+        params = {"category": CATEGORY, "symbol": _norm_symbol(symbol), "limit": str(min(limit, 100))}
+        if order_id:
+            params["orderId"] = order_id
+        if start_time_ms is not None:
+            params["startTime"] = str(start_time_ms)
+        if end_time_ms is not None:
+            params["endTime"] = str(end_time_ms)
+        try:
+            j = _request("GET", "/v5/execution/list", self.api_key, self.api_secret, params=params)
+        except Exception as e:
+            logger.warning("get_executions failed symbol=%s: %s", symbol, e)
+            return []
+        lst = j.get("result", {}).get("list", []) or []
+        return lst
+
     def cancel_order(self, symbol: str, order_id: str) -> None:
         """Cancel order by orderId."""
         if self.dry_run:
@@ -634,10 +676,12 @@ class BybitLiveBroker:
             logger.info("LIVE_DRY_RUN | set_trading_stop skipped (dry_run)")
             return None
         try:
-            self.place_market_order(symbol, side, qty, reduce_only=False, position_idx=position_idx)
+            order_res = self.place_market_order(symbol, side, qty, reduce_only=False, position_idx=position_idx)
         except Exception as e:
             logger.warning("LIVE_ORDER_REJECT | symbol=%s positionIdx=%s reason=%s", symbol, position_idx, e)
             return None
+
+        order_id = (order_res or {}).get("orderId") or ""
 
         tick_size = limits.get("tick_size") or 0.0001
         tp_rounded = _round_price_to_tick(tp, tick_size)
@@ -683,5 +727,7 @@ class BybitLiveBroker:
             "event_id": getattr(signal, "event_id", "") or "",
             "trade_id": trade_id,
             "mode": "live",
+            "order_id": order_id,
+            "position_idx": position_idx,
         }
         return position
