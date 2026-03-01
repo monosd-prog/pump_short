@@ -8,7 +8,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, Set
 
 import requests
 
@@ -45,6 +45,7 @@ def _request(
     api_secret: str,
     params: Optional[dict] = None,
     data: Optional[dict] = None,
+    allow_ret_codes: Optional[Set[int]] = None,
 ) -> dict:
     base = _base_url()
     url = base + path
@@ -67,8 +68,11 @@ def _request(
         r = requests.post(url, data=body, headers=headers, timeout=15)
     r.raise_for_status()
     j = r.json()
-    if j.get("retCode") != 0:
-        raise RuntimeError(f"Bybit API error retCode={j.get('retCode')} retMsg={j.get('retMsg')}")
+    ret_code = j.get("retCode")
+    if ret_code != 0:
+        if allow_ret_codes and ret_code in allow_ret_codes:
+            return j
+        raise RuntimeError(f"Bybit API error retCode={ret_code} retMsg={j.get('retMsg')}")
     return j
 
 
@@ -212,7 +216,16 @@ class BybitLiveBroker:
             "buyLeverage": str(leverage),
             "sellLeverage": str(leverage),
         }
-        _request("POST", "/v5/position/set-leverage", self.api_key, self.api_secret, data=data)
+        j = _request(
+            "POST", "/v5/position/set-leverage",
+            self.api_key, self.api_secret, data=data,
+            allow_ret_codes={110043},
+        )
+        if j.get("retCode") == 110043:
+            logger.info(
+                "LIVE_LEVERAGE_ALREADY_SET | symbol=%s leverage=%s retCode=110043",
+                symbol, leverage,
+            )
 
     def get_open_position(self, symbol: str) -> Optional[dict]:
         """Get open position for symbol. Returns {size, side, avgPrice} or None."""

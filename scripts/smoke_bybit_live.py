@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 _repo_root = Path(__file__).resolve().parents[1]
 if str(_repo_root) not in sys.path:
@@ -72,6 +73,34 @@ def test_set_trading_stop_dry_run() -> None:
     print("OK: set_trading_stop dry_run returns {} (no network)")
 
 
+def test_set_leverage_retcode_110043() -> None:
+    """set_leverage treats retCode=110043 (leverage not modified) as success, does not raise."""
+    def stub_110043(*a, **kw):
+        return {"retCode": 110043, "retMsg": "leverage not modified", "result": {}}
+
+    with patch("trading.bybit_live._request", side_effect=stub_110043):
+        b = BybitLiveBroker(api_key="k", api_secret="s", dry_run=False)
+        b.set_leverage("BTCUSDT", 4)
+    print("OK: set_leverage retCode=110043 does not raise")
+
+
+def test_set_leverage_other_retcode_raises() -> None:
+    """set_leverage raises for other non-zero retCode (via _request)."""
+    mock_resp = Mock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"retCode": 12345, "retMsg": "some other error", "result": {}}
+    mock_resp.raise_for_status = Mock()
+
+    with patch("trading.bybit_live.requests.post", return_value=mock_resp):
+        b = BybitLiveBroker(api_key="k", api_secret="s", dry_run=False)
+        try:
+            b.set_leverage("BTCUSDT", 4)
+            assert False, "expected RuntimeError"
+        except RuntimeError as e:
+            assert "12345" in str(e)
+    print("OK: set_leverage other retCode raises")
+
+
 def test_broker_get_broker_factory() -> None:
     """get_broker returns BybitLiveBroker when mode=live."""
     from trading.broker import get_broker
@@ -87,6 +116,8 @@ def main() -> None:
     test_round_price_to_tick()
     test_hedge_position_idx_in_payload()
     test_set_trading_stop_dry_run()
+    test_set_leverage_retcode_110043()
+    test_set_leverage_other_retcode_raises()
     test_broker_init()
     test_broker_get_broker_factory()
     print("smoke_bybit_live: OK")
