@@ -86,6 +86,54 @@ def _round_price_to_tick(price: float, tick_size: float) -> float:
     return round(price / ts) * ts
 
 
+def _tpsl_buffer(price: float, tick_size: float, min_pct: float = 0.0005) -> float:
+    """Safety buffer: max(3 ticks, price * min_pct)."""
+    ts = tick_size if tick_size and tick_size > 0 else 0.0001
+    buf_ticks = ts * 3
+    buf_pct = price * min_pct
+    return max(buf_ticks, buf_pct)
+
+
+def _recompute_tpsl_for_price_move(
+    side: str,
+    entry: float,
+    tp: float,
+    sl: float,
+    current_price: float,
+    tick_size: float,
+) -> tuple[float, float]:
+    """
+    Recompute TP/SL valid for current price. For SHORT: TP < current - buf, SL > current + buf.
+    For LONG: TP > current + buf, SL < current - buf. Preserves risk distance where possible.
+    """
+    buf = _tpsl_buffer(current_price, tick_size)
+    stop_dist = abs(sl - entry)
+    tp_dist = abs(tp - entry)
+    side_upper = (side or "").strip().upper()
+    if side_upper in ("SHORT", "SELL"):
+        sl_cand = entry + stop_dist
+        tp_cand = entry - tp_dist
+        if sl_cand <= current_price + buf:
+            sl_cand = current_price + buf
+        if tp_cand >= current_price - buf:
+            tp_cand = current_price - buf
+        if tp_cand >= sl_cand or tp_cand <= 0:
+            tp_cand = current_price - buf
+    else:
+        sl_cand = entry - stop_dist
+        tp_cand = entry + tp_dist
+        if sl_cand >= current_price - buf:
+            sl_cand = current_price - buf
+        if tp_cand <= current_price + buf:
+            tp_cand = current_price + buf
+        if tp_cand <= sl_cand or sl_cand <= 0:
+            sl_cand = current_price - buf
+    return (
+        _round_price_to_tick(tp_cand, tick_size),
+        _round_price_to_tick(sl_cand, tick_size),
+    )
+
+
 def side_to_position_idx(side: str) -> int:
     """
     Map side to Bybit positionIdx for hedge mode.
@@ -227,21 +275,52 @@ class BybitLiveBroker:
                 symbol, leverage,
             )
 
-    def get_open_position(self, symbol: str) -> Optional[dict]:
-        """Get open position for symbol. Returns {size, side, avgPrice} or None."""
+    def get_ticker_price(self, symbol: str) -> Optional[dict]:
+        """Fetch last/mark price from public tickers. Returns {lastPrice, markPrice} or None."""
+        if self.dry_run:
+            return None
+        try:
+            base = _base_url()
+            params = {"category": CATEGORY, "symbol": _norm_symbol(symbol)}
+            r = requests.get(f"{base}/v5/market/tickers", params=params, timeout=10)
+            r.raise_for_status()
+            j = r.json()
+            if j.get("retCode") != 0:
+                return None
+            lst = j.get("result", {}).get("list", []) or []
+            if not lst:
+                return None
+            item = lst[0]
+            last = float(item.get("lastPrice") or 0)
+            mark = float(item.get("markPrice") or last)
+            return {"lastPrice": last, "markPrice": mark}
+        except Exception as e:
+            logger.warning("get_ticker_price failed symbol=%s: %s", symbol, e)
+            return None
+
+    def get_open_position(self, symbol: str, side: Optional[str] = None) -> Optional[dict]:
+        """Get open position for symbol. side: filter by 'Sell'/'Buy' (hedge). Returns {size, side, avgPrice} or None."""
         params = {"category": CATEGORY, "symbol": _norm_symbol(symbol)}
         j = _request("GET", "/v5/position/list", self.api_key, self.api_secret, params=params)
         lst = j.get("result", {}).get("list", []) or []
+        want_side = (side or "").strip().capitalize()
+        if want_side.upper() == "SHORT":
+            want_side = "Sell"
+        elif want_side.upper() == "LONG":
+            want_side = "Buy"
         for pos in lst:
             sz = float(pos.get("size") or 0)
             if sz > 0:
+                pos_side = pos.get("side", "")
+                if want_side and pos_side != want_side:
+                    continue
                 logger.info(
                     "LIVE_POSITION | symbol=%s side=%s size=%s avgPrice=%s",
-                    symbol, pos.get("side"), sz, pos.get("avgPrice"),
+                    symbol, pos_side, sz, pos.get("avgPrice"),
                 )
                 return {
                     "size": sz,
-                    "side": pos.get("side", ""),
+                    "side": pos_side,
                     "avgPrice": float(pos.get("avgPrice") or 0),
                 }
         return None
@@ -402,6 +481,94 @@ class BybitLiveBroker:
         data = {"category": CATEGORY, "symbol": _norm_symbol(symbol), "orderId": order_id}
         _request("POST", "/v5/order/cancel", self.api_key, self.api_secret, data=data)
 
+    def _set_tpsl_with_retry(
+        self,
+        symbol: str,
+        position_idx: int,
+        side: str,
+        entry_price: float,
+        tp: float,
+        sl: float,
+        tick_size: float,
+        qty: float,
+    ) -> bool:
+        """
+        Set TP/SL. On failure: retry once with recomputed TP/SL from current price.
+        If retry fails: close position (reduce-only) and return False.
+        Returns True on success.
+        """
+        try:
+            logger.info(
+                "LIVE_TPSL_CALC | symbol=%s entry=%.4f tp=%.4f sl=%.4f tick_size=%.6f",
+                symbol, entry_price, tp, sl, tick_size,
+            )
+            self.set_trading_stop(symbol, position_idx, tp, sl)
+            return True
+        except RuntimeError as e:
+            err_str = str(e)
+            logger.warning(
+                "LIVE_TPSL_RETRY | symbol=%s first_attempt_failed %s",
+                symbol, err_str,
+            )
+            pos = self.get_open_position(symbol, side)
+            ticker = self.get_ticker_price(symbol)
+            last_price = None
+            if ticker:
+                last_price = ticker.get("lastPrice") or ticker.get("markPrice")
+            if last_price is None or last_price <= 0:
+                logger.warning("LIVE_TPSL_RETRY | symbol=%s no_last_price, closing position", symbol)
+                self._close_position_immediate(symbol, side, qty, position_idx)
+                logger.info(
+                    "LIVE_TPSL_FAILED_CLOSED | symbol=%s | side=%s | entry=%.4f | last=N/A | tp=%.4f | sl=%.4f | retCode=N/A retMsg=no_last_price",
+                    symbol, side, entry_price, tp, sl,
+                )
+                return False
+            entry_actual = float(pos.get("avgPrice", entry_price)) if pos else entry_price
+            tp_retry, sl_retry = _recompute_tpsl_for_price_move(
+                side, entry_actual, tp, sl, last_price, tick_size,
+            )
+            logger.info(
+                "LIVE_TPSL_CALC | symbol=%s last_price=%.4f entry_actual=%.4f tp_retry=%.4f sl_retry=%.4f",
+                symbol, last_price, entry_actual, tp_retry, sl_retry,
+            )
+            try:
+                self.set_trading_stop(symbol, position_idx, tp_retry, sl_retry)
+                return True
+            except RuntimeError as e2:
+                ret_code = ""
+                ret_msg = str(e2)
+                if "retCode=" in ret_msg:
+                    parts = ret_msg.split("retCode=")
+                    if len(parts) > 1:
+                        rest = parts[1].split()
+                        ret_code = rest[0].rstrip(",") if rest else ""
+                logger.info(
+                    "LIVE_TPSL_FAILED_CLOSED | symbol=%s | side=%s | entry=%.4f | last=%.4f | tp=%.4f | sl=%.4f | retCode=%s retMsg=%s",
+                    symbol, side, entry_actual, last_price, tp_retry, sl_retry, ret_code, ret_msg,
+                )
+                self._close_position_immediate(symbol, side, qty, position_idx)
+                return False
+
+    def _close_position_immediate(
+        self, symbol: str, side: str, qty: float, position_idx: int
+    ) -> None:
+        """Close position with reduce-only market order. SHORT -> Buy to close, LONG -> Sell to close."""
+        close_side = "Buy" if (side or "").strip().upper() in ("SHORT", "SELL") else "Sell"
+        try:
+            self.place_market_order(
+                symbol, close_side, qty, reduce_only=True, position_idx=position_idx
+            )
+            logger.info(
+                "LIVE_TPSL_CLOSING | symbol=%s reduce_only side=%s qty=%s",
+                symbol, close_side, qty,
+            )
+        except Exception as e:
+            logger.error(
+                "LIVE_TPSL_FAILED_CLOSE_ERROR | symbol=%s failed to close position: %s",
+                symbol, e,
+            )
+            raise
+
     def open_position(
         self,
         signal: Any,
@@ -486,10 +653,18 @@ class BybitLiveBroker:
                 symbol, position_idx,
             )
         else:
-            try:
-                self.set_trading_stop(symbol, position_idx, tp_rounded, sl_rounded)
-            except Exception:
-                pass
+            tpsl_ok = self._set_tpsl_with_retry(
+                symbol=symbol,
+                position_idx=position_idx,
+                side=side,
+                entry_price=entry_price,
+                tp=tp_rounded,
+                sl=sl_rounded,
+                tick_size=tick_size,
+                qty=qty,
+            )
+            if not tpsl_ok:
+                return None
 
         trade_id = str(uuid.uuid4())
         position = {

@@ -110,6 +110,131 @@ def test_broker_get_broker_factory() -> None:
     print("OK: get_broker('live') returns BybitLiveBroker")
 
 
+def _make_short_signal(
+    entry: float = 100_000.0, tp: float = 98_000.0, sl: float = 102_000.0
+) -> object:
+    """Minimal Signal for short_pump (stage=4, dist_to_peak_pct >= 3.5)."""
+    from short_pump.signals import Signal
+    return Signal(
+        strategy="short_pump",
+        symbol="BTCUSDT",
+        side="SHORT",
+        ts_utc="2026-02-26 12:00:00+0000",
+        run_id="r1",
+        event_id="e1",
+        entry_price=entry,
+        tp_price=tp,
+        sl_price=sl,
+        tp_pct=None,
+        sl_pct=None,
+        stage=4,
+        dist_to_peak_pct=5.0,
+        context_score=None,
+        cvd_30s=None,
+        cvd_1m=None,
+        liq_long_usd_30s=None,
+        liq_short_usd_30s=None,
+    )
+
+
+def test_open_position_tpsl_fail_then_retry_fail_closes() -> None:
+    """TPSL first fail, retry fails -> close_position called, open_position returns None."""
+    signal = _make_short_signal()
+    place_calls = []
+    close_calls = []
+
+    def mock_place(symbol, side, qty, reduce_only=False, **kw):
+        place_calls.append({"symbol": symbol, "side": side, "qty": qty, "reduce_only": reduce_only})
+        if reduce_only:
+            close_calls.append(place_calls[-1])
+        return {"orderId": "mock", "orderLinkId": "mock"}
+
+    def mock_set_tpsl(*a, **kw):
+        raise RuntimeError("Bybit API error retCode=10001 retMsg=StopLoss for Sell position should greater base_price")
+
+    def mock_get_position(symbol, side=None):
+        return {"size": 0.01, "side": "Sell", "avgPrice": 100_000.0}
+
+    def mock_ticker(symbol):
+        return {"lastPrice": 102_500.0, "markPrice": 102_500.0}
+
+    patches = [
+        patch("trading.bybit_live._request", side_effect=lambda *a, **kw: {"retCode": 0, "result": {"list": []}}),
+        patch.object(BybitLiveBroker, "place_market_order", side_effect=mock_place),
+        patch.object(BybitLiveBroker, "set_trading_stop", side_effect=mock_set_tpsl),
+        patch.object(BybitLiveBroker, "get_open_position", side_effect=mock_get_position),
+        patch.object(BybitLiveBroker, "get_ticker_price", side_effect=mock_ticker),
+        patch.object(BybitLiveBroker, "get_instrument_limits", return_value={
+            "min_qty": 0.001, "min_notional_usd": 5, "lot_step": 0.001, "qty_precision": 3,
+            "tick_size": 0.1,
+        }),
+        patch.object(BybitLiveBroker, "set_leverage"),
+    ]
+    with patch("trading.bybit_live.requests.get") as mock_get:
+        mock_get.return_value.json.return_value = {
+            "retCode": 0, "result": {"list": [{"symbol": "BTCUSDT", "positionIdx": 2}]}
+        }
+        mock_get.return_value.raise_for_status = Mock()
+        with patch.object(BybitLiveBroker, "_ensure_position_mode", return_value="hedge"):
+            for p in patches:
+                p.start()
+            try:
+                b = BybitLiveBroker(api_key="k", api_secret="s", dry_run=False)
+                pos = b.open_position(signal, qty_notional_usd=1000, risk_usd=20, leverage=4, opened_ts="")
+                assert pos is None
+                assert len(close_calls) >= 1
+                assert close_calls[0]["reduce_only"] is True
+                assert close_calls[0]["side"] == "Buy"
+            finally:
+                for p in patches:
+                    p.stop()
+    print("OK: open_position TPSL fail+retry fail -> close, return None")
+
+
+def test_open_position_tpsl_fail_then_retry_success() -> None:
+    """TPSL first fail, retry succeeds -> open_position returns position dict (trade accepted)."""
+    signal = _make_short_signal()
+    set_tpsl_calls = []
+
+    def mock_set_tpsl(symbol, position_idx, take_profit, stop_loss):
+        set_tpsl_calls.append((take_profit, stop_loss))
+        if len(set_tpsl_calls) == 1:
+            raise RuntimeError("Bybit API error retCode=10001 retMsg=StopLoss invalid")
+        return {}
+
+    patches = [
+        patch("trading.bybit_live._request", side_effect=lambda *a, **kw: {"retCode": 0, "result": {"list": []}}),
+        patch.object(BybitLiveBroker, "place_market_order", return_value={"orderId": "mock"}),
+        patch.object(BybitLiveBroker, "set_trading_stop", side_effect=mock_set_tpsl),
+        patch.object(BybitLiveBroker, "get_open_position", return_value={"size": 0.01, "side": "Sell", "avgPrice": 100_000.0}),
+        patch.object(BybitLiveBroker, "get_ticker_price", return_value={"lastPrice": 102_500.0, "markPrice": 102_500.0}),
+        patch.object(BybitLiveBroker, "get_instrument_limits", return_value={
+            "min_qty": 0.001, "min_notional_usd": 5, "lot_step": 0.001, "qty_precision": 3,
+            "tick_size": 0.1,
+        }),
+        patch.object(BybitLiveBroker, "set_leverage"),
+    ]
+    with patch("trading.bybit_live.requests.get") as mock_get:
+        mock_get.return_value.json.return_value = {
+            "retCode": 0, "result": {"list": [{"symbol": "BTCUSDT", "positionIdx": 2}]}
+        }
+        mock_get.return_value.raise_for_status = Mock()
+        with patch.object(BybitLiveBroker, "_ensure_position_mode", return_value="hedge"):
+            for p in patches:
+                p.start()
+            try:
+                b = BybitLiveBroker(api_key="k", api_secret="s", dry_run=False)
+                pos = b.open_position(signal, qty_notional_usd=1000, risk_usd=20, leverage=4, opened_ts="")
+                assert pos is not None
+                assert pos.get("symbol") == "BTCUSDT"
+                assert pos.get("side") == "SHORT"
+                assert len(set_tpsl_calls) == 2
+            finally:
+                for p in patches:
+                    p.stop()
+    print("OK: open_position TPSL fail+retry success -> trade accepted")
+
+
 def main() -> None:
     test_sign()
     test_side_to_position_idx()
@@ -118,6 +243,8 @@ def main() -> None:
     test_set_trading_stop_dry_run()
     test_set_leverage_retcode_110043()
     test_set_leverage_other_retcode_raises()
+    test_open_position_tpsl_fail_then_retry_fail_closes()
+    test_open_position_tpsl_fail_then_retry_success()
     test_broker_init()
     test_broker_get_broker_factory()
     print("smoke_bybit_live: OK")
