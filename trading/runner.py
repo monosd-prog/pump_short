@@ -269,11 +269,12 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
     state = load_state()
     equity = PAPER_EQUITY_USD
+    broker = None
     if EXECUTION_MODE == "live":
         try:
-            broker_for_equity = get_broker(EXECUTION_MODE, dry_run_live=dry_run_live)
-            if hasattr(broker_for_equity, "get_balance"):
-                equity = float(broker_for_equity.get_balance())
+            broker = get_broker(EXECUTION_MODE, dry_run_live=dry_run_live)
+            if hasattr(broker, "get_balance"):
+                equity = float(broker.get_balance())
         except ValueError as e:
             if "BYBIT_API" in str(e):
                 logger.error("LIVE_BROKER_ENABLED=false | %s", e)
@@ -286,6 +287,11 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00:00")
     if close_on_timeout(state, now_utc):
+        save_state(state)
+
+    if EXECUTION_MODE == "live" and broker is not None:
+        from trading.outcome_worker import run_outcome_worker
+        run_outcome_worker(state, broker)
         save_state(state)
 
     signals, raw_lines = get_latest_signals()

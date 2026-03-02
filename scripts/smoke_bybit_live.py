@@ -405,6 +405,58 @@ def test_runner_proceeds_with_2plus_positions_when_disable_max_concurrent() -> N
     print("OK: runner proceeds to open_position with 2+ positions when DISABLE_MAX_CONCURRENT_TRADES=true")
 
 
+def test_outcome_worker_closes_on_tp_resolved() -> None:
+    """Outcome worker calls close_from_live_outcome when resolve_live_outcome returns TP_hit."""
+    from trading.outcome_worker import run_outcome_worker
+
+    close_calls = []
+
+    def mock_close_from_live_outcome(*a, **kw):
+        close_calls.append({"args": a, "kwargs": kw})
+        return True
+
+    mock_broker = Mock()
+    state = {
+        "open_positions": {
+            "short_pump": {
+                "short_pump:run1:e1:BTCUSDT": {
+                    "strategy": "short_pump",
+                    "symbol": "BTCUSDT",
+                    "side": "SHORT",
+                    "entry": 100000.0,
+                    "tp": 98000.0,
+                    "sl": 102000.0,
+                    "opened_ts": "2026-02-26 12:00:00+00:00",
+                    "mode": "live",
+                    "order_id": "ord-123",
+                    "position_idx": 2,
+                    "run_id": "run1",
+                    "event_id": "e1",
+                },
+            },
+        },
+    }
+    outcome_tp = {
+        "status": "TP_hit",
+        "exit_price": 97950.0,
+        "exit_ts": "2026-02-26 12:05:00+00:00",
+        "pnl_pct": 0.05,
+    }
+
+    with patch("trading.bybit_live_outcome.resolve_live_outcome", return_value=outcome_tp):
+        with patch("trading.paper_outcome.close_from_live_outcome", side_effect=mock_close_from_live_outcome):
+            with patch("trading.state.save_state"):
+                run_outcome_worker(state, mock_broker)
+
+    assert len(close_calls) == 1, "close_from_live_outcome should be called once"
+    kw = close_calls[0]["kwargs"]
+    assert kw.get("res") == "TP_hit"
+    assert kw.get("symbol") == "BTCUSDT"
+    assert kw.get("run_id") == "run1"
+    assert kw.get("event_id") == "e1"
+    print("OK: outcome worker calls close_from_live_outcome on TP_hit")
+
+
 def main() -> None:
     test_sign()
     test_side_to_position_idx()
@@ -419,6 +471,7 @@ def main() -> None:
     test_open_position_tpsl_fail_then_retry_fail_closes()
     test_open_position_tpsl_fail_then_retry_success()
     test_runner_proceeds_with_2plus_positions_when_disable_max_concurrent()
+    test_outcome_worker_closes_on_tp_resolved()
     test_broker_init()
     test_broker_get_broker_factory()
     print("smoke_bybit_live: OK")

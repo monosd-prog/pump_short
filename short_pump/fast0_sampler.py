@@ -350,12 +350,17 @@ def _run_fast0_outcome_watcher(
                     )
                     return
             else:
-                # no_position / no_order_id: fallback to candles allowed (no live order on exchange).
+                # no_position / no_order_id: do NOT candle fallback; outcome worker will resolve if position appears.
                 fallback_reason = "no_position" if not position else "no_order_id"
                 logger.info(
-                    "LIVE_OUTCOME_FALLBACK | source=candles | reason=%s | symbol=%s run_id=%s",
+                    "UNKNOWN_LIVE_NOT_RESOLVED | reason=%s | symbol=%s run_id=%s | no candle fallback",
                     fallback_reason, symbol, run_id,
                 )
+                return
+
+        # Paper only: candle-based outcome. Live outcomes resolved by outcome worker (Bybit only).
+        if (mode or "").strip().lower() == "live":
+            return
 
         summary = track_outcome(
             cfg,

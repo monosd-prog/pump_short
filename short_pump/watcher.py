@@ -1380,6 +1380,21 @@ def run_watch_for_symbol(
                     log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
                 try:
+                    from trading.config import MODE
+                    if (MODE or "").strip().lower() == "live":
+                        # Live outcomes resolved by outcome worker (Bybit only); no candle outcome writing
+                        log_info(
+                            logger,
+                            "LIVE_OUTCOME_VIA_WORKER",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="OUTCOME",
+                            extra={"reason": "candle_outcome_skipped"},
+                        )
+                        _cleanup_symbol()
+                        return {"run_id": run_id, "symbol": cfg.symbol, "end_reason": "LIVE_OUTCOME_VIA_WORKER"}
+
                     summary = track_outcome_short(
                         cfg=cfg,
                         entry_ts_utc=entry_ts_utc,

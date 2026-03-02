@@ -1,5 +1,18 @@
 # Unified Live Outcome — план и список правок
 
+## Implementation status (2026-02)
+
+**Step A & B implemented:**
+
+- `trading/outcome_worker.py` — `run_outcome_worker(state, broker)` runs on every runner tick when EXECUTION_MODE=live, after close_on_timeout, before get_latest_signals.
+- `trading/runner.py` — calls `run_outcome_worker(state, broker)` when live.
+- `short_pump/fast0_sampler.py` — no candle fallback in live: no_position/no_order_id → UNKNOWN_LIVE_NOT_RESOLVED + return; track_outcome runs only when mode != live.
+- `short_pump/watcher.py` — when MODE=live, skips track_outcome_short; logs LIVE_OUTCOME_VIA_WORKER and returns. Live outcomes resolved exclusively by outcome worker.
+
+**Logs:** OUTCOME_WORKER_TICK, OUTCOME_RESOLVED, OUTCOME_PENDING. OUTCOME_NOT_FOUND not implemented (conservative: keep position pending).
+
+---
+
 ## 1. State открытых позиций
 
 **Хранение:** `trading.config.STATE_PATH` → `datasets/trading_state.json` (env: `TRADING_STATE_PATH`).
@@ -93,3 +106,18 @@
 - Если age > N минут (env OUTCOME_PENDING_ALERT_MINUTES, default 60): логировать OUTCOME_PENDING_OLD | position_id=... age_min=... symbol=... run_id=....
 - Опционально: писать в state pending_outcomes[position_id] = {last_check_ts, age_min} для метрик/дашборда.
 - При NOT_FOUND (get_open_position пуст, closed-pnl пуст, age > N): record_close с reason=outcome_not_found_sync, чтобы не плодить вечные pending.
+
+---
+
+## 6. Validation on VPS (systemd / journalctl)
+
+```bash
+# Watch outcome worker ticks (every runner tick)
+journalctl -u pump-short-live -f | grep -E "OUTCOME_WORKER_TICK|OUTCOME_RESOLVED|OUTCOME_PENDING"
+
+# Or via systemd status
+sudo systemctl status pump-short-live
+
+# Last 100 lines including outcome logs
+journalctl -u pump-short-live -n 100 --no-pager | grep -E "OUTCOME_|LIVE_OUTCOME_|UNKNOWN_LIVE"
+```
