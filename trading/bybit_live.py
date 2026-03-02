@@ -479,8 +479,11 @@ class BybitLiveBroker:
         start_time_ms: Optional[int] = None,
         end_time_ms: Optional[int] = None,
         limit: int = 50,
+        *,
+        raise_on_network_error: bool = False,
     ) -> list[dict]:
-        """Fetch closed PnL records. Returns list of {symbol, orderId, side, avgEntryPrice, avgExitPrice, closedPnl, updatedTime, execType}."""
+        """Fetch closed PnL records. Returns list of {symbol, orderId, side, avgEntryPrice, avgExitPrice, closedPnl, updatedTime, execType}.
+        If raise_on_network_error=True, re-raises TimeoutError, ConnectionError, requests.RequestException for retry logic."""
         if self.dry_run:
             return []
         params = {"category": CATEGORY, "symbol": _norm_symbol(symbol), "limit": str(min(limit, 100))}
@@ -491,6 +494,15 @@ class BybitLiveBroker:
         try:
             j = _request("GET", "/v5/position/closed-pnl", self.api_key, self.api_secret, params=params)
         except Exception as e:
+            if raise_on_network_error:
+                exc_types = (TimeoutError, ConnectionError, OSError)
+                try:
+                    import requests as _req
+                    exc_types = exc_types + (_req.exceptions.Timeout, _req.exceptions.ConnectionError, _req.exceptions.HTTPError, _req.exceptions.RequestException)
+                except ImportError:
+                    pass
+                if isinstance(e, exc_types):
+                    raise
             logger.warning("get_closed_pnl failed symbol=%s: %s", symbol, e)
             return []
         lst = j.get("result", {}).get("list", []) or []

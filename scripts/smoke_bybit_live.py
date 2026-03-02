@@ -186,6 +186,59 @@ def test_resolve_live_outcome_sl_hit() -> None:
     print("OK: resolve_live_outcome SL_hit for SHORT")
 
 
+def test_live_outcome_retry_no_candle_fallback_on_timeout() -> None:
+    """Resolver raises TimeoutError 3x -> outcome stays pending, track_outcome (candle fallback) NOT called."""
+    from short_pump.fast0_sampler import STRATEGY, _run_fast0_outcome_watcher
+
+    track_outcome_called = []
+
+    def track_outcome_spy(*a, **kw):
+        track_outcome_called.append(1)
+        return {"end_reason": "TIMEOUT", "outcome": "TIMEOUT", "pnl_pct": 0.0, "hold_seconds": 0, "exit_price": 0.0}
+
+    mock_position = {
+        "strategy": STRATEGY,
+        "symbol": "POWERUSDT",
+        "side": "SHORT",
+        "order_id": "ord-123",
+        "position_idx": 2,
+        "entry": 2.10,
+        "tp": 2.07,
+        "sl": 2.13,
+    }
+
+    def mock_load_state():
+        return {
+            "open_positions": {
+                STRATEGY: {
+                    f"{STRATEGY}:run1:e1:POWERUSDT": mock_position,
+                },
+            },
+        }
+
+    with patch("short_pump.fast0_sampler.LIVE_OUTCOME_RETRY_MAX_SEC", 4):
+        with patch("short_pump.fast0_sampler.LIVE_OUTCOME_RETRY_INTERVAL_SEC", 1):
+            with patch("short_pump.fast0_sampler.track_outcome", side_effect=track_outcome_spy):
+                with patch("trading.state.load_state", side_effect=mock_load_state):
+                    with patch("trading.state.make_position_id", return_value=f"{STRATEGY}:run1:e1:POWERUSDT"):
+                        with patch("trading.bybit_live_outcome.resolve_live_outcome", side_effect=TimeoutError("mock timeout")):
+                            _run_fast0_outcome_watcher(
+                                symbol="POWERUSDT",
+                                run_id="run1",
+                                event_id="e1",
+                                trade_id="t1",
+                                entry_price=2.10,
+                                tp_price=2.07,
+                                sl_price=2.13,
+                                entry_time_utc="2024-11-01 12:00:00+00:00",
+                                base_dir=None,
+                                mode="live",
+                            )
+
+    assert len(track_outcome_called) == 0
+    print("OK: live outcome retry on TimeoutError -> no candle fallback")
+
+
 def _make_short_signal(
     entry: float = 100_000.0, tp: float = 98_000.0, sl: float = 102_000.0
 ) -> object:
@@ -311,6 +364,47 @@ def test_open_position_tpsl_fail_then_retry_success() -> None:
     print("OK: open_position TPSL fail+retry success -> trade accepted")
 
 
+def test_runner_proceeds_with_2plus_positions_when_disable_max_concurrent() -> None:
+    """With DISABLE_MAX_CONCURRENT_TRADES=true and 2+ open positions, runner proceeds to broker.open_position in live mode."""
+    signal = _make_short_signal()
+    open_position_calls = []
+
+    mock_broker = Mock()
+    mock_broker.get_balance = Mock(return_value=10000.0)
+    mock_broker.open_position = Mock(side_effect=lambda *a, **kw: open_position_calls.append(1) or {"symbol": "BTCUSDT", "side": "SHORT"})
+
+    state_with_2 = {
+        "open_positions": {
+            "short_pump": {
+                "sp:r1:e1:BTCUSDT": {"symbol": "BTCUSDT", "entry": 100000, "tp": 98000, "sl": 102000},
+                "sp:r2:e2:ETHUSDT": {"symbol": "ETHUSDT", "entry": 3000, "tp": 2950, "sl": 3050},
+            }
+        },
+        "last_signal_ids": {},
+    }
+
+    patches = [
+        patch("trading.runner.EXECUTION_MODE", "live"),
+        patch("trading.runner.DISABLE_MAX_CONCURRENT_TRADES", True),
+        patch("trading.runner._acquire_lock", return_value=(True, None)),
+        patch("trading.runner.get_latest_signals", return_value=([signal], ["line1"])),
+        patch("trading.runner.load_state", return_value=state_with_2),
+        patch("trading.runner.get_broker", return_value=mock_broker),
+        patch("trading.runner.AUTO_TRADING_ENABLE", 1),
+    ]
+    for p in patches:
+        p.start()
+    try:
+        from trading.runner import run_once
+        run_once(dry_run_live=True)
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert len(open_position_calls) >= 1, "broker.open_position should be called when DISABLE_MAX_CONCURRENT_TRADES=true"
+    print("OK: runner proceeds to open_position with 2+ positions when DISABLE_MAX_CONCURRENT_TRADES=true")
+
+
 def main() -> None:
     test_sign()
     test_side_to_position_idx()
@@ -321,8 +415,10 @@ def main() -> None:
     test_set_leverage_other_retcode_raises()
     test_resolve_live_outcome_tp_hit()
     test_resolve_live_outcome_sl_hit()
+    test_live_outcome_retry_no_candle_fallback_on_timeout()
     test_open_position_tpsl_fail_then_retry_fail_closes()
     test_open_position_tpsl_fail_then_retry_success()
+    test_runner_proceeds_with_2plus_positions_when_disable_max_concurrent()
     test_broker_init()
     test_broker_get_broker_factory()
     print("smoke_bybit_live: OK")

@@ -22,6 +22,7 @@ from common.io_dataset import get_dataset_dir
 from trading.config import (
     AUTO_TRADING_ENABLE,
     DATASET_BASE_DIR,
+    DISABLE_MAX_CONCURRENT_TRADES,
     EXECUTION_MODE,
     FIXED_POSITION_USD,
     LEVERAGE,
@@ -395,7 +396,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 _finish_queue_processing(raw_lines)
                 save_state(state)
                 return
-            if count_open_positions(state, None) >= MAX_CONCURRENT_TRADES:
+            if not DISABLE_MAX_CONCURRENT_TRADES and count_open_positions(state, None) >= MAX_CONCURRENT_TRADES:
                 logger.info(
                     "LIVE_REJECTED | reason=max_concurrent_trades strategy=%s symbol=%s",
                     signal.strategy, signal.symbol,

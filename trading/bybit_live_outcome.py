@@ -52,11 +52,13 @@ def resolve_live_outcome(
     broker: Any = None,
     poll_sec: float = LIVE_OUTCOME_POLL_SEC,
     timeout_sec: int = LIVE_OUTCOME_TIMEOUT_SEC,
+    raise_on_network_error: bool = False,
 ) -> Optional[dict[str, Any]]:
     """
     Resolve LIVE trade outcome from Bybit closed PnL.
     Returns {status, exit_price, exit_ts, reason, pnl_pct} or None if not yet resolved.
     status: "TP_hit" | "SL_hit" | "manual" | "unknown"
+    raise_on_network_error: propagate Timeout/ConnectionError for retry logic in caller.
     """
     if not broker:
         try:
@@ -80,7 +82,13 @@ def resolve_live_outcome(
     start = time.monotonic()
     while (time.monotonic() - start) < timeout_sec:
         end_ms = int(time.time() * 1000)
-        records = broker.get_closed_pnl(symbol, start_time_ms=opened_ms - 60_000, end_time_ms=end_ms + 60_000, limit=100)
+        records = broker.get_closed_pnl(
+            symbol,
+            start_time_ms=opened_ms - 60_000,
+            end_time_ms=end_ms + 60_000,
+            limit=100,
+            raise_on_network_error=raise_on_network_error,
+        )
         for rec in records:
             rec_side = rec.get("side", "")
             if rec_side != want_side:

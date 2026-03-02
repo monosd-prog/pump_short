@@ -52,6 +52,11 @@ FAST0_OUTCOME_WATCH_SEC = int(os.getenv("FAST0_OUTCOME_WATCH_SEC", "1800"))
 FAST0_OUTCOME_POLL_SEC = int(os.getenv("FAST0_OUTCOME_POLL_SEC", "5"))
 FAST0_MAX_WATCHERS = int(os.getenv("FAST0_MAX_WATCHERS", "20"))
 
+# Live outcome retry: do NOT fallback to candles on Bybit timeout/network errors until max elapsed.
+# Safer: after max, mark UNKNOWN_LIVE without closing paper (position may still be open on exchange).
+LIVE_OUTCOME_RETRY_MAX_SEC = int(os.getenv("LIVE_OUTCOME_RETRY_MAX_SEC", "120").replace(",", "."))
+LIVE_OUTCOME_RETRY_INTERVAL_SEC = int(os.getenv("LIVE_OUTCOME_RETRY_INTERVAL_SEC", "10").replace(",", "."))
+
 _active_fast0_watchers = 0
 _fast0_watchers_lock = threading.Lock()
 
@@ -203,6 +208,8 @@ def _run_fast0_outcome_watcher(
             entry_ts = pd.Timestamp.now(tz="UTC")
 
         # LIVE: try Bybit resolver first (position must be in state with order_id)
+        # no_position/no_order_id: fallback to candles allowed.
+        # bybit_timeout/network_error: retry until LIVE_OUTCOME_RETRY_MAX_SEC; then UNKNOWN_LIVE (no candle fallback).
         bybit_result = None
         if (mode or "").strip().lower() == "live":
             wait_sec = 0
@@ -234,70 +241,116 @@ def _run_fast0_outcome_watcher(
                 wait_sec += 5
 
             if position and position.get("order_id") and position.get("position_idx") is not None:
+                # Retry loop: do NOT candle fallback on timeout/network errors until max elapsed.
+                order_id_val = position["order_id"]
+                position_idx_val = position.get("position_idx")
+                _RETRY_EXC = (TimeoutError, ConnectionError, OSError)
                 try:
-                    from trading.bybit_live_outcome import resolve_live_outcome
-                    bybit_result = resolve_live_outcome(
-                        symbol=symbol,
-                        order_id=position["order_id"],
-                        position_idx=int(position["position_idx"]),
-                        opened_ts=entry_time_utc,
-                        entry_price=entry_price,
-                        tp_price=tp_price,
-                        sl_price=sl_price,
-                        side=position.get("side", "SHORT"),
-                    )
-                    if bybit_result:
-                        res_val = bybit_result.get("status", "unknown")
-                        if res_val in ("TP_hit", "SL_hit"):
-                            exit_price_val = float(bybit_result.get("exit_price", 0))
-                            pnl_val = float(bybit_result.get("pnl_pct", 0))
-                            outcome_time_utc = bybit_result.get("exit_ts", datetime.now(timezone.utc).isoformat())
+                    import requests as _req
+                    _RETRY_EXC = _RETRY_EXC + (_req.exceptions.Timeout, _req.exceptions.ConnectionError, _req.exceptions.HTTPError, _req.exceptions.RequestException)
+                except ImportError:
+                    pass
+
+                retry_start = time.monotonic()
+                attempt = 0
+                while True:
+                    attempt += 1
+                    elapsed = time.monotonic() - retry_start
+                    remaining = max(0, LIVE_OUTCOME_RETRY_MAX_SEC - elapsed)
+                    if remaining <= 0:
+                        break
+                    try:
+                        from trading.bybit_live_outcome import resolve_live_outcome
+                        bybit_result = resolve_live_outcome(
+                            symbol=symbol,
+                            order_id=order_id_val,
+                            position_idx=int(position_idx_val),
+                            opened_ts=entry_time_utc,
+                            entry_price=entry_price,
+                            tp_price=tp_price,
+                            sl_price=sl_price,
+                            side=position.get("side", "SHORT"),
+                            timeout_sec=min(LIVE_OUTCOME_RETRY_INTERVAL_SEC, max(1, int(remaining))),
+                            raise_on_network_error=True,
+                        )
+                        if bybit_result:
+                            break
+                    except Exception as e:
+                        if isinstance(e, _RETRY_EXC):
+                            next_in = min(LIVE_OUTCOME_RETRY_INTERVAL_SEC, max(0, int(remaining)))
                             logger.info(
-                                "LIVE_OUTCOME_RESOLVED | source=bybit | res=%s | exit=%.4f | pnl_pct=%.2f | orderId=%s | positionIdx=%s",
-                                res_val, exit_price_val, pnl_val,
-                                bybit_result.get("order_id", ""), position.get("position_idx"),
+                                "LIVE_OUTCOME_RETRY_SCHEDULED | symbol=%s run_id=%s order_id=%s positionIdx=%s attempt=%s next_in_sec=%s elapsed_sec=%.0f err=%s",
+                                symbol, run_id, order_id_val, position_idx_val, attempt, next_in, elapsed, type(e).__name__,
                             )
-                            try:
-                                from trading.paper_outcome import close_from_live_outcome
-                                close_from_live_outcome(
-                                    strategy=STRATEGY,
-                                    symbol=symbol,
-                                    run_id=run_id,
-                                    event_id=event_id,
-                                    res=res_val,
-                                    exit_price=exit_price_val,
-                                    pnl_pct=pnl_val,
-                                    ts_utc=outcome_time_utc,
-                                )
-                            except Exception:
-                                log_exception(logger, "FAST0_LIVE_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
-                            if FAST0_TG_OUTCOME_ENABLE and res_val:
-                                dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else 0.0
-                                ctx_val = float(context_score) if context_score is not None else 0.0
-                                if dist_val >= FAST0_TG_OUTCOME_MIN_DIST and (liq_long_usd_30s or 0) > 0:
-                                    try:
-                                        msg = format_fast0_outcome_message(
-                                            symbol=symbol, run_id=run_id, event_id=event_id,
-                                            res=res_val, entry_price=entry_price, tp_price=tp_price, sl_price=sl_price,
-                                            exit_price=exit_price_val, pnl_pct=pnl_val, hold_seconds=0,
-                                            dist_to_peak_pct=dist_val, context_score=ctx_val,
-                                        )
-                                        send_telegram(msg, strategy=STRATEGY, side="SHORT", mode="FAST0", event_id=event_id, context_score=ctx_val, entry_ok=True, formatted=True)
-                                    except Exception:
-                                        log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
-                            return
-                except Exception as e:
-                    log_exception(logger, "FAST0_BYBIT_OUTCOME_ERROR", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME", extra={"error": str(e)})
+                            if remaining <= LIVE_OUTCOME_RETRY_INTERVAL_SEC:
+                                break
+                            time.sleep(next_in)
+                            continue
+                        log_exception(logger, "FAST0_BYBIT_OUTCOME_ERROR", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME", extra={"error": str(e)})
+                        break
+
+                    next_in = min(LIVE_OUTCOME_RETRY_INTERVAL_SEC, max(0, int(remaining)))
                     logger.info(
-                        "LIVE_OUTCOME_FALLBACK | source=candles | reason=bybit_err | symbol=%s run_id=%s",
-                        symbol, run_id,
+                        "LIVE_OUTCOME_RETRY_SCHEDULED | symbol=%s run_id=%s order_id=%s positionIdx=%s attempt=%s next_in_sec=%s elapsed_sec=%.0f reason=bybit_timeout",
+                        symbol, run_id, order_id_val, position_idx_val, attempt, next_in, elapsed,
                     )
-                if not bybit_result:
+                    if remaining <= LIVE_OUTCOME_RETRY_INTERVAL_SEC:
+                        break
+                    time.sleep(next_in)
+
+                if bybit_result:
+                    res_val = bybit_result.get("status", "unknown")
+                    if res_val in ("TP_hit", "SL_hit"):
+                        exit_price_val = float(bybit_result.get("exit_price", 0))
+                        pnl_val = float(bybit_result.get("pnl_pct", 0))
+                        outcome_time_utc = bybit_result.get("exit_ts", datetime.now(timezone.utc).isoformat())
+                        logger.info(
+                            "LIVE_OUTCOME_RESOLVED | source=bybit | res=%s | exit=%.4f | pnl_pct=%.2f | orderId=%s | positionIdx=%s",
+                            res_val, exit_price_val, pnl_val,
+                            bybit_result.get("order_id", ""), position_idx_val,
+                        )
+                        try:
+                            from trading.paper_outcome import close_from_live_outcome
+                            close_from_live_outcome(
+                                strategy=STRATEGY,
+                                symbol=symbol,
+                                run_id=run_id,
+                                event_id=event_id,
+                                res=res_val,
+                                exit_price=exit_price_val,
+                                pnl_pct=pnl_val,
+                                ts_utc=outcome_time_utc,
+                            )
+                        except Exception:
+                            log_exception(logger, "FAST0_LIVE_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+                        if FAST0_TG_OUTCOME_ENABLE and res_val:
+                            dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else 0.0
+                            ctx_val = float(context_score) if context_score is not None else 0.0
+                            if dist_val >= FAST0_TG_OUTCOME_MIN_DIST and (liq_long_usd_30s or 0) > 0:
+                                try:
+                                    msg = format_fast0_outcome_message(
+                                        symbol=symbol, run_id=run_id, event_id=event_id,
+                                        res=res_val, entry_price=entry_price, tp_price=tp_price, sl_price=sl_price,
+                                        exit_price=exit_price_val, pnl_pct=pnl_val, hold_seconds=0,
+                                        dist_to_peak_pct=dist_val, context_score=ctx_val,
+                                    )
+                                    send_telegram(msg, strategy=STRATEGY, side="SHORT", mode="FAST0", event_id=event_id, context_score=ctx_val, entry_ok=True, formatted=True)
+                                except Exception:
+                                    log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+                        return
+                    # bybit_result with manual/unknown: no candle fallback
+                    return
+                else:
+                    # Max retry elapsed: UNKNOWN_LIVE. Safer: do NOT close paper, do NOT candle fallback.
+                    # Position may still be open on exchange; closing paper would desync.
+                    elapsed_total = time.monotonic() - retry_start
                     logger.info(
-                        "LIVE_OUTCOME_FALLBACK | source=candles | reason=bybit_timeout | symbol=%s run_id=%s",
-                        symbol, run_id,
+                        "LIVE_OUTCOME_UNKNOWN_LIVE | symbol=%s run_id=%s order_id=%s positionIdx=%s elapsed_sec=%.0f | PENDING_LIVE_OUTCOME no candle fallback",
+                        symbol, run_id, order_id_val, position_idx_val, elapsed_total,
                     )
+                    return
             else:
+                # no_position / no_order_id: fallback to candles allowed (no live order on exchange).
                 fallback_reason = "no_position" if not position else "no_order_id"
                 logger.info(
                     "LIVE_OUTCOME_FALLBACK | source=candles | reason=%s | symbol=%s run_id=%s",

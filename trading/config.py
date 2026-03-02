@@ -41,6 +41,7 @@ MAX_RISK_USD_PER_TRADE = float(os.getenv("MAX_RISK_USD_PER_TRADE", "7.0"))
 MAX_LEVERAGE = int(os.getenv("MAX_LEVERAGE", "4"))
 MAX_CONCURRENT_TRADES = int(os.getenv("MAX_CONCURRENT_TRADES", "1"))
 MAX_DAILY_LOSS_USD = float(os.getenv("MAX_DAILY_LOSS_USD", "21.0"))
+DISABLE_MAX_CONCURRENT_TRADES = (os.getenv("DISABLE_MAX_CONCURRENT_TRADES", "true").strip().lower() in ("1", "true", "yes", "y"))
 
 # Stop distance validation: reject if stop < 0.2% or > 5% of entry
 STOP_DISTANCE_MIN_PCT = float(os.getenv("STOP_DISTANCE_MIN_PCT", "0.002"))
