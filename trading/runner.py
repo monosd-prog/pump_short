@@ -9,7 +9,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 # Ensure project root on path
 _ROOT = Path(__file__).resolve().parent.parent
@@ -242,6 +242,52 @@ def run_once(*, dry_run_live: bool = False) -> None:
                 pass
 
 
+def _normalize_position_for_record(
+    position: dict,
+    *,
+    signal: Any,
+    notional_usd: float,
+    risk_usd: float,
+    entry_f: float,
+    tp: float,
+    sl_f: float,
+    leverage_use: int,
+) -> dict:
+    """
+    Normalize position dict for record_open. Merge broker result with signal data
+    so LIVE_ACCEPTED always writes a complete position (strategy, symbol, side, mode,
+    opened_ts, run_id, event_id, status, entry, tp, sl, notional_usd, risk_usd,
+    order_id, position_idx).
+    """
+    strategy = position.get("strategy") or getattr(signal, "strategy", "")
+    symbol = position.get("symbol") or getattr(signal, "symbol", "")
+    side = position.get("side") or getattr(signal, "side", "SHORT")
+    opened_ts = position.get("opened_ts") or (getattr(signal, "ts_utc", "") or "")
+    run_id = position.get("run_id") if position.get("run_id") is not None else (getattr(signal, "run_id", "") or "")
+    event_id = position.get("event_id") if position.get("event_id") is not None else (str(getattr(signal, "event_id", "") or ""))
+
+    out = dict(position)
+    out["strategy"] = strategy
+    out["symbol"] = symbol
+    out["side"] = side
+    out["mode"] = position.get("mode") or ("live" if EXECUTION_MODE == "live" else "paper")
+    out["opened_ts"] = opened_ts
+    out["run_id"] = run_id
+    out["event_id"] = event_id
+    out["status"] = position.get("status", "open")
+    out["entry"] = float(position.get("entry", entry_f) or entry_f)
+    out["tp"] = float(position.get("tp", tp) or tp)
+    out["sl"] = float(position.get("sl", sl_f) or sl_f)
+    out["notional_usd"] = float(position.get("notional_usd", notional_usd) or notional_usd)
+    out["risk_usd"] = float(position.get("risk_usd", risk_usd) or risk_usd)
+    out["leverage"] = int(position.get("leverage", leverage_use) or leverage_use)
+    # Live: ensure order_id/position_idx present (for outcome worker)
+    if EXECUTION_MODE == "live":
+        out.setdefault("order_id", position.get("order_id", ""))
+        out.setdefault("position_idx", position.get("position_idx"))
+    return out
+
+
 def _fmt_opt(val: Optional[float | int], fmt: str = "%s") -> str:
     """Format optional value for journald log; use N/A if None."""
     if val is None:
@@ -445,6 +491,17 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             _finish_queue_processing(raw_lines)
             save_state(state)
             return
+
+        position = _normalize_position_for_record(
+            position,
+            signal=signal,
+            notional_usd=notional_usd,
+            risk_usd=risk_usd,
+            entry_f=entry_f,
+            tp=tp,
+            sl_f=sl_f,
+            leverage_use=leverage_use,
+        )
         if EXECUTION_MODE == "live":
             logger.info(
                 "LIVE_ACCEPTED | strategy=%s symbol=%s position_id=%s entry=%.4f notional=%.2f risk_usd=%.2f",

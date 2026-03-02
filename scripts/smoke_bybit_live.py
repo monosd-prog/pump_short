@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -13,6 +14,9 @@ if str(_repo_root) not in sys.path:
 os.environ["BYBIT_API_KEY"] = "test_key"
 os.environ["BYBIT_API_SECRET"] = "test_secret"
 os.environ["BYBIT_TESTNET"] = "true"
+# Use temp state so smoke never touches /root/pump_short/datasets/trading_state.json
+_SMOKE_STATE_PATH = os.path.join(tempfile.gettempdir(), "trading_state_smoke.json")
+os.environ["TRADING_STATE_PATH"] = _SMOKE_STATE_PATH
 
 from trading.bybit_live import BybitLiveBroker, _round_price_to_tick, _sign, side_to_position_idx
 
@@ -371,7 +375,23 @@ def test_runner_proceeds_with_2plus_positions_when_disable_max_concurrent() -> N
 
     mock_broker = Mock()
     mock_broker.get_balance = Mock(return_value=10000.0)
-    mock_broker.open_position = Mock(side_effect=lambda *a, **kw: open_position_calls.append(1) or {"symbol": "BTCUSDT", "side": "SHORT"})
+
+    def mock_open(signal, *args, **kwargs):
+        open_position_calls.append(1)
+        return {
+            "strategy": getattr(signal, "strategy", "short_pump"),
+            "symbol": getattr(signal, "symbol", "BTCUSDT"),
+            "side": getattr(signal, "side", "SHORT"),
+            "mode": "live",
+            "order_id": "mock-ord-123",
+            "position_idx": 2,
+            "run_id": getattr(signal, "run_id", ""),
+            "event_id": getattr(signal, "event_id", ""),
+            "entry": float(getattr(signal, "entry_price", 100000)),
+            "tp": float(getattr(signal, "tp_price", 98000)),
+            "sl": float(getattr(signal, "sl_price", 102000)),
+        }
+    mock_broker.open_position = Mock(side_effect=mock_open)
 
     state_with_2 = {
         "open_positions": {
@@ -475,6 +495,11 @@ def main() -> None:
     test_broker_init()
     test_broker_get_broker_factory()
     print("smoke_bybit_live: OK")
+    # Cleanup temp state
+    try:
+        os.remove(_SMOKE_STATE_PATH)
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":
