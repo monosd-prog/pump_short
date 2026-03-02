@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Optional, Set
 
 import requests
+from urllib.parse import urlencode, quote
 
 from trading.instrument import InstrumentLimits, round_qty_down, set_instrument_limits_override
 
@@ -38,6 +39,39 @@ def _sign(api_key: str, api_secret: str, timestamp: str, recv_window: str, paylo
     return sig
 
 
+def _build_query(params: Optional[dict]) -> str:
+    """
+    Build deterministic query string for Bybit v5 GET signature and URL.
+    - drops None values (and None items inside lists/tuples)
+    - converts values to strings
+    - forbids float (must be pre-formatted without exponent in caller)
+    - sorts by key (ASCII) for stable ordering
+    """
+    if not params:
+        return ""
+    items: list[tuple[str, str]] = []
+    for k in sorted(params.keys()):
+        v = params.get(k)
+        if v is None:
+            continue
+        if isinstance(v, float):
+            raise ValueError(f"Bybit GET param {k} must not be float")
+        if isinstance(v, (list, tuple)):
+            for x in v:
+                if x is None:
+                    continue
+                if isinstance(x, float):
+                    raise ValueError(f"Bybit GET param {k} must not contain float")
+                items.append((str(k), str(x)))
+        else:
+            items.append((str(k), str(v)))
+    if not items:
+        return ""
+    # urlencode preserves the order of the provided list of tuples.
+    # Use quote (not quote_plus) so spaces (if any) are encoded as %20 consistently.
+    return urlencode(items, doseq=True, quote_via=quote)
+
+
 def _request(
     method: str,
     path: str,
@@ -56,11 +90,11 @@ def _request(
         "X-BAPI-RECV-WINDOW": RECV_WINDOW,
     }
     if method.upper() == "GET":
-        params = params or {}
-        qs = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-        payload = qs
-        headers["X-BAPI-SIGN"] = _sign(api_key, api_secret, timestamp, RECV_WINDOW, payload)
-        r = requests.get(url, params=params, headers=headers, timeout=15)
+        query = _build_query(params or {})
+        headers["X-BAPI-SIGN"] = _sign(api_key, api_secret, timestamp, RECV_WINDOW, query)
+        full_url = f"{url}?{query}" if query else url
+        # IMPORTANT: do NOT pass params=; requests may reorder/encode differently than what we signed.
+        r = requests.get(full_url, headers=headers, timeout=15)
     else:
         body = json.dumps(data) if data else "{}"
         headers["X-BAPI-SIGN"] = _sign(api_key, api_secret, timestamp, RECV_WINDOW, body)

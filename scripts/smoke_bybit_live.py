@@ -19,6 +19,7 @@ _SMOKE_STATE_PATH = os.path.join(tempfile.gettempdir(), "trading_state_smoke.jso
 os.environ["TRADING_STATE_PATH"] = _SMOKE_STATE_PATH
 
 from trading.bybit_live import BybitLiveBroker, _round_price_to_tick, _sign, side_to_position_idx
+from trading.bybit_live import _build_query, _request
 
 
 def test_sign() -> None:
@@ -36,6 +37,38 @@ def test_broker_init() -> None:
     assert b.dry_run is True
     assert "testnet" in b._base
     print("OK: BybitLiveBroker init (dry_run)")
+
+
+def test_get_query_string_signed_matches_sent_url() -> None:
+    """GET signature payload must match the exact query string in the URL (no params= re-encoding)."""
+    fixed_ts_ms = "1700000000000"
+    api_key = "k"
+    api_secret = "s"
+    recv_window = "5000"
+    params = {
+        "category": "linear",
+        "symbol": "BTCUSDT",
+        "limit": 10,
+        "startTime": 1700000000000,
+        "endTime": 1700000009999,
+    }
+    query = _build_query(params)
+    assert query == "category=linear&endTime=1700000009999&limit=10&startTime=1700000000000&symbol=BTCUSDT"
+
+    expected_sig = _sign(api_key, api_secret, fixed_ts_ms, recv_window, query)
+    mock_resp = Mock()
+    mock_resp.raise_for_status = Mock()
+    mock_resp.json.return_value = {"retCode": 0, "result": {}}
+
+    with patch("trading.bybit_live.time.time", return_value=int(fixed_ts_ms) / 1000.0):
+        with patch("trading.bybit_live.requests.get", return_value=mock_resp) as mock_get:
+            _request("GET", "/v5/position/closed-pnl", api_key, api_secret, params=params)
+
+    called_url = mock_get.call_args[0][0]
+    called_headers = mock_get.call_args[1]["headers"]
+    assert called_url.endswith("/v5/position/closed-pnl?" + query)
+    assert called_headers["X-BAPI-SIGN"] == expected_sig
+    print("OK: GET query string is identical in sign and URL")
 
 
 def test_side_to_position_idx() -> None:
@@ -479,6 +512,7 @@ def test_outcome_worker_closes_on_tp_resolved() -> None:
 
 def main() -> None:
     test_sign()
+    test_get_query_string_signed_matches_sent_url()
     test_side_to_position_idx()
     test_round_price_to_tick()
     test_hedge_position_idx_in_payload()
