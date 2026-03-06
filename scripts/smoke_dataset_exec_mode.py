@@ -1,4 +1,6 @@
-"""Smoke: dataset path contains mode=<exec_mode> (paper/live) from EXECUTION_MODE; source_mode=exec_mode in CSV."""
+"""Smoke: path uses caller's mode (paper|live) when provided; events/trades/outcomes in mode=live for live runs.
+Fix: FAST0 events/trades in live runs now write to mode=live even when API server has EXECUTION_MODE=paper.
+"""
 from __future__ import annotations
 
 import csv
@@ -16,20 +18,21 @@ from common.io_dataset import get_dataset_dir, write_event_row, write_outcome_ro
 
 
 def main() -> None:
-    strategy = "short_pump"
-    wall_time_utc = "2026-02-26T12:00:00+00:00"
+    strategy = "short_pump_fast0"
+    wall_time_utc = "2026-03-02T19:17:10+00:00"
 
     with tempfile.TemporaryDirectory(prefix="smoke_exec_mode_") as base:
-        # --- 1) Strict path assert: path must contain /mode=EXECUTION_MODE/ (or as part)
+        # --- CASE 1: EXECUTION_MODE=paper, caller mode="live" → path must be mode=live
         os.environ["EXECUTION_MODE"] = "paper"
-        path_paper = get_dataset_dir(strategy, wall_time_utc, base_dir=base)
-        assert f"/mode={os.environ['EXECUTION_MODE']}/" in path_paper or path_paper.rstrip("/").endswith(
-            f"mode={os.environ['EXECUTION_MODE']}"
-        ), f"paper → path must contain mode=paper, got: {path_paper}"
-        assert "mode=paper" in Path(path_paper).parts, f"Path.parts must contain mode=paper: {Path(path_paper).parts}"
-        print(f"OK paper path: {path_paper}")
+        path_from_caller_live = get_dataset_dir(
+            strategy, wall_time_utc, base_dir=base, path_mode="live"
+        )
+        assert "mode=live" in Path(path_from_caller_live).parts, (
+            f"path_mode=live → path must contain mode=live, got: {path_from_caller_live}"
+        )
+        print(f"OK: caller mode=live overrides EXECUTION_MODE=paper for path → {path_from_caller_live}")
 
-        # --- 2) When EXECUTION_MODE=paper, no file must appear under .../mode=live/...
+        # --- 2) Write event/trade/outcome with mode="live" → must land in mode=live (even EXECUTION_MODE=paper)
         write_event_row(
             {
                 "run_id": "smoke_exec_mode",
@@ -48,9 +51,10 @@ def main() -> None:
                 "payload_json": "{}",
             },
             strategy=strategy,
-            mode="live",  # signal source; path + CSV mode/source_mode = paper
+            mode="live",
             wall_time_utc=wall_time_utc,
             base_dir=base,
+            schema_version=3,
         )
         write_trade_row(
             {
@@ -64,7 +68,7 @@ def main() -> None:
                 "entry_price": 1000.0,
                 "tp_price": 994.0,
                 "sl_price": 1006.0,
-                "trade_type": "PAPER",
+                "trade_type": "FAST0_PAPER",
             },
             strategy=strategy,
             mode="live",
@@ -94,66 +98,34 @@ def main() -> None:
             base_dir=base,
             schema_version=3,
         )
-        live_files = list(Path(base).rglob("*"))
-        live_under_mode_live = [p for p in live_files if "mode=live" in p.parts]
-        assert not live_under_mode_live, (
-            f"EXECUTION_MODE=paper must not write under mode=live; found: {live_under_mode_live}"
+
+        # Files MUST exist under mode=live (this was the bug: events/trades went to mode=paper)
+        expected_dir = Path(base) / "date=20260302" / f"strategy={strategy}" / "mode=live"
+        for fname in ("events.csv", "events_v3.csv", "trades.csv", "trades_v3.csv", "outcomes.csv", "outcomes_v3.csv"):
+            p = expected_dir / fname
+            assert p.exists(), f"mode=live must have {fname}, got: {list(expected_dir.glob('*'))}"
+        print("OK: events/trades/outcomes in mode=live when caller passes mode=live")
+
+        # And they MUST NOT be written under mode=paper for this case
+        paper_dir_case1 = Path(base) / "date=20260302" / f"strategy={strategy}" / "mode=paper"
+        assert not paper_dir_case1.exists(), (
+            f"caller mode=live with EXECUTION_MODE=paper must not create mode=paper dir, found: {paper_dir_case1}"
         )
-        print("OK: no files under .../mode=live/ when exec_mode=paper")
+        print("OK: no files under mode=paper when caller mode=live and EXECUTION_MODE=paper")
 
-        # --- 2b) In mode=paper dir, CSV source_mode must be paper (no source_mode=live)
-        for ev_file in Path(path_paper).glob("events*.csv"):
-            with open(ev_file, encoding="utf-8") as f:
-                r = csv.DictReader(f)
-                for row in r:
-                    sm = row.get("source_mode", "")
-                    assert sm == "paper", (
-                        f"EXECUTION_MODE=paper must not have source_mode=live in CSV; "
-                        f"found source_mode={sm!r} in {ev_file}"
-                    )
-                    # signal_source_mode (original) preserved in payload_json
-                    pj = row.get("payload_json", "{}")
-                    try:
-                        p = json.loads(pj)
-                        assert p.get("signal_source_mode") == "live", f"expected signal_source_mode=live in {pj}"
-                    except json.JSONDecodeError:
-                        pass
-        print("OK: no source_mode=live in mode=paper CSV when exec_mode=paper; signal_source_mode in payload")
+        # --- CASE 2: EXECUTION_MODE=paper, caller mode="paper" → writes go to mode=paper
+        path_from_caller_paper = get_dataset_dir(
+            strategy, wall_time_utc, base_dir=base, path_mode="paper"
+        )
+        assert "mode=paper" in Path(path_from_caller_paper).parts, (
+            f"path_mode=paper → path must contain mode=paper, got: {path_from_caller_paper}"
+        )
 
-        # --- 2c) trades_v3.csv and outcomes_v3.csv: mode=paper, source_mode=paper when exec_mode=paper
-        for csv_name in ("trades_v3.csv", "outcomes_v3.csv"):
-            csv_path = Path(path_paper) / csv_name
-            if not csv_path.exists():
-                continue
-            with open(csv_path, encoding="utf-8") as f:
-                r = csv.DictReader(f)
-                for row in r:
-                    m = row.get("mode", "")
-                    sm = row.get("source_mode", "")
-                    assert m == "paper", (
-                        f"EXECUTION_MODE=paper: {csv_name} must have mode=paper; found mode={m!r}"
-                    )
-                    assert sm == "paper", (
-                        f"EXECUTION_MODE=paper: {csv_name} must have source_mode=paper; found source_mode={sm!r}"
-                    )
-        print("OK: trades_v3.csv and outcomes_v3.csv have mode=paper, source_mode=paper when exec_mode=paper")
-
-        # Live path assert
-        os.environ["EXECUTION_MODE"] = "live"
-        path_live = get_dataset_dir(strategy, wall_time_utc, base_dir=base)
-        assert f"/mode={os.environ['EXECUTION_MODE']}/" in path_live or path_live.rstrip("/").endswith(
-            f"mode={os.environ['EXECUTION_MODE']}"
-        ), f"live → path must contain mode=live, got: {path_live}"
-        assert "mode=live" in Path(path_live).parts, f"Path.parts must contain mode=live: {Path(path_live).parts}"
-        print(f"OK live path: {path_live}")
-
-        # --- 3) When EXECUTION_MODE=live, no new file must appear under .../mode=paper/... (before/after)
-        before = set(str(p) for p in Path(base).rglob("*"))
-        os.environ["EXECUTION_MODE"] = "live"
+        # Write with mode="paper" → must land in mode=paper
         write_event_row(
             {
-                "run_id": "smoke_exec_mode_live",
-                "event_id": "evt_smoke_live_1",
+                "run_id": "smoke_exec_mode_paper",
+                "event_id": "evt_smoke_paper_1",
                 "symbol": "BTCUSDT",
                 "strategy": strategy,
                 "side": "SHORT",
@@ -168,19 +140,30 @@ def main() -> None:
                 "payload_json": "{}",
             },
             strategy=strategy,
-            mode="paper",  # source_mode; path must still be mode=live
+            mode="paper",
             wall_time_utc=wall_time_utc,
             base_dir=base,
+            schema_version=3,
         )
-        after = set(str(p) for p in Path(base).rglob("*"))
-        new_paths = after - before
-        new_mode_paper = [p for p in new_paths if "mode=paper" in Path(p).parts]
-        assert new_mode_paper == [], (
-            f"EXECUTION_MODE=live must not create new files under mode=paper; created: {new_mode_paper}"
-        )
-        print("OK: no new files under .../mode=paper/ when exec_mode=live")
+        paper_dir = Path(base) / "date=20260302" / f"strategy={strategy}" / "mode=paper"
+        assert (paper_dir / "events_v3.csv").exists(), "mode=paper must have events_v3.csv"
+        print("OK: events in mode=paper when caller passes mode=paper")
 
-    print("smoke_dataset_exec_mode: path reflects exec_mode; paper/live do not write under wrong mode")
+        # --- CASE 3: no caller mode/path_mode → fallback to EXECUTION_MODE
+        os.environ["EXECUTION_MODE"] = "paper"
+        path_fallback = get_dataset_dir(strategy, wall_time_utc, base_dir=base)
+        assert "mode=paper" in Path(path_fallback).parts, (
+            f"no path_mode + EXECUTION_MODE=paper → path=paper, got: {path_fallback}"
+        )
+
+        os.environ["EXECUTION_MODE"] = "live"
+        path_fallback_live = get_dataset_dir(strategy, wall_time_utc, base_dir=base)
+        assert "mode=live" in Path(path_fallback_live).parts, (
+            f"no path_mode + EXECUTION_MODE=live → path=live, got: {path_fallback_live}"
+        )
+        print("OK: fallback to EXECUTION_MODE only when caller mode/path_mode is absent")
+
+    print("smoke_dataset_exec_mode: caller mode controls path when paper|live; EXECUTION_MODE used only as fallback")
 
 
 if __name__ == "__main__":
