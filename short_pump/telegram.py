@@ -30,6 +30,17 @@ try:
 except (TypeError, ValueError):
     FAST0_TG_OUTCOME_MIN_DIST = 0.0
 
+try:
+    _min_liq = os.getenv("FAST0_LIQ_MIN_USD", "5000")
+    FAST0_LIQ_MIN_USD = float(_min_liq.replace(",", ".")) if _min_liq and str(_min_liq).strip() else 5000.0
+except (TypeError, ValueError):
+    FAST0_LIQ_MIN_USD = 5000.0
+try:
+    _max_liq = os.getenv("FAST0_LIQ_MAX_USD", "25000")
+    FAST0_LIQ_MAX_USD = float(_max_liq.replace(",", ".")) if _max_liq and str(_max_liq).strip() else 25000.0
+except (TypeError, ValueError):
+    FAST0_LIQ_MAX_USD = 25000.0
+
 
 def is_tradeable_short_pump(stage: int, dist_to_peak_pct: float | None = None) -> bool:
     """True if entry is tradeable: stage==4 and dist_to_peak_pct >= TG_ENTRY_DIST_MIN. Gates TG, autotrading, outcome."""
@@ -44,11 +55,13 @@ def is_tradeable_short_pump(stage: int, dist_to_peak_pct: float | None = None) -
 
 
 def is_fast0_tg_entry_allowed(payload: dict) -> bool:
-    """True if FAST0 TG ENTRY_OK/OUTCOME may be sent: liq_long_usd_30s > 0. Gates TG for short_pump_fast0."""
+    """True if FAST0 TG ENTRY_OK may be sent: FAST0_LIQ_MIN_USD < liq_long_usd_30s <= FAST0_LIQ_MAX_USD (default 5000 < liq <= 25000)."""
     try:
         liq = payload.get("liq_long_usd_30s")
-        v = float(liq) if liq is not None else 0.0
-        return v > 0
+        if liq is None:
+            return False
+        v = float(liq)
+        return (v > FAST0_LIQ_MIN_USD) and (v <= FAST0_LIQ_MAX_USD)
     except (TypeError, ValueError):
         return False
 

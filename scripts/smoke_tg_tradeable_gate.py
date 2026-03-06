@@ -1,6 +1,6 @@
 """Smoke: TG notifications gated by tradeable signals.
 - short_pump: stage==4 AND dist_to_peak_pct >= TG_ENTRY_DIST_MIN (default 3.5)
-- short_pump_fast0: liq_long_usd_30s > 0
+- short_pump_fast0: 5000 < liq_long_usd_30s <= 25000 (FAST0_LIQ_MIN/MAX_USD)
 """
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ if _repo_root not in sys.path:
 
 os.environ["TG_ENTRY_DIST_MIN"] = "3.5"
 os.environ["TG_ENTRY_STAGE"] = "4"
+os.environ["FAST0_LIQ_MIN_USD"] = "5000"
+os.environ["FAST0_LIQ_MAX_USD"] = "25000"
 
 from short_pump.telegram import is_fast0_tg_entry_allowed, is_tradeable_short_pump, send_telegram
 
@@ -37,26 +39,26 @@ def test_short_pump_tradeable_gate() -> None:
 
 
 def test_fast0_tg_gate() -> None:
-    """short_pump_fast0: is_fast0_tg_entry_allowed returns True only when liq>0."""
+    """short_pump_fast0: is_fast0_tg_entry_allowed True only when 5000 < liq <= 25000 (env default)."""
     assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 0}) is False
     assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 0.0}) is False
     assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": None}) is False
     assert is_fast0_tg_entry_allowed({}) is False
     assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": -1}) is False
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 3000}) is False
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 50000}) is False
 
-    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 1}) is True
-    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 0.01}) is True
-    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 100.0}) is True
-    print("OK: fast0 TG gate (liq_long_usd_30s>0)")
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 10000}) is True
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 25000}) is True
+    print("OK: fast0 TG gate (5000 < liq_long_usd_30s <= 25000)")
 
 
 def test_fast0_no_tg_send_when_liq_zero() -> None:
-    """Gate ensures send_telegram is only called when liq>0 (mock verifies no call for liq=0)."""
+    """Gate ensures send_telegram only when 5000 < liq <= 25000 (mock: no call for liq=0, call for liq=10k)."""
     payload_liq0 = {"liq_long_usd_30s": 0, "context_score": 0.65}
-    payload_liq100 = {"liq_long_usd_30s": 100, "context_score": 0.65}
+    payload_liq10k = {"liq_long_usd_30s": 10000, "context_score": 0.65}
     with patch("short_pump.telegram.send_telegram") as mock_send:
         import short_pump.telegram as tg
-        # Simulate fast0 ENTRY path: only send when is_fast0_tg_entry_allowed
         mock_send.reset_mock()
         if is_fast0_tg_entry_allowed(payload_liq0):
             tg.send_telegram("test", strategy="short_pump_fast0", side="SHORT", mode="FAST0",
@@ -64,11 +66,11 @@ def test_fast0_no_tg_send_when_liq_zero() -> None:
         assert mock_send.call_count == 0, "liq=0 must not trigger TG send"
 
         mock_send.reset_mock()
-        if is_fast0_tg_entry_allowed(payload_liq100):
+        if is_fast0_tg_entry_allowed(payload_liq10k):
             tg.send_telegram("test", strategy="short_pump_fast0", side="SHORT", mode="FAST0",
                             event_id="evt", context_score=0.65, entry_ok=True, formatted=True)
-        assert mock_send.call_count == 1, "liq>0 must trigger TG send"
-    print("OK: fast0 liq=0 -> no TG send; liq>0 -> TG send")
+        assert mock_send.call_count == 1, "liq=10k (in range) must trigger TG send"
+    print("OK: fast0 liq=0 -> no TG send; liq=10k -> TG send")
 
 
 def main() -> None:

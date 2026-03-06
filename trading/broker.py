@@ -23,6 +23,22 @@ def _dist_min() -> float:
         return DEFAULT_DIST_MIN
 
 
+def _fast0_liq_min_usd() -> float:
+    try:
+        v = os.getenv("FAST0_LIQ_MIN_USD", "5000")
+        return float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return 5000.0
+
+
+def _fast0_liq_max_usd() -> float:
+    try:
+        v = os.getenv("FAST0_LIQ_MAX_USD", "25000")
+        return float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return 25000.0
+
+
 def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
     """
     Variant #3: short_pump — allow only if stage==4 and dist_to_peak_pct >= 3.5.
@@ -51,7 +67,7 @@ def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
 
 def allow_entry_short_pump_fast0(signal: Any) -> Tuple[bool, str]:
     """
-    Variant #3: short_pump_fast0 — allow only if liq_long_usd_30s > 0.
+    short_pump_fast0 — allow only if FAST0_LIQ_MIN_USD < liq_long_usd_30s <= FAST0_LIQ_MAX_USD (default 5000 < liq <= 25000).
     Returns (allowed, reason).
     """
     liq = getattr(signal, "liq_long_usd_30s", None)
@@ -61,8 +77,11 @@ def allow_entry_short_pump_fast0(signal: Any) -> Tuple[bool, str]:
         liq_f = float(liq)
     except (TypeError, ValueError):
         return False, f"invalid liq_long_usd_30s={liq!r}"
-    if not (liq_f > 0):
-        return False, f"liq_long_usd_30s={liq_f} (require > 0)"
+    lo, hi = _fast0_liq_min_usd(), _fast0_liq_max_usd()
+    if not (liq_f > lo):
+        return False, f"liq_long_usd_30s={liq_f} (require > {lo})"
+    if not (liq_f <= hi):
+        return False, f"liq_long_usd_30s={liq_f} (require <= {hi})"
     return True, ""
 
 

@@ -32,7 +32,7 @@ from common.io_dataset import ensure_dataset_files, write_event_row, write_outco
 from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import wall_time_utc
 from notifications.tg_format import build_fast0_signal, format_fast0_outcome_message, format_tg
-from short_pump.telegram import FAST0_TG_OUTCOME_ENABLE, FAST0_TG_OUTCOME_MIN_DIST, send_telegram
+from short_pump.telegram import FAST0_TG_OUTCOME_ENABLE, FAST0_TG_OUTCOME_MIN_DIST, is_fast0_tg_entry_allowed, send_telegram
 
 logger = get_logger(__name__)
 
@@ -48,6 +48,8 @@ FAST0_ENTRY_CVD1M_MAX = float(os.getenv("FAST0_ENTRY_CVD1M_MAX", "-0.05").replac
 FAST0_ENTRY_MIN_TICK = int(os.getenv("FAST0_ENTRY_MIN_TICK", "2"))
 FAST0_TP_PCT = float(os.getenv("FAST0_TP_PCT", "0.012").replace(",", "."))
 FAST0_SL_PCT = float(os.getenv("FAST0_SL_PCT", "0.010").replace(",", "."))
+FAST0_LIQ_MIN_USD = float(os.getenv("FAST0_LIQ_MIN_USD", "5000").replace(",", "."))
+FAST0_LIQ_MAX_USD = float(os.getenv("FAST0_LIQ_MAX_USD", "25000").replace(",", "."))
 FAST0_OUTCOME_WATCH_SEC = int(os.getenv("FAST0_OUTCOME_WATCH_SEC", "1800"))
 FAST0_OUTCOME_POLL_SEC = int(os.getenv("FAST0_OUTCOME_POLL_SEC", "5"))
 FAST0_MAX_WATCHERS = int(os.getenv("FAST0_MAX_WATCHERS", "20"))
@@ -120,14 +122,19 @@ def _volume_1m_features(candles_1m: Optional[pd.DataFrame], lookback: int = 20) 
 def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str]:
     """
     Returns (pass, reason). pass=True if thresholds met, else (False, reason).
+    Liq filter: FAST0_LIQ_MIN_USD < liq_long_usd_30s <= FAST0_LIQ_MAX_USD (default 5000 < liq <= 25000).
     """
     liq = payload.get("liq_long_usd_30s")
+    if liq is None or (isinstance(liq, float) and pd.isna(liq)):
+        return False, "liq_missing"
     try:
-        liq_val = float(liq) if liq is not None else 0.0
+        liq_val = float(liq)
     except (TypeError, ValueError):
-        liq_val = 0.0
-    if not (liq_val > 0):
-        return False, "liq_gate"
+        return False, "liq_missing"
+    if liq_val <= FAST0_LIQ_MIN_USD:
+        return False, "liq_le_5000"
+    if liq_val > FAST0_LIQ_MAX_USD:
+        return False, "liq_gt_25000"
     if tick < FAST0_ENTRY_MIN_TICK:
         return False, f"tick<{FAST0_ENTRY_MIN_TICK}"
     cs = payload.get("context_score")
@@ -635,19 +642,23 @@ def run_fast0_for_symbol(
 
                 entry_ok_pass, entry_reason = should_fast0_entry_ok(payload, tick)
                 if not entry_ok_pass:
-                    if entry_reason == "liq_gate":
-                        liq_val = float(payload.get("liq_long_usd_30s") or 0)
+                    if entry_reason in ("liq_missing", "liq_le_5000", "liq_gt_25000"):
+                        liq_val = payload.get("liq_long_usd_30s")
+                        try:
+                            liq_val = float(liq_val) if liq_val is not None else None
+                        except (TypeError, ValueError):
+                            liq_val = None
                         log_info(
                             logger,
-                            "FAST0_REJECTED_LIQ_GATE",
+                            "FAST0_LIQ_FILTERED",
                             symbol=cfg.symbol,
                             run_id=run_id,
                             step="FAST0",
                             extra={
-                                "liq_long_usd_30s": liq_val,
                                 "tick": tick,
+                                "liq_long_usd_30s": liq_val,
+                                "reason": entry_reason,
                                 "event_id": event_id,
-                                "reason": "liq_long_usd_30s<=0",
                             },
                         )
                     else:
@@ -765,19 +776,23 @@ def run_fast0_for_symbol(
                         volume_zscore_20=volume_zscore_20,
                     )
                     if FAST0_TG_ENTRY_ENABLE:
-                        liq_tg = float(payload.get("liq_long_usd_30s") or 0)
-                        if not (liq_tg > 0):
+                        if not is_fast0_tg_entry_allowed(payload):
+                            liq_tg = payload.get("liq_long_usd_30s")
+                            try:
+                                liq_tg = float(liq_tg) if liq_tg is not None else None
+                            except (TypeError, ValueError):
+                                liq_tg = None
                             log_info(
                                 logger,
-                                "TG_FAST0_SKIPPED_LIQ_GATE",
+                                "FAST0_LIQ_FILTERED",
                                 symbol=cfg.symbol,
                                 run_id=run_id,
                                 step="FAST0",
                                 extra={
-                                    "liq_long_usd_30s": liq_tg,
                                     "tick": tick,
+                                    "liq_long_usd_30s": liq_tg,
+                                    "reason": "tg_liq_range",
                                     "event_id": event_id,
-                                    "reason": "liq<=0",
                                 },
                             )
                         else:
