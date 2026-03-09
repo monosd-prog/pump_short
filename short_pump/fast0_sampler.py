@@ -416,6 +416,7 @@ def _run_fast0_outcome_watcher(
                 wall_time_utc=outcome_time_utc,
                 schema_version=3,
                 base_dir=base_dir,
+                path_mode=mode if (mode or "").strip().lower() in ("paper", "live") else None,
             )
             res_val = end_reason
             ep = summary.get("exit_price")
@@ -726,6 +727,7 @@ def run_fast0_for_symbol(
                     wall_time_utc=now_utc,
                     schema_version=3,
                     base_dir=base_dir_str,
+                    path_mode=mode if (mode or "").strip().lower() in ("paper", "live") else None,
                 )
 
                 if entry_ok:
@@ -755,6 +757,7 @@ def run_fast0_for_symbol(
                         wall_time_utc=now_utc,
                         schema_version=3,
                         base_dir=base_dir_str,
+                        path_mode=mode if (mode or "").strip().lower() in ("paper", "live") else None,
                     )
                     # One Signal for both TG and trading queue (same as who gets TG)
                     sig = build_fast0_signal(
