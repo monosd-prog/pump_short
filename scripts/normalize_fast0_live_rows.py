@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """
-Historical normalization: fix short_pump live events/trades rows where path is mode=live
+Historical normalization: fix short_pump_fast0 live events/trades rows where path is mode=live
 but row fields are mode=paper/source_mode=paper.
 
-Scope: strategy=short_pump only, mode=live path only.
-Files: events_v3.csv, trades_v3.csv, events.csv, trades.csv (optional).
+Scope: strategy=short_pump_fast0 only, mode=live path only.
+Files: events_v3.csv, trades_v3.csv, events.csv, trades.csv.
 Does NOT touch outcomes.
 
 Usage:
-  python3 scripts/normalize_short_pump_live_rows.py
-  python3 scripts/normalize_short_pump_live_rows.py --root /root/pump_short/datasets
-  python3 scripts/normalize_short_pump_live_rows.py --root /root/pump_short/datasets --apply
-
-Default --root: /root/pump_short/datasets
+  python3 scripts/normalize_fast0_live_rows.py --root /root/pump_short/datasets
+  python3 scripts/normalize_fast0_live_rows.py --root /root/pump_short/datasets --apply
 """
 from __future__ import annotations
 
@@ -25,6 +22,7 @@ from pathlib import Path
 
 
 TARGET_FILES = ("events_v3.csv", "trades_v3.csv", "events.csv", "trades.csv")
+STRATEGY = "short_pump_fast0"
 DEFAULT_ROOT = "/root/pump_short/datasets"
 
 
@@ -38,7 +36,7 @@ def _find_live_files(base: Path) -> list[Path]:
         for d in sorted(root.glob("date=*")):
             if not d.is_dir():
                 continue
-            live_dir = d / "strategy=short_pump" / "mode=live"
+            live_dir = d / f"strategy={STRATEGY}" / "mode=live"
             if not live_dir.is_dir():
                 continue
             for fname in TARGET_FILES:
@@ -128,7 +126,7 @@ def _process_file(path: Path, apply: bool) -> tuple[int, int, str | None]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Normalize short_pump live rows: mode=paper→live, source_mode=paper→live (dry-run by default)"
+        description="Normalize short_pump_fast0 live rows: mode=paper→live, source_mode=paper→live (dry-run by default)"
     )
     parser.add_argument("--root", type=Path, default=Path(DEFAULT_ROOT), help="Datasets root")
     parser.add_argument("--apply", action="store_true", help="Apply changes (default: dry-run)")
@@ -136,7 +134,7 @@ def main() -> int:
 
     files = _find_live_files(args.root)
     if not files:
-        print(f"No short_pump mode=live files found under {args.root}", file=sys.stderr)
+        print(f"No {STRATEGY} mode=live files found under {args.root}", file=sys.stderr)
         return 1
 
     total_normalized = 0
