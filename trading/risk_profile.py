@@ -52,6 +52,37 @@ FAST0_LIQ_100K_ENABLE = _bool_env("FAST0_LIQ_100K_ENABLE", True)
 FAST0_LIQ_100K_MIN_USD = _float_env("FAST0_LIQ_100K_MIN_USD", 100000.0)
 FAST0_LIQ_100K_RISK_MULT = _float_env("FAST0_LIQ_100K_RISK_MULT", 2.0)
 
+# fast0 base: dist_to_peak_pct must be <= FAST0_BASE_DIST_MAX for tradeability and TG
+FAST0_BASE_DIST_MAX = _float_env("FAST0_BASE_DIST_MAX", 2.0)
+
+
+def is_fast0_entry_allowed(liq_long_usd_30s: Any, dist_to_peak_pct: Any) -> Tuple[bool, str]:
+    """
+    Single source of truth for fast0 tradeability (auto + TG).
+    For base profile: dist_to_peak_pct must be <= FAST0_BASE_DIST_MAX.
+    For 5k-25k and 100k+: no dist filter.
+    Returns (allowed, reason).
+    """
+    try:
+        liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else None
+    except (TypeError, ValueError):
+        return False, "liq_missing"
+    if liq_val is None or liq_val <= 0:
+        return False, "liq_invalid"
+    dist_val = None
+    try:
+        dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else None
+    except (TypeError, ValueError):
+        pass
+    is_100k = FAST0_LIQ_100K_ENABLE and liq_val >= FAST0_LIQ_100K_MIN_USD
+    is_5k_25k = FAST0_LIQ_5K_25K_ENABLE and liq_val > FAST0_LIQ_5K_25K_MIN_USD and liq_val <= FAST0_LIQ_5K_25K_MAX_USD
+    if is_100k or is_5k_25k:
+        return True, ""
+    if dist_val is None or dist_val > FAST0_BASE_DIST_MAX:
+        return False, "fast0_base_dist_gt_2.0"
+    return True, ""
+
+
 # live execution
 LIVE_FIXED_NOTIONAL_USD = _float_env("LIVE_FIXED_NOTIONAL_USD", 0.0)
 if LIVE_FIXED_NOTIONAL_USD <= 0:
@@ -105,6 +136,14 @@ def get_risk_profile(
         return ("", 0.0, 0.0)
 
     if s == "short_pump_fast0":
+        allowed, reason = is_fast0_entry_allowed(liq_long_usd_30s, dist_to_peak_pct)
+        if not allowed:
+            if reason == "fast0_base_dist_gt_2.0":
+                logger.info(
+                    "RISK_PROFILE_REJECT | reason=fast0_base_dist_gt_2.0 symbol=%s event_id=%s liq_long_usd_30s=%s dist_to_peak_pct=%s",
+                    symbol, event_id, liq_long_usd_30s, dist_to_peak_pct,
+                )
+            return ("", 0.0, 0.0)
         if not FAST0_AUTO_ENABLE:
             return ("", 0.0, 0.0)
         liq_val = None

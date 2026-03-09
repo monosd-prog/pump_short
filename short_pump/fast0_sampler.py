@@ -32,7 +32,7 @@ from common.io_dataset import ensure_dataset_files, write_event_row, write_outco
 from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import wall_time_utc
 from notifications.tg_format import build_fast0_signal, format_fast0_outcome_message, format_tg
-from short_pump.telegram import FAST0_TG_OUTCOME_ENABLE, FAST0_TG_OUTCOME_MIN_DIST, is_fast0_tg_entry_allowed, send_telegram
+from short_pump.telegram import FAST0_TG_OUTCOME_ENABLE, FAST0_TG_OUTCOME_MIN_DIST, is_fast0_tg_entry_allowed_with_reason, send_telegram
 
 logger = get_logger(__name__)
 
@@ -789,7 +789,8 @@ def run_fast0_for_symbol(
                         volume_zscore_20=volume_zscore_20,
                     )
                     if FAST0_TG_ENTRY_ENABLE:
-                        if not is_fast0_tg_entry_allowed(payload):
+                        tg_allowed, tg_reason = is_fast0_tg_entry_allowed_with_reason(payload)
+                        if not tg_allowed:
                             liq_tg = payload.get("liq_long_usd_30s")
                             try:
                                 liq_tg = float(liq_tg) if liq_tg is not None else None
@@ -797,14 +798,15 @@ def run_fast0_for_symbol(
                                 liq_tg = None
                             log_info(
                                 logger,
-                                "FAST0_LIQ_FILTERED",
+                                "FAST0_TG_FILTERED",
                                 symbol=cfg.symbol,
                                 run_id=run_id,
                                 step="FAST0",
                                 extra={
                                     "tick": tick,
                                     "liq_long_usd_30s": liq_tg,
-                                    "reason": "tg_liq_range",
+                                    "reason": tg_reason or "tg_filter",
+                                    "dist_to_peak_pct": payload.get("dist_to_peak_pct"),
                                     "event_id": event_id,
                                 },
                             )

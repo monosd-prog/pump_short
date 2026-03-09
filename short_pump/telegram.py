@@ -55,15 +55,21 @@ def is_tradeable_short_pump(stage: int, dist_to_peak_pct: float | None = None) -
 
 
 def is_fast0_tg_entry_allowed(payload: dict) -> bool:
-    """True if FAST0 TG ENTRY_OK may be sent: liq_long_usd_30s present and valid (all buckets: base, 5k-25k, 100k+)."""
+    """True if FAST0 TG ENTRY_OK may be sent. Same logic as auto: base requires dist<=2.0."""
+    allowed, _ = is_fast0_tg_entry_allowed_with_reason(payload)
+    return allowed
+
+
+def is_fast0_tg_entry_allowed_with_reason(payload: dict) -> tuple[bool, str]:
+    """(allowed, reason). Same logic as risk_profile.is_fast0_entry_allowed."""
     try:
-        liq = payload.get("liq_long_usd_30s")
-        if liq is None:
-            return False
-        v = float(liq)
-        return v >= 0
-    except (TypeError, ValueError):
-        return False
+        from trading.risk_profile import is_fast0_entry_allowed
+        return is_fast0_entry_allowed(
+            payload.get("liq_long_usd_30s"),
+            payload.get("dist_to_peak_pct"),
+        )
+    except Exception:
+        return False, "tg_check_error"
 
 
 def tg_entry_filter(stage, dist_to_peak_pct) -> bool:

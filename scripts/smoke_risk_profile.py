@@ -27,6 +27,7 @@ from trading.risk_profile import (
 )
 from trading.risk import calc_position_size
 from short_pump.signals import Signal
+from short_pump.telegram import is_fast0_tg_entry_allowed
 from notifications.tg_format import format_tg, format_fast0_outcome_message, format_outcome
 
 
@@ -73,29 +74,38 @@ def main() -> None:
     assert profile3 == "", f"expected no profile for stage3, got {profile3}"
     print("OK: short_pump stage3 -> reject")
 
-    # 2. fast0 base -> fast0_base_1R
-    sig_b = _signal("short_pump_fast0", liq_long_usd_30s=2000)
+    # 2a. fast0 base dist=1.8 -> fast0_base_1R (pass)
+    sig_b = _signal("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=1.8)
     ok_b, _ = allow_entry_short_pump_fast0(sig_b)
-    assert ok_b, "fast0 liq=2k (base) should pass"
-    profile_b, risk_b, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=2000)
+    assert ok_b, "fast0 liq=2k dist=1.8 (base) should pass"
+    profile_b, risk_b, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=1.8)
     assert profile_b == "fast0_base_1R", f"expected fast0_base_1R, got {profile_b}"
     assert risk_b == 1.0, f"expected risk_mult=1.0, got {risk_b}"
-    print("OK: fast0 liq=2k -> fast0_base_1R, 1R")
+    print("OK: fast0 base liq=2k dist=1.8 -> fast0_base_1R, 1R")
 
-    # 3. fast0 5k-25k -> fast0_liq_5k_25k_1.5R
-    sig_m = _signal("short_pump_fast0", liq_long_usd_30s=15000)
+    # 2b. fast0 base dist=2.1 -> reject (fast0_base_dist_gt_2.0)
+    sig_b2 = _signal("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=2.1)
+    ok_b2, reason_b2 = allow_entry_short_pump_fast0(sig_b2)
+    assert not ok_b2, "fast0 base liq=2k dist=2.1 should reject"
+    assert reason_b2 == "fast0_base_dist_gt_2.0", f"expected fast0_base_dist_gt_2.0, got {reason_b2}"
+    profile_b2, _, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=2.1)
+    assert profile_b2 == "", f"expected no profile for base dist>2, got {profile_b2}"
+    print("OK: fast0 base liq=2k dist=2.1 -> reject fast0_base_dist_gt_2.0")
+
+    # 3. fast0 5k-25k dist=3.5 -> fast0_liq_5k_25k_1.5R (no dist filter)
+    sig_m = _signal("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=3.5)
     ok_m, _ = allow_entry_short_pump_fast0(sig_m)
     assert ok_m, "fast0 liq=15k should pass"
-    profile_m, risk_m, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=15000)
+    profile_m, risk_m, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=3.5)
     assert profile_m == "fast0_liq_5k_25k_1.5R", f"expected fast0_liq_5k_25k_1.5R, got {profile_m}"
     assert risk_m == 1.5, f"expected risk_mult=1.5, got {risk_m}"
     print("OK: fast0 liq=15k (5k-25k) -> fast0_liq_5k_25k_1.5R, 1.5R")
 
-    # 4. fast0 100k+ -> fast0_liq_100k_plus_2R (priority over 5k-25k)
-    sig_h = _signal("short_pump_fast0", liq_long_usd_30s=150000)
+    # 4. fast0 100k+ dist=4.0 -> fast0_liq_100k_plus_2R (no dist filter)
+    sig_h = _signal("short_pump_fast0", liq_long_usd_30s=150000, dist_to_peak_pct=4.0)
     ok_h, _ = allow_entry_short_pump_fast0(sig_h)
     assert ok_h, "fast0 liq=150k should pass"
-    profile_h, risk_h, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=150000)
+    profile_h, risk_h, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=150000, dist_to_peak_pct=4.0)
     assert profile_h == "fast0_liq_100k_plus_2R", f"expected fast0_liq_100k_plus_2R, got {profile_h}"
     assert risk_h == 2.0, f"expected risk_mult=2.0, got {risk_h}"
     print("OK: fast0 liq=150k (100k+) -> fast0_liq_100k_plus_2R, 2R")
@@ -141,6 +151,13 @@ def main() -> None:
     assert "x4" in msg_out or "lev=" in msg_out, f"outcome msg missing leverage: {msg_out}"
     assert "isolated" in msg_out.lower(), f"outcome msg missing margin: {msg_out}"
     print("OK: TG outcome contains risk_profile, notional, lev, margin")
+
+    # 8. TG entry logic: base dist<=2 allowed, base dist>2 not
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 2000, "dist_to_peak_pct": 1.8}), "base dist=1.8 -> TG allowed"
+    assert not is_fast0_tg_entry_allowed({"liq_long_usd_30s": 2000, "dist_to_peak_pct": 2.1}), "base dist=2.1 -> TG not allowed"
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 15000, "dist_to_peak_pct": 3.5}), "5k-25k dist=3.5 -> TG allowed"
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 150000, "dist_to_peak_pct": 4.0}), "100k+ dist=4 -> TG allowed"
+    print("OK: TG entry matches risk_profile logic (base dist<=2, enhanced no dist filter)")
 
     print("smoke_risk_profile: all checks passed")
 

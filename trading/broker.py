@@ -68,27 +68,28 @@ def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
 def allow_entry_short_pump_fast0(signal: Any) -> Tuple[bool, str]:
     """
     short_pump_fast0 — allow base + 5k-25k + 100k+ buckets (risk assigned by risk_profile).
-    Config: FAST0_AUTO_ENABLE, FAST0_LIQ_5K_25K_ENABLE, FAST0_LIQ_100K_ENABLE.
+    Base profile requires dist_to_peak_pct <= FAST0_BASE_DIST_MAX (default 2.0).
     """
-    from trading.risk_profile import FAST0_AUTO_ENABLE, get_risk_profile
+    from trading.risk_profile import FAST0_AUTO_ENABLE, get_risk_profile, is_fast0_entry_allowed
     if not FAST0_AUTO_ENABLE:
         return False, "FAST0_AUTO_ENABLE=0"
     liq = getattr(signal, "liq_long_usd_30s", None)
+    dist = getattr(signal, "dist_to_peak_pct", None)
     if liq is None:
         return False, "missing liq_long_usd_30s"
-    try:
-        float(liq)
-    except (TypeError, ValueError):
-        return False, f"invalid liq_long_usd_30s={liq!r}"
+    allowed, reason = is_fast0_entry_allowed(liq, dist)
+    if not allowed:
+        return False, reason or "no matching risk profile"
     profile, risk_mult, _ = get_risk_profile(
         "short_pump_fast0",
+        dist_to_peak_pct=dist,
         liq_long_usd_30s=liq,
         event_id=getattr(signal, "event_id", "") or "",
         trade_id=getattr(signal, "trade_id", "") or "",
         symbol=getattr(signal, "symbol", "") or "",
     )
     if not profile or risk_mult <= 0:
-        return False, "no matching risk profile"
+        return False, reason or "no matching risk profile"
     return True, ""
 
 
