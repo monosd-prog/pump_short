@@ -55,13 +55,13 @@ def is_tradeable_short_pump(stage: int, dist_to_peak_pct: float | None = None) -
 
 
 def is_fast0_tg_entry_allowed(payload: dict) -> bool:
-    """True if FAST0 TG ENTRY_OK may be sent: FAST0_LIQ_MIN_USD < liq_long_usd_30s <= FAST0_LIQ_MAX_USD (default 5000 < liq <= 25000)."""
+    """True if FAST0 TG ENTRY_OK may be sent: liq_long_usd_30s present and valid (all buckets: base, 5k-25k, 100k+)."""
     try:
         liq = payload.get("liq_long_usd_30s")
         if liq is None:
             return False
         v = float(liq)
-        return (v > FAST0_LIQ_MIN_USD) and (v <= FAST0_LIQ_MAX_USD)
+        return v >= 0
     except (TypeError, ValueError):
         return False
 

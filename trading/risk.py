@@ -55,15 +55,18 @@ def calc_position_size(
     stop_distance_pct: float,
     *,
     risk_usd_override: float | None = None,
+    fixed_notional_override: float | None = None,
 ) -> Tuple[float, float, str | None]:
     """
     Compute notional_usd and risk_usd. Returns (notional_usd, risk_usd, reject_reason).
     reject_reason is None on success.
-    If FIXED_POSITION_USD > 0: fixed sizing with lot rounding and min checks.
+    If fixed_notional_override > 0: use that as fixed notional (live risk_profile).
+    Elif FIXED_POSITION_USD > 0: fixed sizing.
     Else: risk-based sizing (RISK_PCT).
     """
-    if FIXED_POSITION_USD > 0:
-        notional_usd = FIXED_POSITION_USD
+    effective_fixed = fixed_notional_override if (fixed_notional_override is not None and fixed_notional_override > 0) else FIXED_POSITION_USD
+    if effective_fixed > 0:
+        notional_usd = effective_fixed
         raw_qty = notional_usd / entry_price if entry_price > 0 else 0.0
         limits = get_instrument_limits(symbol)
         final_qty = round_qty_down(raw_qty, limits.lot_step, limits.qty_precision)

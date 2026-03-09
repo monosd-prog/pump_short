@@ -249,7 +249,91 @@ def close_from_live_outcome(
         strategy, symbol, position_id, close_reason, exit_price, pnl_r, pnl_usd,
     )
     _write_live_outcome_to_datasets(position, close_reason, exit_price, pnl_r, pnl_pct, ts_utc)
+    _send_live_outcome_telegram(
+        position, strategy, symbol, run_id, event_id, res, exit_price, pnl_pct, pnl_r, ts_utc,
+    )
     return True
+
+
+def _send_live_outcome_telegram(
+    position: dict[str, Any],
+    strategy: str,
+    symbol: str,
+    run_id: str,
+    event_id: str,
+    res: str,
+    exit_price: float,
+    pnl_pct: float,
+    pnl_r: float,
+    ts_utc: str,
+) -> None:
+    """Send outcome TG for live trade when TG_SEND_OUTCOME=1. Include risk_profile from position."""
+    try:
+        if (__import__("os").getenv("TG_SEND_OUTCOME", "0") or "").strip() != "1":
+            return
+        from short_pump.telegram import send_telegram
+        from notifications.tg_format import format_outcome, format_fast0_outcome_message
+        from trading.config import LIVE_LEVERAGE, LIVE_MARGIN_MODE
+
+        entry = float(position.get("entry", 0) or 0)
+        tp_price = float(position.get("tp", 0) or 0)
+        sl_price = float(position.get("sl", 0) or 0)
+        risk_profile = (position.get("risk_profile") or "").strip()
+        notional_usd = float(position.get("notional_usd") or 0)
+        leverage = int(position.get("leverage") or LIVE_LEVERAGE or 4)
+        margin_mode = (position.get("margin_mode") or LIVE_MARGIN_MODE or "isolated").strip()
+        hold_sec = _hold_seconds(position.get("opened_ts", ""), ts_utc)
+
+        if strategy == "short_pump_fast0":
+            msg = format_fast0_outcome_message(
+                symbol=symbol,
+                run_id=run_id,
+                event_id=event_id,
+                res=res,
+                entry_price=entry,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                exit_price=exit_price,
+                pnl_pct=pnl_pct,
+                hold_seconds=hold_sec,
+                risk_profile=risk_profile or None,
+                notional_usd=notional_usd if notional_usd > 0 else None,
+                leverage=leverage,
+                margin_mode=margin_mode,
+            )
+        else:
+            risk_pct = abs(entry - sl_price) / entry * 100.0 if entry > 0 else 1.0
+            msg = format_outcome(
+                strategy=strategy,
+                side=position.get("side", "SHORT"),
+                symbol=symbol,
+                run_id=run_id,
+                event_id=event_id,
+                outcome=res,
+                entry_price=entry,
+                tp_price=tp_price,
+                sl_price=sl_price,
+                tp_pct=risk_pct * 1.5,
+                sl_pct=risk_pct,
+                pnl_pct=pnl_pct,
+                hold_seconds=hold_sec,
+                risk_profile=risk_profile or None,
+                notional_usd=notional_usd if notional_usd > 0 else None,
+                leverage=leverage,
+                margin_mode=margin_mode,
+            )
+        send_telegram(
+            msg,
+            strategy=strategy,
+            side=position.get("side", "SHORT"),
+            mode="LIVE",
+            event_id=event_id,
+            context_score=None,
+            entry_ok=True,
+            formatted=True,
+        )
+    except Exception as e:
+        logger.debug("_send_live_outcome_telegram: %s", e)
 
 
 def _write_live_outcome_to_datasets(

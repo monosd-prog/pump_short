@@ -39,6 +39,9 @@ ALLOWED_STRATEGIES: list[str] = [s.strip() for s in STRATEGIES_ENV.split(",") if
 # LIVE micro-risk guardrails
 MAX_RISK_USD_PER_TRADE = float(os.getenv("MAX_RISK_USD_PER_TRADE", "7.0"))
 MAX_LEVERAGE = int(os.getenv("MAX_LEVERAGE", "4"))
+LIVE_FIXED_NOTIONAL_USD = float(os.getenv("LIVE_FIXED_NOTIONAL_USD", "10.0"))
+LIVE_LEVERAGE = int(os.getenv("LIVE_LEVERAGE", os.getenv("TRADING_LEVERAGE", "4")))
+LIVE_MARGIN_MODE = (os.getenv("LIVE_MARGIN_MODE") or "isolated").strip().lower()
 MAX_CONCURRENT_TRADES = int(os.getenv("MAX_CONCURRENT_TRADES", "1"))
 MAX_DAILY_LOSS_USD = float(os.getenv("MAX_DAILY_LOSS_USD", "21.0"))
 DISABLE_MAX_CONCURRENT_TRADES = (os.getenv("DISABLE_MAX_CONCURRENT_TRADES", "true").strip().lower() in ("1", "true", "yes", "y"))

@@ -17,7 +17,7 @@ DEFAULT_DIST_MIN = 3.5
 
 def _dist_min() -> float:
     try:
-        v = os.getenv("TG_ENTRY_DIST_MIN") or os.getenv("TG_DIST_TO_PEAK_MIN", "3.5")
+        v = os.getenv("SHORT_PUMP_AUTO_DIST_MIN") or os.getenv("TG_ENTRY_DIST_MIN") or os.getenv("TG_DIST_TO_PEAK_MIN", "3.5")
         return float(str(v).replace(",", "."))
     except (TypeError, ValueError):
         return DEFAULT_DIST_MIN
@@ -67,21 +67,28 @@ def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
 
 def allow_entry_short_pump_fast0(signal: Any) -> Tuple[bool, str]:
     """
-    short_pump_fast0 — allow only if FAST0_LIQ_MIN_USD < liq_long_usd_30s <= FAST0_LIQ_MAX_USD (default 5000 < liq <= 25000).
-    Returns (allowed, reason).
+    short_pump_fast0 — allow base + 5k-25k + 100k+ buckets (risk assigned by risk_profile).
+    Config: FAST0_AUTO_ENABLE, FAST0_LIQ_5K_25K_ENABLE, FAST0_LIQ_100K_ENABLE.
     """
+    from trading.risk_profile import FAST0_AUTO_ENABLE, get_risk_profile
+    if not FAST0_AUTO_ENABLE:
+        return False, "FAST0_AUTO_ENABLE=0"
     liq = getattr(signal, "liq_long_usd_30s", None)
     if liq is None:
         return False, "missing liq_long_usd_30s"
     try:
-        liq_f = float(liq)
+        float(liq)
     except (TypeError, ValueError):
         return False, f"invalid liq_long_usd_30s={liq!r}"
-    lo, hi = _fast0_liq_min_usd(), _fast0_liq_max_usd()
-    if not (liq_f > lo):
-        return False, f"liq_long_usd_30s={liq_f} (require > {lo})"
-    if not (liq_f <= hi):
-        return False, f"liq_long_usd_30s={liq_f} (require <= {hi})"
+    profile, risk_mult, _ = get_risk_profile(
+        "short_pump_fast0",
+        liq_long_usd_30s=liq,
+        event_id=getattr(signal, "event_id", "") or "",
+        trade_id=getattr(signal, "trade_id", "") or "",
+        symbol=getattr(signal, "symbol", "") or "",
+    )
+    if not profile or risk_mult <= 0:
+        return False, "no matching risk profile"
     return True, ""
 
 

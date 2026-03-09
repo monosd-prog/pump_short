@@ -1573,6 +1573,21 @@ def run_watch_for_symbol(
                         try:
                             event_id = entry_payload.get("event_id") or run_id
                             context_score_msg = entry_payload.get("context_score", context_score)
+                            _rp, _rm, _ = ("", 0, 0)
+                            _nt, _lev, _mm = (0, 4, "isolated")
+                            try:
+                                from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+                                _rp, _rm, _ = get_risk_profile(
+                                    "short_pump",
+                                    stage=entry_payload.get("stage"),
+                                    dist_to_peak_pct=entry_payload.get("dist_to_peak_pct"),
+                                    event_id=str(event_id),
+                                    symbol=cfg.symbol,
+                                )
+                                if _rp:
+                                    _nt, _lev, _mm = get_notional_and_leverage(_rm)
+                            except Exception:
+                                pass
                             send_telegram(
                                 format_outcome(
                                     strategy="short_pump",
@@ -1591,6 +1606,10 @@ def run_watch_for_symbol(
                                     mae_pct=summary.get("mae_pct"),
                                     mfe_pct=summary.get("mfe_pct"),
                                     debug_payload=summary,
+                                    risk_profile=_rp or None,
+                                    notional_usd=_nt if _nt > 0 else None,
+                                    leverage=_lev,
+                                    margin_mode=_mm,
                                 ),
                                 strategy="short_pump",
                                 side="SHORT",

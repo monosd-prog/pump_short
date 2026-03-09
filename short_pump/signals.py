@@ -47,6 +47,27 @@ def _short_eid(eid: Optional[str]) -> str:
     return (eid or "")[:8] or "--------"
 
 
+def _get_risk_profile_line(signal: Signal) -> str | None:
+    """Compute risk_profile and exec params for TG. Returns line or None."""
+    try:
+        from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+        profile, risk_mult, _ = get_risk_profile(
+            (signal.strategy or "").strip(),
+            stage=getattr(signal, "stage", None),
+            dist_to_peak_pct=getattr(signal, "dist_to_peak_pct", None),
+            liq_long_usd_30s=getattr(signal, "liq_long_usd_30s", None),
+            event_id=str(getattr(signal, "event_id", "") or ""),
+            trade_id="",
+            symbol=signal.symbol or "",
+        )
+        if not profile:
+            return None
+        notional, leverage, margin_mode = get_notional_and_leverage(risk_mult)
+        return f"risk_profile={profile} | liqL30s={_fmt_num(signal.liq_long_usd_30s, 0)} dist={_fmt_pct(signal.dist_to_peak_pct)} cs={_fmt_num(signal.context_score)} | notional={notional:.0f} USD lev=x{leverage} margin={margin_mode}"
+    except Exception:
+        return None
+
+
 def format_tg(signal: Signal) -> str:
     side_up = (signal.side or "").upper()
     emoji = "🟥" if side_up == "SHORT" else "🟩"
@@ -64,6 +85,9 @@ def format_tg(signal: Signal) -> str:
             f"run_id={signal.run_id}"
         )
         lines.append(header)
+        rp_line = _get_risk_profile_line(signal)
+        if rp_line:
+            lines.append(rp_line)
 
         if signal.entry_price is not None:
             lines.append(
@@ -79,6 +103,9 @@ def format_tg(signal: Signal) -> str:
             f"sym={signal.symbol}"
         )
         lines.append(header)
+        rp_line = _get_risk_profile_line(signal)
+        if rp_line:
+            lines.append(rp_line)
         lines.append(
             f"run_id={signal.run_id} eid={_short_eid(signal.event_id)} ts={signal.ts_utc}"
         )

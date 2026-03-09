@@ -257,8 +257,12 @@ def format_fast0_outcome_message(
     hold_seconds: float,
     dist_to_peak_pct: float | None = None,
     context_score: float | None = None,
+    risk_profile: str | None = None,
+    notional_usd: float | None = None,
+    leverage: int | None = None,
+    margin_mode: str | None = None,
 ) -> str:
-    """Format FAST0 outcome for Telegram. Used when FAST0_TG_OUTCOME_ENABLE=1."""
+    """Format FAST0 outcome for Telegram. Used when FAST0_TG_OUTCOME_ENABLE=1 or live outcome."""
     header = f"{_emoji('SHORT')} SHORT | short_pump_fast0 | OUTCOME | res={res} | sym={symbol}"
     lines = [
         header,
@@ -266,6 +270,18 @@ def format_fast0_outcome_message(
         f"entry={_fmt_num(entry_price)} tp={_fmt_num(tp_price)} sl={_fmt_num(sl_price)}",
         f"pnl={_fmt_pct(pnl_pct)} | hold={_fmt_num(hold_seconds)}s",
     ]
+    if risk_profile:
+        extra = [f"risk_profile={risk_profile}"]
+        if notional_usd is not None and notional_usd > 0:
+            extra.append(f"notional={notional_usd:.0f} USD")
+        if leverage is not None:
+            extra.append(f"lev=x{leverage}")
+        if margin_mode:
+            extra.append(f"margin={margin_mode}")
+        if len(extra) > 1:
+            lines.append(" | ".join(extra))
+        elif extra:
+            lines.append(extra[0])
     return "\n".join(lines)
 
 
@@ -287,6 +303,10 @@ def format_outcome(
     mae_pct: Any = None,
     mfe_pct: Any = None,
     debug_payload: Any = None,
+    risk_profile: str | None = None,
+    notional_usd: float | None = None,
+    leverage: int | None = None,
+    margin_mode: str | None = None,
 ) -> str:
     header = f"{_emoji(side)} {side.upper()} | {strategy} | OUTCOME | res={outcome} | sym={symbol}"
     lines = [
@@ -305,6 +325,16 @@ def format_outcome(
         metrics.append(f"mfe={_fmt_pct(mfe_pct)}")
     if metrics:
         lines.append(" | ".join(metrics))
+    if risk_profile:
+        extra = [f"risk_profile={risk_profile}"]
+        if notional_usd is not None and notional_usd > 0:
+            extra.append(f"notional={notional_usd:.0f} USD")
+        if leverage is not None:
+            extra.append(f"lev=x{leverage}")
+        if margin_mode:
+            extra.append(f"margin={margin_mode}")
+        if extra:
+            lines.append(" | ".join(extra))
     dbg = _maybe_debug_json("outcome", debug_payload)
     if dbg:
         lines.append(dbg)

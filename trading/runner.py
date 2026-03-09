@@ -26,6 +26,9 @@ from trading.config import (
     EXECUTION_MODE,
     FIXED_POSITION_USD,
     LEVERAGE,
+    LIVE_FIXED_NOTIONAL_USD,
+    LIVE_LEVERAGE,
+    LIVE_MARGIN_MODE,
     LOG_PATH,
     MAX_CONCURRENT_TRADES,
     MAX_DAILY_LOSS_USD,
@@ -43,6 +46,7 @@ from trading.config import (
     STATE_PATH,
 )
 from trading.broker import get_broker
+from trading.risk_profile import get_risk_profile
 from trading.risk import (
     calc_position_size,
     calc_risk_usd,
@@ -281,6 +285,9 @@ def _normalize_position_for_record(
     out["notional_usd"] = float(position.get("notional_usd", notional_usd) or notional_usd)
     out["risk_usd"] = float(position.get("risk_usd", risk_usd) or risk_usd)
     out["leverage"] = int(position.get("leverage", leverage_use) or leverage_use)
+    risk_profile = position.get("risk_profile")
+    if risk_profile is not None:
+        out["risk_profile"] = risk_profile
     # Live: ensure order_id/position_idx present (for outcome worker)
     if EXECUTION_MODE == "live":
         out.setdefault("order_id", position.get("order_id", ""))
@@ -408,6 +415,23 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             save_state(state)
             return
 
+        risk_profile_name = ""
+        risk_mult = 1.0
+        if (signal.strategy or "").strip() in ("short_pump", "short_pump_fast0"):
+            risk_profile_name, risk_mult, _ = get_risk_profile(
+                (signal.strategy or "").strip(),
+                stage=getattr(signal, "stage", None),
+                dist_to_peak_pct=getattr(signal, "dist_to_peak_pct", None),
+                liq_long_usd_30s=getattr(signal, "liq_long_usd_30s", None),
+                event_id=str(getattr(signal, "event_id", "") or ""),
+                trade_id=str(getattr(signal, "trade_id", "") or ""),
+                symbol=signal.symbol or "",
+            )
+        fixed_notional_override = None
+        if risk_profile_name and EXECUTION_MODE == "live":
+            fixed_notional_override = LIVE_FIXED_NOTIONAL_USD * risk_mult
+        elif risk_profile_name and FIXED_POSITION_USD > 0:
+            fixed_notional_override = FIXED_POSITION_USD * risk_mult
         risk_usd_override = risk_usd_for_live(equity) if EXECUTION_MODE == "live" else None
         notional_usd, risk_usd, reject_reason = calc_position_size(
             entry_f,
@@ -417,6 +441,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             RISK_PCT,
             stop_distance_pct,
             risk_usd_override=risk_usd_override,
+            fixed_notional_override=fixed_notional_override,
         )
         if reject_reason:
             logger.info(
@@ -427,6 +452,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             save_state(state)
             return
 
+        leverage_use = LIVE_LEVERAGE if EXECUTION_MODE == "live" else LEVERAGE
         if EXECUTION_MODE == "live":
             ok_lev, reason_lev = validate_notional_leverage(notional_usd, equity, MAX_LEVERAGE)
             if not ok_lev:
@@ -437,7 +463,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 _finish_queue_processing(raw_lines)
                 save_state(state)
                 return
-            leverage_use = min(LEVERAGE, MAX_LEVERAGE)
+            leverage_use = min(leverage_use, MAX_LEVERAGE)
             today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             daily_pnl = get_daily_realized_pnl_usd(state, today_utc)
             if daily_pnl <= -MAX_DAILY_LOSS_USD:
@@ -492,6 +518,9 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             save_state(state)
             return
 
+        position["risk_profile"] = risk_profile_name
+        if EXECUTION_MODE == "live":
+            position["margin_mode"] = LIVE_MARGIN_MODE
         position = _normalize_position_for_record(
             position,
             signal=signal,

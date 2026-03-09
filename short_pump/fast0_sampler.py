@@ -122,7 +122,7 @@ def _volume_1m_features(candles_1m: Optional[pd.DataFrame], lookback: int = 20) 
 def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str]:
     """
     Returns (pass, reason). pass=True if thresholds met, else (False, reason).
-    Liq filter: FAST0_LIQ_MIN_USD < liq_long_usd_30s <= FAST0_LIQ_MAX_USD (default 5000 < liq <= 25000).
+    Liq filter: liq_long_usd_30s > 0 (all buckets allowed: base 1R, 5k-25k 1.5R, 100k+ 2R).
     """
     liq = payload.get("liq_long_usd_30s")
     if liq is None or (isinstance(liq, float) and pd.isna(liq)):
@@ -131,10 +131,8 @@ def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str
         liq_val = float(liq)
     except (TypeError, ValueError):
         return False, "liq_missing"
-    if liq_val <= FAST0_LIQ_MIN_USD:
-        return False, "liq_le_5000"
-    if liq_val > FAST0_LIQ_MAX_USD:
-        return False, "liq_gt_25000"
+    if liq_val <= 0:
+        return False, "liq_le_0"
     if tick < FAST0_ENTRY_MIN_TICK:
         return False, f"tick<{FAST0_ENTRY_MIN_TICK}"
     cs = payload.get("context_score")
@@ -335,11 +333,16 @@ def _run_fast0_outcome_watcher(
                             ctx_val = float(context_score) if context_score is not None else 0.0
                             if dist_val >= FAST0_TG_OUTCOME_MIN_DIST and (liq_long_usd_30s or 0) > 0:
                                 try:
+                                    from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+                                    _rp, _rm, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=liq_long_usd_30s or 0)
+                                    _nt, _lev, _mm = get_notional_and_leverage(_rm)
                                     msg = format_fast0_outcome_message(
                                         symbol=symbol, run_id=run_id, event_id=event_id,
                                         res=res_val, entry_price=entry_price, tp_price=tp_price, sl_price=sl_price,
                                         exit_price=exit_price_val, pnl_pct=pnl_val, hold_seconds=0,
                                         dist_to_peak_pct=dist_val, context_score=ctx_val,
+                                        risk_profile=_rp or None, notional_usd=_nt if _nt > 0 else None,
+                                        leverage=_lev, margin_mode=_mm,
                                     )
                                     send_telegram(msg, strategy=STRATEGY, side="SHORT", mode="FAST0", event_id=event_id, context_score=ctx_val, entry_ok=True, formatted=True)
                                 except Exception:
@@ -451,6 +454,9 @@ def _run_fast0_outcome_watcher(
                 elif liq_val > 0:
                     if dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
                         try:
+                            from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+                            _rp, _rm, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=liq_val)
+                            _nt, _lev, _mm = get_notional_and_leverage(_rm)
                             msg = format_fast0_outcome_message(
                                 symbol=symbol,
                                 run_id=run_id,
@@ -464,6 +470,10 @@ def _run_fast0_outcome_watcher(
                                 hold_seconds=hold_val,
                                 dist_to_peak_pct=dist_val if dist_val else None,
                                 context_score=ctx_val if ctx_val else None,
+                                risk_profile=_rp or None,
+                                notional_usd=_nt if _nt > 0 else None,
+                                leverage=_lev,
+                                margin_mode=_mm,
                             )
                             send_telegram(
                                 msg,
