@@ -47,7 +47,7 @@ def _path_mode_from_caller(mode: str) -> str | None:
     return m if m in ("paper", "live") else None
 
 
-_logged_writers: set[tuple[str, str, str]] = set()
+_logged_writers: set[tuple[str, str, str, str]] = set()
 
 
 def _log_dataset_write_once(
@@ -56,20 +56,21 @@ def _log_dataset_write_once(
     path_mode: str,
     dir_path: str,
     base_dir: str | None,
+    row_mode: str,
+    row: Dict[str, Any] | None = None,
 ) -> None:
-    """Log once per (writer, strategy, path_mode) for diagnostics."""
-    key = (writer, strategy, path_mode)
+    """Log once per (writer, strategy, path_mode, run_id) for diagnostics."""
+    run_id = (row.get("run_id") or "")[:16] if row else ""
+    key = (writer, strategy, path_mode, run_id)
     if key in _logged_writers:
         return
     _logged_writers.add(key)
     root = base_dir or "datasets"
+    event_id = row.get("event_id") or row.get("eventId") if row else ""
+    trade_id = row.get("trade_id") or row.get("tradeId") if row else ""
     logging.getLogger(__name__).info(
-        "DATASET_WRITE | writer=%s strategy=%s path_mode=%s dataset_dir=%s root=%s",
-        writer,
-        strategy,
-        path_mode,
-        dir_path,
-        root,
+        "DATASET_WRITE | writer=%s strategy=%s path_mode=%s row_mode=%s run_id=%s event_id=%s trade_id=%s dataset_dir=%s",
+        writer, strategy, path_mode, row_mode, run_id or "-", event_id or "-", trade_id or "-", dir_path,
     )
 
 
@@ -181,14 +182,15 @@ def write_event_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
-    """mode = signal source (live/FAST0/ARMED); path uses caller mode when paper|live else env. CSV source_mode=exec_mode; original in payload_json.signal_source_mode."""
+    """mode = signal source (live/FAST0/ARMED); path uses caller mode when paper|live else env. Row mode/source_mode must match path (live path -> live in row)."""
     exec_mode = _get_exec_mode()
     path_mode = _path_mode_from_caller(mode)
+    row_mode = path_mode if path_mode in ("paper", "live") else exec_mode
     payload_raw = row.get("entry_payload") or row.get("payload_json") or "{}"
     payload_json = _inject_signal_source_mode(payload_raw, mode)
-    row = {**row, "mode": exec_mode, "source_mode": exec_mode, "payload_json": payload_json}
+    row = {**row, "mode": row_mode, "source_mode": row_mode, "payload_json": payload_json}
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir, path_mode=path_mode)
-    _log_dataset_write_once("event", strategy, path_mode or exec_mode, dir_path, base_dir)
+    _log_dataset_write_once("event", strategy, path_mode or exec_mode, dir_path, base_dir, row_mode, row)
     if schema_version == 3:
         path = os.path.join(dir_path, "events_v3.csv")
         row_v3 = normalize_event_v3(row)
@@ -215,9 +217,10 @@ def write_trade_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
-    """CSV mode=exec_mode, source_mode=exec_mode; signal source in details if needed. Path uses caller mode when paper|live."""
+    """Row mode/source_mode must match path (live path -> live in row). Path uses caller mode when paper|live."""
     exec_mode = _get_exec_mode()
     path_mode = _path_mode_from_caller(mode)
+    row_mode = path_mode if path_mode in ("paper", "live") else exec_mode
     row = {
         "trade_type": row.get("trade_type", ""),
         "paper_entry_time_utc": row.get("paper_entry_time_utc", ""),
@@ -225,11 +228,11 @@ def write_trade_row(
         "paper_tp_price": row.get("paper_tp_price", ""),
         "paper_sl_price": row.get("paper_sl_price", ""),
         **row,
-        "mode": exec_mode,
-        "source_mode": exec_mode,
+        "mode": row_mode,
+        "source_mode": row_mode,
     }
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir, path_mode=path_mode)
-    _log_dataset_write_once("trade", strategy, path_mode or exec_mode, dir_path, base_dir)
+    _log_dataset_write_once("trade", strategy, path_mode or exec_mode, dir_path, base_dir, row_mode, row)
     if schema_version == 3:
         path = os.path.join(dir_path, "trades_v3.csv")
         row_v3 = normalize_trade_v3(row)
@@ -256,20 +259,21 @@ def write_outcome_row(
     schema_version: int = 2,
     base_dir: str | None = None,
 ) -> None:
-    """CSV mode=exec_mode, source_mode=exec_mode; signal source in details_json if needed. Path uses caller mode when paper|live."""
+    """Row mode/source_mode must match path (live path -> live in row). Path uses caller mode when paper|live."""
     exec_mode = _get_exec_mode()
     path_mode = _path_mode_from_caller(mode)
+    row_mode = path_mode if path_mode in ("paper", "live") else exec_mode
     row = {
         "trade_type": row.get("trade_type", ""),
         "details_payload": row.get("details_payload", ""),
         **row,
-        "mode": exec_mode,
-        "source_mode": exec_mode,
+        "mode": row_mode,
+        "source_mode": row_mode,
     }
     if not row.get("outcome_time_utc"):
         row["outcome_time_utc"] = wall_time_utc
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir, path_mode=path_mode)
-    _log_dataset_write_once("outcome", strategy, path_mode or exec_mode, dir_path, base_dir)
+    _log_dataset_write_once("outcome", strategy, path_mode or exec_mode, dir_path, base_dir, row_mode, row)
     if schema_version == 3:
         path = os.path.join(dir_path, "outcomes_v3.csv")
         row_v3 = normalize_outcome_v3(row)

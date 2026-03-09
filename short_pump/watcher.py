@@ -1511,7 +1511,10 @@ def run_watch_for_symbol(
                             },
                             extra=None,
                         )
-                    outcome_row = build_outcome_row(
+                    # For LIVE+auto: outcome from close_from_live_outcome/close_on_timeout only. Skip to avoid duplicate.
+                    from trading.config import AUTO_TRADING_ENABLE, EXECUTION_MODE
+                    skip_watcher_outcome_write = AUTO_TRADING_ENABLE and (EXECUTION_MODE or "").strip().lower() == "live"
+                    outcome_row = None if skip_watcher_outcome_write else build_outcome_row(
                         summary,
                         trade_id=str(trade_id),
                         event_id=str(event_id),

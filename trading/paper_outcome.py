@@ -444,6 +444,8 @@ def _write_paper_outcome_to_datasets(
     else:
         pnl_pct = (exit_price - entry) / entry * 100.0
     outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "TIMEOUT")
+    pos_mode = (position.get("mode") or "paper").strip().lower()
+    trade_type = "LIVE" if pos_mode == "live" else "PAPER"
     summary = {
         "end_reason": outcome_str,
         "outcome": outcome_str,
@@ -455,7 +457,7 @@ def _write_paper_outcome_to_datasets(
         "tp_price": position.get("tp"),
         "sl_price": sl,
         "exit_price": exit_price,
-        "trade_type": "PAPER",
+        "trade_type": trade_type,
         "details_payload": json.dumps({"timeout": close_reason == "timeout", "tp_hit": close_reason == "tp", "sl_hit": close_reason == "sl"}),
     }
     orow = build_outcome_row(
