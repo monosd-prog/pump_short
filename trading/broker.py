@@ -67,8 +67,8 @@ def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
 
 def allow_entry_short_pump_fast0(signal: Any) -> Tuple[bool, str]:
     """
-    short_pump_fast0 — allow base + 5k-25k + 100k+ buckets (risk assigned by risk_profile).
-    Base profile requires dist_to_peak_pct <= FAST0_BASE_DIST_MAX (default 2.0).
+    short_pump_fast0 — allow only if dist<=1.5 AND liq in [0, (5k,25k], >100k].
+    Risk: liq==0->1R, 5k<liq<=25k->1.5R, liq>100k->2R.
     """
     from trading.risk_profile import FAST0_AUTO_ENABLE, get_risk_profile, is_fast0_entry_allowed
     if not FAST0_AUTO_ENABLE:

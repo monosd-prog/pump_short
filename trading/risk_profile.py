@@ -57,35 +57,42 @@ FAST0_LIQ_100K_ENABLE = _bool_env("FAST0_LIQ_100K_ENABLE", True)
 FAST0_LIQ_100K_MIN_USD = _float_env("FAST0_LIQ_100K_MIN_USD", 100000.0)
 FAST0_LIQ_100K_RISK_MULT = _float_env("FAST0_LIQ_100K_RISK_MULT", 2.0)
 
-# fast0 base: dist_to_peak_pct must be <= FAST0_BASE_DIST_MAX for tradeability and TG
-FAST0_BASE_DIST_MAX = _float_env("FAST0_BASE_DIST_MAX", 2.0)
+# fast0: dist must be <= FAST0_DIST_MAX; liq in allowed buckets only
+FAST0_DIST_MAX = _float_env("FAST0_DIST_MAX", 1.5)
+# Allowed liq buckets: 0, (5k, 25k], >100k. Use existing env for boundaries.
+FAST0_LIQ_5K = FAST0_LIQ_5K_25K_MIN_USD
+FAST0_LIQ_25K = FAST0_LIQ_5K_25K_MAX_USD
+FAST0_LIQ_100K = FAST0_LIQ_100K_MIN_USD
 
 
 def is_fast0_entry_allowed(liq_long_usd_30s: Any, dist_to_peak_pct: Any) -> Tuple[bool, str]:
     """
     Single source of truth for fast0 tradeability (auto + TG).
-    For base profile: dist_to_peak_pct must be <= FAST0_BASE_DIST_MAX.
-    For 5k-25k and 100k+: no dist filter.
-    Returns (allowed, reason).
+    Allowed ONLY if: dist_to_peak_pct <= 1.5 AND liq in [0, (5k,25k], >100k].
+    Reject: dist>1.5 -> fast0_dist_gt_1_5; liq not in bucket -> fast0_liq_not_in_allowed_bucket.
     """
     try:
         liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else None
     except (TypeError, ValueError):
         return False, "liq_missing"
-    if liq_val is None or liq_val <= 0:
-        return False, "liq_invalid"
+    if liq_val is None:
+        return False, "liq_missing"
+    if liq_val < 0:
+        return False, "fast0_liq_not_in_allowed_bucket"
     dist_val = None
     try:
         dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else None
     except (TypeError, ValueError):
         pass
-    is_100k = FAST0_LIQ_100K_ENABLE and liq_val >= FAST0_LIQ_100K_MIN_USD
-    is_5k_25k = FAST0_LIQ_5K_25K_ENABLE and liq_val > FAST0_LIQ_5K_25K_MIN_USD and liq_val <= FAST0_LIQ_5K_25K_MAX_USD
-    if is_100k or is_5k_25k:
+    if dist_val is not None and dist_val > FAST0_DIST_MAX:
+        return False, "fast0_dist_gt_1_5"
+    # Allowed buckets: liq==0, 5k<liq<=25k, liq>100k
+    in_base = liq_val == 0
+    in_5k_25k = liq_val > FAST0_LIQ_5K and liq_val <= FAST0_LIQ_25K
+    in_100k = liq_val > FAST0_LIQ_100K
+    if in_base or in_5k_25k or in_100k:
         return True, ""
-    if dist_val is None or dist_val > FAST0_BASE_DIST_MAX:
-        return False, "fast0_base_dist_gt_2.0"
-    return True, ""
+    return False, "fast0_liq_not_in_allowed_bucket"
 
 
 def get_risk_profile(
@@ -129,11 +136,10 @@ def get_risk_profile(
     if s == "short_pump_fast0":
         allowed, reason = is_fast0_entry_allowed(liq_long_usd_30s, dist_to_peak_pct)
         if not allowed:
-            if reason == "fast0_base_dist_gt_2.0":
-                logger.info(
-                    "RISK_PROFILE_REJECT | reason=fast0_base_dist_gt_2.0 symbol=%s event_id=%s liq_long_usd_30s=%s dist_to_peak_pct=%s",
-                    symbol, event_id, liq_long_usd_30s, dist_to_peak_pct,
-                )
+            logger.info(
+                "RISK_PROFILE_REJECT | reason=%s symbol=%s event_id=%s liq_long_usd_30s=%s dist_to_peak_pct=%s",
+                reason, symbol, event_id, liq_long_usd_30s, dist_to_peak_pct,
+            )
             return ("", 0.0, 0.0)
         if not FAST0_AUTO_ENABLE:
             return ("", 0.0, 0.0)
@@ -144,13 +150,12 @@ def get_risk_profile(
             pass
         if liq_val is None:
             return ("", 0.0, 0.0)
-        profile = ""
-        mult = FAST0_BASE_RISK_MULT
-        if FAST0_LIQ_100K_ENABLE and liq_val >= FAST0_LIQ_100K_MIN_USD:
-            profile = "fast0_liq_100k_plus_2R"
+        # Buckets: liq==0 -> 1R, 5k<liq<=25k -> 1.5R, liq>100k -> 2R
+        if liq_val > FAST0_LIQ_100K:
+            profile = "fast0_2R"
             mult = FAST0_LIQ_100K_RISK_MULT
-        elif FAST0_LIQ_5K_25K_ENABLE and liq_val > FAST0_LIQ_5K_25K_MIN_USD and liq_val <= FAST0_LIQ_5K_25K_MAX_USD:
-            profile = "fast0_liq_5k_25k_1.5R"
+        elif liq_val > FAST0_LIQ_5K and liq_val <= FAST0_LIQ_25K:
+            profile = "fast0_1p5R"
             mult = FAST0_LIQ_5K_25K_RISK_MULT
         else:
             profile = "fast0_base_1R"

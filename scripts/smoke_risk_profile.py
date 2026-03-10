@@ -74,41 +74,48 @@ def main() -> None:
     assert profile3 == "", f"expected no profile for stage3, got {profile3}"
     print("OK: short_pump stage3 -> reject")
 
-    # 2a. fast0 base dist=1.8 -> fast0_base_1R (pass)
-    sig_b = _signal("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=1.8)
+    # 2a. fast0 liq=0 dist=1.0 -> fast0_base_1R (pass)
+    sig_b = _signal("short_pump_fast0", liq_long_usd_30s=0, dist_to_peak_pct=1.0)
     ok_b, _ = allow_entry_short_pump_fast0(sig_b)
-    assert ok_b, "fast0 liq=2k dist=1.8 (base) should pass"
-    profile_b, risk_b, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=1.8)
+    assert ok_b, "fast0 liq=0 dist=1.0 (base) should pass"
+    profile_b, risk_b, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=0, dist_to_peak_pct=1.0)
     assert profile_b == "fast0_base_1R", f"expected fast0_base_1R, got {profile_b}"
     assert risk_b == 1.0, f"expected risk_mult=1.0, got {risk_b}"
-    print("OK: fast0 base liq=2k dist=1.8 -> fast0_base_1R, 1R")
+    print("OK: fast0 liq=0 dist=1.0 -> fast0_base_1R, 1R")
 
-    # 2b. fast0 base dist=2.1 -> reject (fast0_base_dist_gt_2.0)
-    sig_b2 = _signal("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=2.1)
+    # 2b. fast0 liq=2k dist=1.0 -> reject (liq not in bucket)
+    sig_b2 = _signal("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=1.0)
     ok_b2, reason_b2 = allow_entry_short_pump_fast0(sig_b2)
-    assert not ok_b2, "fast0 base liq=2k dist=2.1 should reject"
-    assert reason_b2 == "fast0_base_dist_gt_2.0", f"expected fast0_base_dist_gt_2.0, got {reason_b2}"
-    profile_b2, _, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=2.1)
-    assert profile_b2 == "", f"expected no profile for base dist>2, got {profile_b2}"
-    print("OK: fast0 base liq=2k dist=2.1 -> reject fast0_base_dist_gt_2.0")
+    assert not ok_b2, "fast0 liq=2k (0,5k] should reject"
+    assert reason_b2 == "fast0_liq_not_in_allowed_bucket", f"expected fast0_liq_not_in_allowed_bucket, got {reason_b2}"
+    profile_b2, _, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=1.0)
+    assert profile_b2 == "", f"expected no profile for liq 2k, got {profile_b2}"
+    print("OK: fast0 liq=2k -> reject fast0_liq_not_in_allowed_bucket")
 
-    # 3. fast0 5k-25k dist=3.5 -> fast0_liq_5k_25k_1.5R (no dist filter)
-    sig_m = _signal("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=3.5)
+    # 2c. fast0 dist=1.6 -> reject (dist>1.5)
+    sig_d = _signal("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=1.6)
+    ok_d, reason_d = allow_entry_short_pump_fast0(sig_d)
+    assert not ok_d, "fast0 dist=1.6 should reject"
+    assert reason_d == "fast0_dist_gt_1_5", f"expected fast0_dist_gt_1_5, got {reason_d}"
+    print("OK: fast0 dist=1.6 -> reject fast0_dist_gt_1_5")
+
+    # 3. fast0 5k-25k dist=1.5 -> fast0_1p5R
+    sig_m = _signal("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=1.5)
     ok_m, _ = allow_entry_short_pump_fast0(sig_m)
-    assert ok_m, "fast0 liq=15k should pass"
-    profile_m, risk_m, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=3.5)
-    assert profile_m == "fast0_liq_5k_25k_1.5R", f"expected fast0_liq_5k_25k_1.5R, got {profile_m}"
+    assert ok_m, "fast0 liq=15k dist=1.5 should pass"
+    profile_m, risk_m, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=1.5)
+    assert profile_m == "fast0_1p5R", f"expected fast0_1p5R, got {profile_m}"
     assert risk_m == 1.5, f"expected risk_mult=1.5, got {risk_m}"
-    print("OK: fast0 liq=15k (5k-25k) -> fast0_liq_5k_25k_1.5R, 1.5R")
+    print("OK: fast0 liq=15k (5k-25k) dist=1.5 -> fast0_1p5R, 1.5R")
 
-    # 4. fast0 100k+ dist=4.0 -> fast0_liq_100k_plus_2R (no dist filter)
-    sig_h = _signal("short_pump_fast0", liq_long_usd_30s=150000, dist_to_peak_pct=4.0)
+    # 4. fast0 100k+ dist=1.0 -> fast0_2R
+    sig_h = _signal("short_pump_fast0", liq_long_usd_30s=150000, dist_to_peak_pct=1.0)
     ok_h, _ = allow_entry_short_pump_fast0(sig_h)
-    assert ok_h, "fast0 liq=150k should pass"
-    profile_h, risk_h, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=150000, dist_to_peak_pct=4.0)
-    assert profile_h == "fast0_liq_100k_plus_2R", f"expected fast0_liq_100k_plus_2R, got {profile_h}"
+    assert ok_h, "fast0 liq=150k dist=1.0 should pass"
+    profile_h, risk_h, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=150000, dist_to_peak_pct=1.0)
+    assert profile_h == "fast0_2R", f"expected fast0_2R, got {profile_h}"
     assert risk_h == 2.0, f"expected risk_mult=2.0, got {risk_h}"
-    print("OK: fast0 liq=150k (100k+) -> fast0_liq_100k_plus_2R, 2R")
+    print("OK: fast0 liq=150k dist=1.0 -> fast0_2R, 2R")
 
     # 5. notional from 10 USD
     nt, lev, mm = get_notional_and_leverage(1.0)
@@ -131,9 +138,9 @@ def main() -> None:
     print("OK: calc_position_size fixed_notional_override=10 -> notional~10")
 
     # 7. TG payload contains risk_profile, 10 USD, x4, isolated
-    sig_tg = _signal("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=2.0)
+    sig_tg = _signal("short_pump_fast0", liq_long_usd_30s=15000, dist_to_peak_pct=1.5)
     msg = format_tg(sig_tg)
-    assert "fast0_liq_5k_25k_1.5R" in msg or "risk_profile=" in msg, f"TG msg missing risk_profile: {msg[:200]}"
+    assert "fast0_1p5R" in msg or "risk_profile=" in msg, f"TG msg missing risk_profile: {msg[:200]}"
     assert "10" in msg or "15" in msg, f"TG msg missing notional: {msg[:200]}"
     assert "x4" in msg or "lev=" in msg, f"TG msg missing leverage: {msg[:200]}"
     assert "isolated" in msg.lower(), f"TG msg missing margin: {msg[:200]}"
@@ -143,21 +150,22 @@ def main() -> None:
         symbol="XUSDT", run_id="smoke", event_id="evt1",
         res="TP_hit", entry_price=1.0, tp_price=0.99, sl_price=1.01,
         exit_price=0.99, pnl_pct=1.0, hold_seconds=60,
-        risk_profile="fast0_liq_5k_25k_1.5R",
+        risk_profile="fast0_1p5R",
         notional_usd=15.0, leverage=4, margin_mode="isolated",
     )
-    assert "fast0_liq_5k_25k_1.5R" in msg_out, f"outcome msg missing risk_profile: {msg_out}"
+    assert "fast0_1p5R" in msg_out, f"outcome msg missing risk_profile: {msg_out}"
     assert "15" in msg_out, f"outcome msg missing notional: {msg_out}"
     assert "x4" in msg_out or "lev=" in msg_out, f"outcome msg missing leverage: {msg_out}"
     assert "isolated" in msg_out.lower(), f"outcome msg missing margin: {msg_out}"
     print("OK: TG outcome contains risk_profile, notional, lev, margin")
 
-    # 8. TG entry logic: base dist<=2 allowed, base dist>2 not
-    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 2000, "dist_to_peak_pct": 1.8}), "base dist=1.8 -> TG allowed"
-    assert not is_fast0_tg_entry_allowed({"liq_long_usd_30s": 2000, "dist_to_peak_pct": 2.1}), "base dist=2.1 -> TG not allowed"
-    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 15000, "dist_to_peak_pct": 3.5}), "5k-25k dist=3.5 -> TG allowed"
-    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 150000, "dist_to_peak_pct": 4.0}), "100k+ dist=4 -> TG allowed"
-    print("OK: TG entry matches risk_profile logic (base dist<=2, enhanced no dist filter)")
+    # 8. TG entry logic: dist<=1.5 and liq in [0, (5k,25k], >100k]
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 0, "dist_to_peak_pct": 1.0}), "liq=0 dist=1 -> TG allowed"
+    assert not is_fast0_tg_entry_allowed({"liq_long_usd_30s": 2000, "dist_to_peak_pct": 1.0}), "liq=2k -> TG not allowed"
+    assert not is_fast0_tg_entry_allowed({"liq_long_usd_30s": 15000, "dist_to_peak_pct": 2.0}), "dist=2 -> TG not allowed"
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 15000, "dist_to_peak_pct": 1.5}), "5k-25k dist=1.5 -> TG allowed"
+    assert is_fast0_tg_entry_allowed({"liq_long_usd_30s": 150000, "dist_to_peak_pct": 1.0}), "100k+ dist=1 -> TG allowed"
+    print("OK: TG entry matches risk_profile logic (dist<=1.5, liq in allowed buckets)")
 
     print("smoke_risk_profile: all checks passed")
 

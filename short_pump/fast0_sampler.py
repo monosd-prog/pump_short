@@ -122,17 +122,16 @@ def _volume_1m_features(candles_1m: Optional[pd.DataFrame], lookback: int = 20) 
 def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str]:
     """
     Returns (pass, reason). pass=True if thresholds met, else (False, reason).
-    Liq filter: liq_long_usd_30s > 0 (all buckets allowed: base 1R, 5k-25k 1.5R, 100k+ 2R).
+    Dist/liq: delegated to risk_profile.is_fast0_entry_allowed (dist<=1.5, liq in [0,(5k,25k],>100k]).
     """
-    liq = payload.get("liq_long_usd_30s")
-    if liq is None or (isinstance(liq, float) and pd.isna(liq)):
-        return False, "liq_missing"
-    try:
-        liq_val = float(liq)
-    except (TypeError, ValueError):
-        return False, "liq_missing"
-    if liq_val <= 0:
-        return False, "liq_le_0"
+    from trading.risk_profile import is_fast0_entry_allowed
+
+    allowed, reason = is_fast0_entry_allowed(
+        payload.get("liq_long_usd_30s"),
+        payload.get("dist_to_peak_pct"),
+    )
+    if not allowed:
+        return False, reason
     if tick < FAST0_ENTRY_MIN_TICK:
         return False, f"tick<{FAST0_ENTRY_MIN_TICK}"
     cs = payload.get("context_score")
@@ -142,13 +141,6 @@ def should_fast0_entry_ok(payload: Dict[str, Any], tick: int) -> tuple[bool, str
         return False, "context_score_invalid"
     if cs_val < FAST0_ENTRY_CONTEXT_MIN:
         return False, f"context_score={cs_val}<{FAST0_ENTRY_CONTEXT_MIN}"
-    dist = payload.get("dist_to_peak_pct")
-    try:
-        dist_val = float(dist) if dist is not None else -999.0
-    except (TypeError, ValueError):
-        return False, "dist_invalid"
-    if dist_val < FAST0_ENTRY_DIST_MIN:
-        return False, f"dist_to_peak={dist_val}<{FAST0_ENTRY_DIST_MIN}"
     cvd30 = payload.get("cvd_delta_ratio_30s")
     try:
         cvd30_val = float(cvd30) if cvd30 is not None else 999.0
