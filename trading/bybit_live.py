@@ -542,6 +542,44 @@ class BybitLiveBroker:
         lst = j.get("result", {}).get("list", []) or []
         return lst
 
+    def get_closed_pnl_all_pages(
+        self,
+        symbol: str,
+        start_time_ms: Optional[int] = None,
+        end_time_ms: Optional[int] = None,
+        limit: int = 100,
+        max_pages: int = 10,
+        *,
+        raise_on_network_error: bool = False,
+    ) -> list[dict]:
+        """Fetch all closed PnL pages (for audit/reconciliation). Read-only."""
+        if self.dry_run:
+            return []
+        all_records: list[dict] = []
+        cursor: Optional[str] = None
+        for _ in range(max_pages):
+            params = {"category": CATEGORY, "symbol": _norm_symbol(symbol), "limit": str(min(limit, 100))}
+            if start_time_ms is not None:
+                params["startTime"] = str(start_time_ms)
+            if end_time_ms is not None:
+                params["endTime"] = str(end_time_ms)
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                j = _request("GET", "/v5/position/closed-pnl", self.api_key, self.api_secret, params=params)
+            except Exception as e:
+                if raise_on_network_error:
+                    raise
+                logger.warning("get_closed_pnl_all_pages failed symbol=%s: %s", symbol, e)
+                break
+            result = j.get("result", {})
+            lst = result.get("list", []) or []
+            all_records.extend(lst)
+            cursor = result.get("nextPageCursor")
+            if not cursor or len(lst) < limit:
+                break
+        return all_records
+
     def get_executions(self, symbol: str, order_id: Optional[str] = None, start_time_ms: Optional[int] = None, end_time_ms: Optional[int] = None, limit: int = 50) -> list[dict]:
         """Fetch execution records. orderId has highest priority if provided. Returns list of {execPrice, execQty, execTime, closedSize, ...}."""
         if self.dry_run:

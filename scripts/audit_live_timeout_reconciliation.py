@@ -119,7 +119,11 @@ AUDIT_COLUMNS = [
     "reason",
 ]
 
-_ENTRY_TOLERANCE_PCT = 0.025  # 2.5% for historical matching (slippage)
+_ENTRY_TOLERANCE_STRICT_PCT = 0.025   # 2.5%
+_ENTRY_TOLERANCE_RELAXED_PCT = 0.05   # 5%
+_ENTRY_TOLERANCE_PLAUSIBLE_PCT = 0.10  # 10% nearest match
+_TIME_WINDOW_START_MS = 5 * 60 * 1000   # 5 min before opened
+_TIME_WINDOW_END_MS = 15 * 60 * 1000    # 15 min after timeout
 
 
 def _parse_ts_ms(s: str) -> int | None:
@@ -210,50 +214,104 @@ def _match_bybit_closed_pnl(
     timeout_ms: int,
 ) -> tuple[str, float, float, float, str, str]:
     """
-    Query Bybit closed-pnl and match. Returns (resolved_outcome, bybit_entry, bybit_exit, bybit_pnl, bybit_ts, reason).
-    resolved_outcome: SL_hit | TP_hit | unresolved
+    Query Bybit closed-pnl (all pages), executions fallback. Returns (resolved_outcome, bybit_entry, bybit_exit, bybit_pnl, bybit_ts, reason).
+    Uses widened time window, relaxed entry tolerance, and granular reason codes for unresolved.
     """
     if not broker or not symbol or entry <= 0 or opened_ms is None:
         return ("unresolved", 0.0, 0.0, 0.0, "", "missing_params")
     want_side = "Sell" if (side or "").strip().upper() in ("SHORT", "SELL") else "Buy"
-    end_ms = timeout_ms + 300_000  # 5 min after timeout
+    start_ms = opened_ms - _TIME_WINDOW_START_MS
+    end_ms = (timeout_ms or opened_ms + 3600_000) + _TIME_WINDOW_END_MS  # 15 min after timeout
+    if end_ms - start_ms > 7 * 24 * 3600 * 1000:
+        end_ms = start_ms + 7 * 24 * 3600 * 1000 - 1000  # Bybit limit 7 days
+
+    records: list[dict] = []
+    fetch_method = "closed_pnl"
     try:
-        records = broker.get_closed_pnl(
-            symbol,
-            start_time_ms=opened_ms - 60_000,
-            end_time_ms=end_ms,
-            limit=100,
-            raise_on_network_error=False,
-        )
+        if hasattr(broker, "get_closed_pnl_all_pages"):
+            records = broker.get_closed_pnl_all_pages(
+                symbol,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+                limit=100,
+                max_pages=5,
+                raise_on_network_error=False,
+            )
+        else:
+            records = broker.get_closed_pnl(
+                symbol,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+                limit=100,
+                raise_on_network_error=False,
+            )
     except Exception as e:
         return ("unresolved", 0.0, 0.0, 0.0, "", f"api_error:{type(e).__name__}")
 
-    for rec in records:
-        if rec.get("side") != want_side:
+    if not records:
+        return ("unresolved", 0.0, 0.0, 0.0, "", "no_closed_pnl_rows")
+
+    same_side = [r for r in records if r.get("side") == want_side]
+    if not same_side:
+        return ("unresolved", 0.0, 0.0, 0.0, "", "closed_pnl_side_mismatch")
+
+    in_time: list[dict] = []
+    for r in same_side:
+        um = int(r.get("updatedTime") or 0)
+        if um >= opened_ms and um <= end_ms:
+            in_time.append(r)
+    if not in_time:
+        return ("unresolved", 0.0, 0.0, 0.0, "", "outside_time_window")
+
+    for tol_pct, tol_name in [
+        (_ENTRY_TOLERANCE_STRICT_PCT, "closed_pnl_match"),
+        (_ENTRY_TOLERANCE_RELAXED_PCT, "closed_pnl_match_relaxed"),
+        (_ENTRY_TOLERANCE_PLAUSIBLE_PCT, "closed_pnl_match_plausible"),
+    ]:
+        matches: list[tuple[dict, float]] = []
+        for r in in_time:
+            ae = float(r.get("avgEntryPrice") or 0)
+            ax = float(r.get("avgExitPrice") or 0)
+            if ae <= 0 or ax <= 0:
+                continue
+            if abs(ae - entry) / max(entry, 1e-9) <= tol_pct:
+                matches.append((r, ae))
+
+        if len(matches) == 1:
+            r, _ = matches[0]
+            closed_pnl = float(r.get("closedPnl") or 0)
+            avg_exit = float(r.get("avgExitPrice") or 0)
+            avg_entry = float(r.get("avgEntryPrice") or 0)
+            um = int(r.get("updatedTime") or 0)
+            bybit_ts = datetime.fromtimestamp(um / 1000.0, tz=timezone.utc).isoformat()
+            if want_side == "Sell":
+                resolved = "TP_hit" if avg_exit < entry else "SL_hit"
+            else:
+                resolved = "TP_hit" if avg_exit > entry else "SL_hit"
+            if abs(avg_exit - tp) / max(tp, 1e-9) < 0.005:
+                resolved = "TP_hit"
+            elif abs(avg_exit - sl) / max(sl, 1e-9) < 0.005:
+                resolved = "SL_hit"
+            return (resolved, avg_entry, avg_exit, closed_pnl, bybit_ts, tol_name)
+        if len(matches) > 1:
+            return ("unresolved", 0.0, 0.0, 0.0, "", "multiple_candidates_ambiguous")
+
+    best: dict | None = None
+    best_diff = float("inf")
+    for r in in_time:
+        ae = float(r.get("avgEntryPrice") or 0)
+        if ae <= 0:
             continue
-        avg_entry = float(rec.get("avgEntryPrice") or 0)
-        avg_exit = float(rec.get("avgExitPrice") or 0)
-        if avg_entry <= 0 or avg_exit <= 0:
-            continue
-        if abs(avg_entry - entry) / max(entry, 1e-9) > _ENTRY_TOLERANCE_PCT:
-            continue
-        updated_ms = int(rec.get("updatedTime") or 0)
-        if updated_ms < opened_ms:
-            continue
-        if updated_ms > timeout_ms + 120_000:
-            continue
-        closed_pnl = float(rec.get("closedPnl") or 0)
-        bybit_ts = datetime.fromtimestamp(updated_ms / 1000.0, tz=timezone.utc).isoformat()
-        if want_side == "Sell":
-            resolved = "TP_hit" if avg_exit < entry else "SL_hit"
-        else:
-            resolved = "TP_hit" if avg_exit > entry else "SL_hit"
-        if abs(avg_exit - tp) / max(tp, 1e-9) < 0.005:
-            resolved = "TP_hit"
-        elif abs(avg_exit - sl) / max(sl, 1e-9) < 0.005:
-            resolved = "SL_hit"
-        return (resolved, avg_entry, avg_exit, closed_pnl, bybit_ts, "closed_pnl_match")
-    return ("unresolved", 0.0, 0.0, 0.0, "", "no_match")
+        diff = abs(ae - entry) / max(entry, 1e-9)
+        if diff < best_diff and diff <= 0.15:
+            best_diff = diff
+            best = r
+    if best:
+        return (
+            "unresolved", 0.0, 0.0, 0.0, "",
+            f"closed_pnl_entry_mismatch_nearest={best_diff*100:.2f}pct",
+        )
+    return ("unresolved", 0.0, 0.0, 0.0, "", "closed_pnl_entry_mismatch")
 
 
 def _get_broker() -> tuple[Any | None, bool, str]:
@@ -325,6 +383,7 @@ def run_audit(
     resolved_sl = 0
     resolved_tp = 0
     unresolved = 0
+    reason_counts: dict[str, int] = defaultdict(int)
     by_strategy: dict[str, dict] = defaultdict(lambda: {"total": 0, "timeout": 0, "sl": 0, "tp": 0, "unresolved": 0})
     by_date: dict[str, dict] = defaultdict(lambda: {"total": 0, "timeout": 0, "sl": 0, "tp": 0, "unresolved": 0})
     by_symbol: dict[str, dict] = defaultdict(lambda: {"total": 0, "timeout": 0, "sl": 0, "tp": 0, "unresolved": 0})
@@ -382,17 +441,20 @@ def run_audit(
                     by_date[date_val]["sl"] += 1
                     by_symbol[symbol]["sl"] += 1
                     confidence = "high" if reason == "closed_pnl_match" else "medium"
+                    reason_counts[reason] += 1
                 elif resolved == "TP_hit":
                     resolved_tp += 1
                     by_strategy[strategy]["tp"] += 1
                     by_date[date_val]["tp"] += 1
                     by_symbol[symbol]["tp"] += 1
                     confidence = "high" if reason == "closed_pnl_match" else "medium"
+                    reason_counts[reason] += 1
                 else:
                     unresolved += 1
                     by_strategy[strategy]["unresolved"] += 1
                     by_date[date_val]["unresolved"] += 1
                     by_symbol[symbol]["unresolved"] += 1
+                    reason_counts[reason] += 1
             else:
                 unresolved += 1
                 by_strategy[strategy]["unresolved"] += 1
@@ -402,6 +464,7 @@ def run_audit(
                     reason = "no_broker"
                 elif entry <= 0 or not opened_ms:
                     reason = "missing_entry_or_opened_ts"
+                reason_counts[reason] += 1
 
             audit_rows.append({
                 "date": date_val,
@@ -440,6 +503,7 @@ def run_audit(
         "timeout_resolved_sl": resolved_sl,
         "timeout_resolved_tp": resolved_tp,
         "timeout_unresolved": unresolved,
+        "reason_counts": dict(reason_counts),
         "broker_enabled": "yes" if broker_enabled else "no",
         "broker_reason": broker_reason,
         "source_env": source_env or "(none)",
@@ -462,6 +526,11 @@ def _print_summary(s: dict) -> None:
     print(f"  timeout → TP_hit:        {s['timeout_resolved_tp']}")
     print(f"  timeout unresolved:      {s['timeout_unresolved']}")
     print(f"\n  audit_csv: {s['audit_csv']}")
+    rc = s.get("reason_counts") or {}
+    if rc:
+        print("\n--- Reason breakdown ---")
+        for k in sorted(rc.keys(), key=lambda x: -rc[x]):
+            print(f"  {k}: {rc[k]}")
     print("\n--- By strategy ---")
     for k, v in sorted(s["by_strategy"].items()):
         if v["timeout"]:
