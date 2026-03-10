@@ -8,6 +8,8 @@ import logging
 import os
 from typing import Any, Tuple
 
+from trading.config import LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,20 +86,6 @@ def is_fast0_entry_allowed(liq_long_usd_30s: Any, dist_to_peak_pct: Any) -> Tupl
     if dist_val is None or dist_val > FAST0_BASE_DIST_MAX:
         return False, "fast0_base_dist_gt_2.0"
     return True, ""
-
-
-# live execution
-LIVE_FIXED_NOTIONAL_USD = _float_env("LIVE_FIXED_NOTIONAL_USD", 0.0)
-if LIVE_FIXED_NOTIONAL_USD <= 0:
-    try:
-        _fp = os.getenv("FIXED_POSITION_USD") or "0"
-        LIVE_FIXED_NOTIONAL_USD = float(str(_fp).replace(",", "."))
-    except (TypeError, ValueError):
-        LIVE_FIXED_NOTIONAL_USD = 10.0
-if LIVE_FIXED_NOTIONAL_USD <= 0:
-    LIVE_FIXED_NOTIONAL_USD = 10.0
-LIVE_LEVERAGE = _int_env("LIVE_LEVERAGE", _int_env("TRADING_LEVERAGE", 4))
-LIVE_MARGIN_MODE = (os.getenv("LIVE_MARGIN_MODE") or "isolated").strip().lower()
 
 
 def get_risk_profile(
