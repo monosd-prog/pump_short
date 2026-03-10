@@ -1,0 +1,1 @@
+date,strategy,symbol,run_id,event_id,trade_id,order_id,position_idx,opened_ts,timeout_recorded_ts,entry_state,tp_state,sl_state,bybit_entry,bybit_exit,bybit_closed_pnl,bybit_closed_ts,resolved_outcome,confidence,reason,history_source,fallback_endpoint,fallback_match_reason
