@@ -664,6 +664,30 @@ def close_on_timeout(
                 position, "timeout", exit_price, pnl_r, ts_str,
                 mfe_pct=0.0, mae_pct=0.0,
             )
+            # Live timeout: send TG outcome just like TP/SL live outcomes.
+            # Use TIMEOUT as outcome label; reuse same position fields (risk_profile, notional, leverage, margin, entry/tp/sl).
+            try:
+                mode_val = (position.get("mode") or "").strip().lower()
+                if mode_val == "live":
+                    entry_val = float(position.get("entry", 0) or 0)
+                    sl_val = float(position.get("sl", 0) or 0)
+                    risk_abs = abs(entry_val - sl_val)
+                    risk_pct = (risk_abs / entry_val * 100.0) if entry_val > 0 else 1.0
+                    pnl_pct_timeout = float(pnl_r) * risk_pct if risk_pct > 0 else 0.0
+                    _send_live_outcome_telegram(
+                        position=position,
+                        strategy=strategy,
+                        symbol=position.get("symbol", ""),
+                        run_id=position.get("run_id", "") or "",
+                        event_id=position.get("event_id", "") or "",
+                        res="TIMEOUT",
+                        exit_price=exit_price,
+                        pnl_pct=pnl_pct_timeout,
+                        pnl_r=pnl_r,
+                        ts_utc=ts_str,
+                    )
+            except Exception as e:
+                logger.debug("close_on_timeout: live outcome telegram failed: %s", e)
             any_closed = True
 
     return any_closed
