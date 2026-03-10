@@ -580,6 +580,85 @@ class BybitLiveBroker:
                 break
         return all_records
 
+    def get_order_history(
+        self,
+        symbol: str,
+        start_time_ms: Optional[int] = None,
+        end_time_ms: Optional[int] = None,
+        order_status: Optional[str] = "Filled",
+        limit: int = 50,
+        max_pages: int = 5,
+        *,
+        raise_on_network_error: bool = False,
+    ) -> list[dict]:
+        """Fetch order history (closed orders). Read-only, for audit. Returns list of orders with avgPrice, cumExecQty, reduceOnly, side, etc."""
+        if self.dry_run:
+            return []
+        all_orders: list[dict] = []
+        cursor: Optional[str] = None
+        for _ in range(max_pages):
+            params = {"category": CATEGORY, "symbol": _norm_symbol(symbol), "limit": str(min(limit, 50))}
+            if start_time_ms is not None:
+                params["startTime"] = str(start_time_ms)
+            if end_time_ms is not None:
+                params["endTime"] = str(end_time_ms)
+            if order_status:
+                params["orderStatus"] = order_status
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                j = _request("GET", "/v5/order/history", self.api_key, self.api_secret, params=params)
+            except Exception as e:
+                if raise_on_network_error:
+                    raise
+                logger.warning("get_order_history failed symbol=%s: %s", symbol, e)
+                break
+            result = j.get("result", {})
+            lst = result.get("list", []) or []
+            all_orders.extend(lst)
+            cursor = result.get("nextPageCursor")
+            if not cursor or len(lst) < limit:
+                break
+        return all_orders
+
+    def get_executions_all_pages(
+        self,
+        symbol: str,
+        start_time_ms: Optional[int] = None,
+        end_time_ms: Optional[int] = None,
+        limit: int = 100,
+        max_pages: int = 5,
+        *,
+        raise_on_network_error: bool = False,
+    ) -> list[dict]:
+        """Fetch all execution pages. Read-only, for audit."""
+        if self.dry_run:
+            return []
+        all_records: list[dict] = []
+        cursor: Optional[str] = None
+        for _ in range(max_pages):
+            params = {"category": CATEGORY, "symbol": _norm_symbol(symbol), "limit": str(min(limit, 100))}
+            if start_time_ms is not None:
+                params["startTime"] = str(start_time_ms)
+            if end_time_ms is not None:
+                params["endTime"] = str(end_time_ms)
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                j = _request("GET", "/v5/execution/list", self.api_key, self.api_secret, params=params)
+            except Exception as e:
+                if raise_on_network_error:
+                    raise
+                logger.warning("get_executions_all_pages failed symbol=%s: %s", symbol, e)
+                break
+            result = j.get("result", {})
+            lst = result.get("list", []) or []
+            all_records.extend(lst)
+            cursor = result.get("nextPageCursor")
+            if not cursor or len(lst) < limit:
+                break
+        return all_records
+
     def get_executions(self, symbol: str, order_id: Optional[str] = None, start_time_ms: Optional[int] = None, end_time_ms: Optional[int] = None, limit: int = 50) -> list[dict]:
         """Fetch execution records. orderId has highest priority if provided. Returns list of {execPrice, execQty, execTime, closedSize, ...}."""
         if self.dry_run:

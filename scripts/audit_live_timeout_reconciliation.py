@@ -117,6 +117,9 @@ AUDIT_COLUMNS = [
     "resolved_outcome",
     "confidence",
     "reason",
+    "history_source",
+    "fallback_endpoint",
+    "fallback_match_reason",
 ]
 
 _ENTRY_TOLERANCE_STRICT_PCT = 0.025   # 2.5%
@@ -314,6 +317,191 @@ def _match_bybit_closed_pnl(
     return ("unresolved", 0.0, 0.0, 0.0, "", "closed_pnl_entry_mismatch")
 
 
+def _match_bybit_fallback(
+    broker,
+    symbol: str,
+    side: str,
+    entry: float,
+    tp: float,
+    sl: float,
+    opened_ms: int,
+    timeout_ms: int,
+) -> tuple[str, float, float, float, str, str, str, str, str]:
+    """
+    Fallback for no_closed_pnl_rows: try order history and execution list.
+    Returns (resolved_outcome, bybit_entry, bybit_exit, bybit_pnl, bybit_ts, reason,
+             history_source, fallback_endpoint, fallback_match_reason).
+    """
+    want_side = "Sell" if (side or "").strip().upper() in ("SHORT", "SELL") else "Buy"
+    close_side = "Buy" if want_side == "Sell" else "Sell"  # close SHORT = Buy
+    start_ms = opened_ms - _TIME_WINDOW_START_MS
+    end_ms = (timeout_ms or opened_ms + 3600_000) + _TIME_WINDOW_END_MS
+    if end_ms - start_ms > 7 * 24 * 3600 * 1000:
+        end_ms = start_ms + 7 * 24 * 3600 * 1000 - 1000
+
+    def _classify_exit(avg_exit: float) -> str:
+        if want_side == "Sell":
+            return "TP_hit" if avg_exit < entry else "SL_hit"
+        return "TP_hit" if avg_exit > entry else "SL_hit"
+
+    if hasattr(broker, "get_order_history"):
+        try:
+            orders = broker.get_order_history(
+                symbol,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+                order_status=None,
+                limit=50,
+                max_pages=5,
+                raise_on_network_error=False,
+            )
+            reduce_only = [
+                o for o in orders
+                if (o.get("reduceOnly") in (True, "true", "True", 1, "1"))
+                and o.get("side") == close_side
+            ]
+            in_time = []
+            for o in reduce_only:
+                um = int(o.get("updatedTime") or o.get("createdTime") or 0)
+                if um >= opened_ms and um <= end_ms:
+                    ap = float(o.get("avgPrice") or 0)
+                    if ap > 0:
+                        in_time.append((o, ap, um))
+            if len(in_time) == 1:
+                o, avg_exit, um = in_time[0]
+                bybit_ts = datetime.fromtimestamp(um / 1000.0, tz=timezone.utc).isoformat()
+                resolved = _classify_exit(avg_exit)
+                if abs(avg_exit - tp) / max(tp, 1e-9) < 0.005:
+                    resolved = "TP_hit"
+                elif abs(avg_exit - sl) / max(sl, 1e-9) < 0.005:
+                    resolved = "SL_hit"
+                return (
+                    resolved, entry, avg_exit, 0.0, bybit_ts,
+                    "order_history_match",
+                    "order_history",
+                    "/v5/order/history",
+                    "reduceOnly_order_avgPrice",
+                )
+            if len(in_time) > 1:
+                return (
+                    "unresolved", 0.0, 0.0, 0.0, "",
+                    "execution_rows_found_ambiguous",
+                    "order_history",
+                    "/v5/order/history",
+                    "multiple_reduceOnly_orders",
+                )
+            if reduce_only:
+                return (
+                    "unresolved", 0.0, 0.0, 0.0, "",
+                    "outside_time_window",
+                    "order_history",
+                    "/v5/order/history",
+                    "reduceOnly_orders_outside_window",
+                )
+            return (
+                "unresolved", 0.0, 0.0, 0.0, "",
+                "order_history_no_reduceOnly",
+                "order_history",
+                "/v5/order/history",
+                "no_filled_reduceOnly",
+            )
+        except Exception as e:
+            return (
+                "unresolved", 0.0, 0.0, 0.0, "",
+                f"order_history_api_error:{type(e).__name__}",
+                "order_history",
+                "/v5/order/history",
+                str(e),
+            )
+
+    if hasattr(broker, "get_executions_all_pages"):
+        try:
+            execs = broker.get_executions_all_pages(
+                symbol,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+                limit=100,
+                max_pages=5,
+                raise_on_network_error=False,
+            )
+            closing: list[dict] = []
+            for ex in execs:
+                cs = ex.get("closedSize")
+                try:
+                    cs_val = float(cs) if cs else 0
+                except (TypeError, ValueError):
+                    cs_val = 0
+                if cs_val > 0 and ex.get("side") == close_side:
+                    ep = float(ex.get("execPrice") or 0)
+                    eq = float(ex.get("execQty") or ex.get("closedSize") or 0)
+                    try:
+                        eq = float(eq) if eq else 0
+                    except (TypeError, ValueError):
+                        eq = 0
+                    et = int(ex.get("execTime") or 0)
+                    if ep > 0 and et >= opened_ms and et <= end_ms:
+                        closing.append({
+                            "execPrice": ep, "execQty": eq, "execTime": et,
+                            "orderId": ex.get("orderId", ""),
+                        })
+            if not closing:
+                return (
+                    "unresolved", 0.0, 0.0, 0.0, "",
+                    "execution_list_no_closing_fills",
+                    "execution_list",
+                    "/v5/execution/list",
+                    "no_closedSize_side_match",
+                )
+            total_qty = sum(c["execQty"] for c in closing)
+            if total_qty <= 0:
+                return (
+                    "unresolved", 0.0, 0.0, 0.0, "",
+                    "execution_rows_found_ambiguous",
+                    "execution_list",
+                    "/v5/execution/list",
+                    "closing_fills_zero_qty",
+                )
+            avg_exit = sum(c["execPrice"] * c["execQty"] for c in closing) / total_qty
+            latest_et = max(c["execTime"] for c in closing)
+            bybit_ts = datetime.fromtimestamp(latest_et / 1000.0, tz=timezone.utc).isoformat()
+            resolved = _classify_exit(avg_exit)
+            if abs(avg_exit - tp) / max(tp, 1e-9) < 0.005:
+                resolved = "TP_hit"
+            elif abs(avg_exit - sl) / max(sl, 1e-9) < 0.005:
+                resolved = "SL_hit"
+            if len(closing) == 1:
+                return (
+                    resolved, entry, avg_exit, 0.0, bybit_ts,
+                    "execution_list_match",
+                    "execution_list",
+                    "/v5/execution/list",
+                    "single_closing_fill",
+                )
+            return (
+                resolved, entry, avg_exit, 0.0, bybit_ts,
+                "execution_list_match",
+                "execution_list",
+                "/v5/execution/list",
+                "closedSize_weighted_avg",
+            )
+        except Exception as e:
+            return (
+                "unresolved", 0.0, 0.0, 0.0, "",
+                f"execution_list_api_error:{type(e).__name__}",
+                "execution_list",
+                "/v5/execution/list",
+                str(e),
+            )
+
+    return (
+        "unresolved", 0.0, 0.0, 0.0, "",
+        "bybit_history_no_fallback_available",
+        "",
+        "",
+        "no_order_history_or_executions",
+    )
+
+
 def _get_broker() -> tuple[Any | None, bool, str]:
     """
     Get live broker for Bybit API. Call _load_env() first.
@@ -383,6 +571,8 @@ def run_audit(
     resolved_sl = 0
     resolved_tp = 0
     unresolved = 0
+    no_closed_pnl_rows_count = 0
+    no_closed_pnl_rows_resolved = 0
     reason_counts: dict[str, int] = defaultdict(int)
     by_strategy: dict[str, dict] = defaultdict(lambda: {"total": 0, "timeout": 0, "sl": 0, "tp": 0, "unresolved": 0})
     by_date: dict[str, dict] = defaultdict(lambda: {"total": 0, "timeout": 0, "sl": 0, "tp": 0, "unresolved": 0})
@@ -430,24 +620,37 @@ def run_audit(
             bybit_ts = ""
             reason = "no_bybit"
             confidence = ""
+            history_source = ""
+            fallback_endpoint = ""
+            fallback_match_reason = ""
 
             if broker and entry > 0 and tp > 0 and sl > 0 and opened_ms:
                 resolved, bybit_entry, bybit_exit, bybit_pnl, bybit_ts, reason = _match_bybit_closed_pnl(
                     broker, symbol, side, entry, tp, sl, opened_ms, timeout_ms or int(1e15),
                 )
+                if reason == "no_closed_pnl_rows":
+                    no_closed_pnl_rows_count += 1
+                    (
+                        resolved, bybit_entry, bybit_exit, bybit_pnl, bybit_ts, reason,
+                        history_source, fallback_endpoint, fallback_match_reason,
+                    ) = _match_bybit_fallback(
+                        broker, symbol, side, entry, tp, sl, opened_ms, timeout_ms or int(1e15),
+                    )
+                    if resolved in ("SL_hit", "TP_hit"):
+                        no_closed_pnl_rows_resolved += 1
                 if resolved == "SL_hit":
                     resolved_sl += 1
                     by_strategy[strategy]["sl"] += 1
                     by_date[date_val]["sl"] += 1
                     by_symbol[symbol]["sl"] += 1
-                    confidence = "high" if reason == "closed_pnl_match" else "medium"
+                    confidence = "high" if reason == "closed_pnl_match" else ("medium" if history_source else "medium")
                     reason_counts[reason] += 1
                 elif resolved == "TP_hit":
                     resolved_tp += 1
                     by_strategy[strategy]["tp"] += 1
                     by_date[date_val]["tp"] += 1
                     by_symbol[symbol]["tp"] += 1
-                    confidence = "high" if reason == "closed_pnl_match" else "medium"
+                    confidence = "high" if reason == "closed_pnl_match" else ("medium" if history_source else "medium")
                     reason_counts[reason] += 1
                 else:
                     unresolved += 1
@@ -487,6 +690,9 @@ def run_audit(
                 "resolved_outcome": resolved,
                 "confidence": confidence,
                 "reason": reason,
+                "history_source": history_source,
+                "fallback_endpoint": fallback_endpoint,
+                "fallback_match_reason": fallback_match_reason,
             })
 
     out_path = output_path or Path("artifacts") / "live_timeout_reconciliation_audit.csv"
@@ -503,6 +709,8 @@ def run_audit(
         "timeout_resolved_sl": resolved_sl,
         "timeout_resolved_tp": resolved_tp,
         "timeout_unresolved": unresolved,
+        "no_closed_pnl_rows_total": no_closed_pnl_rows_count,
+        "no_closed_pnl_rows_resolved_fallback": no_closed_pnl_rows_resolved,
         "reason_counts": dict(reason_counts),
         "broker_enabled": "yes" if broker_enabled else "no",
         "broker_reason": broker_reason,
@@ -525,6 +733,10 @@ def _print_summary(s: dict) -> None:
     print(f"  timeout → SL_hit:        {s['timeout_resolved_sl']}")
     print(f"  timeout → TP_hit:        {s['timeout_resolved_tp']}")
     print(f"  timeout unresolved:      {s['timeout_unresolved']}")
+    ncp = s.get("no_closed_pnl_rows_total", 0)
+    ncp_r = s.get("no_closed_pnl_rows_resolved_fallback", 0)
+    if ncp > 0:
+        print(f"  no_closed_pnl_rows:      {ncp} (resolved via fallback: {ncp_r})")
     print(f"\n  audit_csv: {s['audit_csv']}")
     rc = s.get("reason_counts") or {}
     if rc:
