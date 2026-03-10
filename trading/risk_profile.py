@@ -32,7 +32,10 @@ def _int_env(name: str, default: int) -> int:
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
-    return (os.getenv(name) or "").strip().lower() in ("1", "true", "yes", "y", "on")
+    v = (os.getenv(name) or "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "y", "on")
 
 
 # short_pump active filter
