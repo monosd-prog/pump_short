@@ -1266,7 +1266,8 @@ def run_watch_for_symbol(
                     },
                 )
                 event_id = entry_payload.get("event_id") or f"{run_id}_entry_{entry_source}"
-                trade_id = f"{event_id}_trade"
+                from trading.state import make_position_id
+                trade_id = make_position_id("short_pump", run_id or "", str(event_id or ""), cfg.symbol)
                 if not entry_payload.get("dist_to_peak_pct"):
                     entry_payload["dist_to_peak_pct"] = _dist_to_peak_pct(dbg5.get("peak_price"), entry_price)
                 log_info(

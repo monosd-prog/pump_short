@@ -178,7 +178,12 @@ class PaperBroker(ExecutionAdapter):
 
         side = (getattr(signal, "side", None) or "SHORT").strip().upper()
         entry_fill = self._entry_fill_price(entry_mid, side)
-        trade_id = str(uuid.uuid4())
+        from trading.state import make_position_id
+        strategy = getattr(signal, "strategy", "") or ""
+        run_id = getattr(signal, "run_id", "") or ""
+        event_id = str(getattr(signal, "event_id", "") or "")
+        symbol = getattr(signal, "symbol", "") or ""
+        trade_id = make_position_id(strategy, run_id, event_id, symbol)
         position = {
             "strategy": getattr(signal, "strategy", ""),
             "symbol": getattr(signal, "symbol", ""),

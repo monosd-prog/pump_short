@@ -736,7 +736,8 @@ def run_fast0_for_symbol(
                     entry_price = last_price
                     tp_price = entry_price * (1.0 - FAST0_TP_PCT)
                     sl_price = entry_price * (1.0 + FAST0_SL_PCT)
-                    trade_id = f"{event_id}_trade"
+                    from trading.state import make_position_id
+                    trade_id = make_position_id(STRATEGY, run_id or "", str(event_id or ""), cfg.symbol)
                     trade_row = {
                         "trade_id": trade_id,
                         "event_id": event_id,

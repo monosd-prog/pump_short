@@ -359,11 +359,16 @@ def _write_live_outcome_to_datasets(
     sl = float(position.get("sl", 0))
     run_id = position.get("run_id", "")
     event_id = (position.get("event_id") or "") or ""
-    trade_id = position.get("trade_id") or make_position_id(strategy, run_id, event_id, symbol)
+    trade_id = make_position_id(strategy, run_id, event_id, symbol)
     mode = position.get("mode", "live")
     opened_ts = position.get("opened_ts", "")
     hold_sec = _hold_seconds(opened_ts, outcome_ts_utc)
     outcome_str = "TP_hit" if close_reason == "tp" else "SL_hit"
+    notional = float(position.get("notional_usd") or 0)
+    pnl_usd = notional * (pnl_pct / 100.0) if notional else 0.0
+    risk_abs = abs(entry - sl)
+    risk_pct_val = (risk_abs / entry * 100.0) if entry > 0 else 1.0
+    pnl_r = (pnl_pct / risk_pct_val) if risk_pct_val > 0 else 0.0
     summary = {
         "end_reason": outcome_str,
         "outcome": outcome_str,
@@ -375,6 +380,15 @@ def _write_live_outcome_to_datasets(
         "tp_price": position.get("tp"),
         "sl_price": sl,
         "exit_price": exit_price,
+        "pnl_r": pnl_r,
+        "pnl_usd": pnl_usd,
+        "opened_ts": opened_ts,
+        "order_id": position.get("order_id"),
+        "position_idx": position.get("position_idx"),
+        "notional_usd": position.get("notional_usd"),
+        "leverage": position.get("leverage"),
+        "margin_mode": position.get("margin_mode"),
+        "risk_profile": position.get("risk_profile"),
         "trade_type": "LIVE",
         "details_payload": '{"source":"bybit","tp_hit":%s,"sl_hit":%s}' % ("true" if close_reason == "tp" else "false", "true" if close_reason == "sl" else "false"),
     }
@@ -517,7 +531,7 @@ def _write_paper_outcome_to_datasets(
     sl = float(position.get("sl", 0))
     run_id = position.get("run_id", "")
     event_id = (position.get("event_id") or "") or ""
-    trade_id = position.get("trade_id") or make_position_id(strategy, run_id, event_id, symbol)
+    trade_id = make_position_id(strategy, run_id, event_id, symbol)
     mode = position.get("mode", "live")
     opened_ts = position.get("opened_ts", "")
     hold_sec = _hold_seconds(opened_ts, outcome_ts_utc)
@@ -530,6 +544,11 @@ def _write_paper_outcome_to_datasets(
     outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "TIMEOUT")
     pos_mode = (position.get("mode") or "paper").strip().lower()
     trade_type = "LIVE" if pos_mode == "live" else "PAPER"
+    notional = float(position.get("notional_usd") or 0)
+    pnl_usd = notional * (pnl_pct / 100.0) if notional else 0.0
+    risk_abs = abs(entry - sl)
+    risk_pct_val = (risk_abs / entry * 100.0) if entry > 0 else 1.0
+    pnl_r = (pnl_pct / risk_pct_val) if risk_pct_val > 0 else 0.0
     summary = {
         "end_reason": outcome_str,
         "outcome": outcome_str,
@@ -541,6 +560,15 @@ def _write_paper_outcome_to_datasets(
         "tp_price": position.get("tp"),
         "sl_price": sl,
         "exit_price": exit_price,
+        "pnl_r": pnl_r,
+        "pnl_usd": pnl_usd,
+        "opened_ts": opened_ts,
+        "order_id": position.get("order_id"),
+        "position_idx": position.get("position_idx"),
+        "notional_usd": position.get("notional_usd"),
+        "leverage": position.get("leverage"),
+        "margin_mode": position.get("margin_mode"),
+        "risk_profile": position.get("risk_profile"),
         "trade_type": trade_type,
         "details_payload": json.dumps({"timeout": close_reason == "timeout", "tp_hit": close_reason == "tp", "sl_hit": close_reason == "sl"}),
     }

@@ -360,6 +360,7 @@ def build_outcome_row(
     outcome_time_utc: str,
     entry_snapshot: Optional[Dict[str, Any]] = None,
     extra_details: Optional[Dict[str, Any]] = None,
+    reconciliation_fields: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     if not mark_outcome_finalized(trade_id):
         return None
@@ -426,6 +427,23 @@ def build_outcome_row(
         "details_json": json.dumps(details_json_obj, ensure_ascii=False),
         "trade_type": summary.get("trade_type", ""),
     }
+    row["opened_ts"] = summary.get("opened_ts") or ""
+    row["entry"] = summary.get("entry_price") or summary.get("entry") or ""
+    row["tp"] = summary.get("tp_price") or summary.get("tp") or ""
+    row["sl"] = summary.get("sl_price") or summary.get("sl") or ""
+    row["exit_price"] = summary.get("exit_price") or ""
+    row["pnl_r"] = summary.get("pnl_r") or ""
+    row["pnl_usd"] = summary.get("pnl_usd") or ""
+    row["risk_profile"] = summary.get("risk_profile") or ""
+    row["order_id"] = summary.get("order_id") or ""
+    row["position_idx"] = summary.get("position_idx") if summary.get("position_idx") is not None else ""
+    row["notional_usd"] = summary.get("notional_usd") or ""
+    row["leverage"] = summary.get("leverage") or ""
+    row["margin_mode"] = summary.get("margin_mode") or ""
+    if reconciliation_fields:
+        for k, v in reconciliation_fields.items():
+            if v is not None and v != "":
+                row[k] = v
     return row
 
 

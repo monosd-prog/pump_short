@@ -82,7 +82,22 @@ OUTCOME_FIELDS_V2 = [
 ]
 
 TRADE_FIELDS_V3 = TRADE_FIELDS_V2
-OUTCOME_FIELDS_V3 = OUTCOME_FIELDS_V2
+# Extended for live reconciliation: opened_ts, entry, tp, sl, exit_price, pnl_r, pnl_usd, order_id, etc.
+OUTCOME_FIELDS_V3 = OUTCOME_FIELDS_V2 + [
+    "opened_ts",
+    "entry",
+    "tp",
+    "sl",
+    "exit_price",
+    "pnl_r",
+    "pnl_usd",
+    "risk_profile",
+    "order_id",
+    "position_idx",
+    "notional_usd",
+    "leverage",
+    "margin_mode",
+]
 
 
 def _fill(fields: list[str], row: Dict[str, Any]) -> Dict[str, Any]:

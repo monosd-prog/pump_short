@@ -416,9 +416,9 @@ def run_audit(
             timeout_ts = (row.get("outcome_time_utc") or "").strip()
             timeout_ms = _parse_ts_ms(timeout_ts)
             trade = trades.get(trade_id, {})
-            entry = _safe_float(trade.get("entry_price") or row.get("entry_price"))
-            tp = _safe_float(trade.get("tp_price") or row.get("tp_price"))
-            sl = _safe_float(trade.get("sl_price") or row.get("sl_price"))
+            entry = _safe_float(trade.get("entry_price") or row.get("entry_price") or row.get("entry"))
+            tp = _safe_float(trade.get("tp_price") or row.get("tp_price") or row.get("tp"))
+            sl = _safe_float(trade.get("sl_price") or row.get("sl_price") or row.get("sl"))
             opened_ts = (trade.get("entry_time_utc") or "").strip()
             opened_ms = _parse_ts_ms(opened_ts) or 0
             symbol = (row.get("symbol") or trade.get("symbol") or "").strip()
