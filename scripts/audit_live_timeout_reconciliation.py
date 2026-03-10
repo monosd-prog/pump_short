@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import os
 import sys
+from typing import Any
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,6 +36,63 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+
+def _load_env_file_manual(path: Path) -> bool:
+    """Simple key=value parser when dotenv not available. Skips if key already set."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                k, v = line.split("=", 1)
+                k = k.strip()
+                v = v.strip().strip('"').strip("'")
+                if k and k not in os.environ:
+                    os.environ[k] = v
+        return True
+    except Exception:
+        return False
+
+
+def _load_env(root: Path | None = None) -> tuple[bool, str]:
+    """
+    Load env from .env files (BYBIT_API_KEY etc). Must run before get_broker.
+    Returns (loaded_any, source_path). Tries: root/.env, project/.env, /root/pump_short/.env, /etc/pump-short-live.env.
+    Uses python-dotenv if available, else simple key=value parser.
+    """
+    root = Path(root) if root else _ROOT
+    candidates = [
+        root / ".env",
+        _ROOT / ".env",
+        Path("/root/pump_short/.env"),
+        Path("/etc/pump-short-live.env"),
+    ]
+    loader = None
+    try:
+        from dotenv import load_dotenv
+        loader = lambda p: load_dotenv(p, override=False)
+    except ImportError:
+        loader = _load_env_file_manual
+    for p in candidates:
+        if p.exists() and p.is_file():
+            loader(p)
+            return True, str(p)
+    return False, "no_env_file_found"
+
+
+def _check_bybit_env() -> tuple[bool, str]:
+    """Check if BYBIT_API_KEY and BYBIT_API_SECRET are set. Returns (ok, reason)."""
+    key = (os.getenv("BYBIT_API_KEY") or "").strip()
+    secret = (os.getenv("BYBIT_API_SECRET") or "").strip()
+    if not key:
+        return False, "BYBIT_API_KEY empty or unset"
+    if not secret:
+        return False, "BYBIT_API_SECRET empty or unset"
+    return True, "ok"
+
 
 from trading.config import DATASET_BASE_DIR
 
@@ -199,13 +256,21 @@ def _match_bybit_closed_pnl(
     return ("unresolved", 0.0, 0.0, 0.0, "", "no_match")
 
 
-def _get_broker():
-    """Get live broker for Bybit API. Returns None if not configured."""
+def _get_broker() -> tuple[Any | None, bool, str]:
+    """
+    Get live broker for Bybit API. Call _load_env() first.
+    Returns (broker_or_None, enabled, reason).
+    """
+    from trading.broker import get_broker
     try:
-        from trading.broker import get_broker
-        return get_broker("live", dry_run_live=False)
-    except Exception:
-        return None
+        broker = get_broker("live", dry_run_live=False)
+        if broker is None:
+            return None, False, "get_broker_returned_None"
+        return broker, True, "ok"
+    except ValueError as e:
+        return None, False, str(e).strip() or "ValueError"
+    except Exception as e:
+        return None, False, f"{type(e).__name__}: {e}"
 
 
 def run_audit(
@@ -229,9 +294,31 @@ def run_audit(
     if not files:
         files = _find_live_outcome_files(root)
 
-    broker = _get_broker() if use_bybit else None
-    if use_bybit and broker is None:
-        print("WARN: Bybit broker not configured (BYBIT_API_KEY etc); resolution will be unresolved", file=sys.stderr)
+    env_loaded, source_env = _load_env(root)
+    broker = None
+    broker_enabled = False
+    broker_reason = "no_bybit_skip"
+    if use_bybit:
+        if not env_loaded:
+            broker_reason = f"env_not_loaded:{source_env}"
+        else:
+            key_ok, key_reason = _check_bybit_env()
+            if not key_ok:
+                broker_reason = key_reason
+            else:
+                broker, broker_enabled, broker_reason = _get_broker()
+                if broker_enabled:
+                    broker_reason = "ok"
+                source_env = source_env or "env_loaded"
+
+        if not broker_enabled:
+            msg = (
+                f"AUDIT_BROKER_FAILED | broker_enabled=no broker_reason={broker_reason!r} source_env={source_env!r}\n"
+                "  Load env from .env (project root, /root/pump_short/.env, or /etc/pump-short-live.env).\n"
+                "  Set BYBIT_API_KEY and BYBIT_API_SECRET. Use --no-bybit to skip Bybit reconciliation."
+            )
+            print(msg, file=sys.stderr)
+            raise SystemExit(1)
 
     total_live = 0
     total_timeout = 0
@@ -353,6 +440,9 @@ def run_audit(
         "timeout_resolved_sl": resolved_sl,
         "timeout_resolved_tp": resolved_tp,
         "timeout_unresolved": unresolved,
+        "broker_enabled": "yes" if broker_enabled else "no",
+        "broker_reason": broker_reason,
+        "source_env": source_env or "(none)",
         "by_strategy": dict(by_strategy),
         "by_date": dict(by_date),
         "by_symbol": dict(by_symbol),
@@ -363,6 +453,9 @@ def run_audit(
 
 def _print_summary(s: dict) -> None:
     print("\n--- Live Timeout Reconciliation Audit ---")
+    print(f"  broker_enabled:          {s.get('broker_enabled', 'N/A')}")
+    print(f"  broker_reason:           {s.get('broker_reason', 'N/A')}")
+    print(f"  source_env:              {s.get('source_env', 'N/A')}")
     print(f"  total_live_outcomes:     {s['total_live_outcomes']}")
     print(f"  total_TIMEOUT:           {s['total_timeout']}")
     print(f"  timeout → SL_hit:        {s['timeout_resolved_sl']}")
