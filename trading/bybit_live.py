@@ -756,12 +756,22 @@ class BybitLiveBroker:
             if not tpsl_ok:
                 return None
 
+        # Use actual fill price for outcome resolution (closed-pnl matches avgEntryPrice)
+        actual_entry = entry_price
+        try:
+            pos = self.get_open_position(symbol, side)
+            if pos and float(pos.get("avgPrice") or 0) > 0:
+                actual_entry = float(pos["avgPrice"])
+                logger.info("LIVE_ENTRY_ACTUAL | symbol=%s avgPrice=%.6f (from exchange)", symbol, actual_entry)
+        except Exception as e:
+            logger.debug("LIVE_ENTRY_ACTUAL | symbol=%s fallback to signal entry: %s", symbol, e)
+
         trade_id = str(uuid.uuid4())
         position = {
             "strategy": getattr(signal, "strategy", ""),
             "symbol": symbol,
             "side": side,
-            "entry": entry_price,
+            "entry": actual_entry,
             "sl": sl,
             "tp": tp,
             "opened_ts": opened_ts,

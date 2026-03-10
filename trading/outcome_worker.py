@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 LIVE_OUTCOME_POLL_INTERVAL_SEC = int(
     (__import__("os").getenv("LIVE_OUTCOME_POLL_INTERVAL_SEC") or "5").replace(",", ".")
 )
+# Timeout for resolve_live_outcome per position: allow multiple API calls (Bybit closed-pnl can lag)
+LIVE_OUTCOME_RESOLVE_TIMEOUT_SEC = int(
+    (__import__("os").getenv("LIVE_OUTCOME_RESOLVE_TIMEOUT_SEC") or "30").replace(",", ".")
+)
 
 
 def _parse_opened_ts(opened_ts: str) -> datetime | None:
@@ -98,7 +102,7 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
                 sl_price=sl_price,
                 side=side,
                 broker=broker,
-                timeout_sec=max(1, LIVE_OUTCOME_POLL_INTERVAL_SEC),
+                timeout_sec=max(10, LIVE_OUTCOME_RESOLVE_TIMEOUT_SEC),
                 raise_on_network_error=False,
             )
         except Exception as e:
