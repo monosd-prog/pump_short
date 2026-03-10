@@ -339,7 +339,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
     last_signal_ids = state.setdefault("last_signal_ids", {})
 
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00:00")
-    if close_on_timeout(state, now_utc):
+    if close_on_timeout(state, now_utc, broker=broker if EXECUTION_MODE == "live" else None):
         save_state(state)
 
     if EXECUTION_MODE == "live" and broker is not None:

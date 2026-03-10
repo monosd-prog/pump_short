@@ -603,10 +603,13 @@ def close_on_timeout(
     *,
     log_path: Optional[str] = None,
     ttl_seconds: Optional[int] = None,
+    broker: Optional[Any] = None,
 ) -> bool:
     """
     Close open positions older than POSITION_TTL_SECONDS (or ttl_seconds if given).
     Iterate all open_positions[strategy][position_id] safely.
+    For live positions at TTL: if broker given, runs final reconciliation to avoid false TIMEOUT
+    when position already closed on exchange. TIMEOUT used only as last fallback.
     Returns True if any closed.
     """
     from trading.config import CLOSES_PATH as _closes_path
@@ -631,6 +634,50 @@ def close_on_timeout(
             age_sec = (now_dt - opened_dt).total_seconds()
             if age_sec < ttl:
                 continue
+            mode_val = (position.get("mode") or "").strip().lower()
+            # Pre-timeout reconciliation for live: avoid false TIMEOUT when position already closed on exchange
+            if mode_val == "live" and broker:
+                try:
+                    from trading.bybit_live_outcome import resolve_live_outcome_final_reconcile
+                    outcome = resolve_live_outcome_final_reconcile(
+                        broker=broker,
+                        symbol=position.get("symbol", ""),
+                        side=position.get("side", "SHORT"),
+                        opened_ts=opened_ts,
+                        entry=float(position.get("entry", 0) or 0),
+                        tp=float(position.get("tp", 0) or 0),
+                        sl=float(position.get("sl", 0) or 0),
+                        raise_on_network_error=False,
+                    )
+                    if outcome and outcome.get("status") in ("TP_hit", "SL_hit"):
+                        res = outcome["status"]
+                        exit_price = float(outcome.get("exit_price", 0) or 0)
+                        pnl_pct = float(outcome.get("pnl_pct", 0) or 0)
+                        exit_ts = outcome.get("exit_ts", now_dt.strftime("%Y-%m-%d %H:%M:%S+00:00"))
+                        ok = close_from_live_outcome(
+                            strategy=strategy,
+                            symbol=position.get("symbol", ""),
+                            run_id=position.get("run_id", "") or "",
+                            event_id=position.get("event_id", "") or "",
+                            res=res,
+                            exit_price=exit_price,
+                            pnl_pct=pnl_pct,
+                            ts_utc=exit_ts,
+                            log_path=path,
+                        )
+                        if ok:
+                            logger.info(
+                                "LIVE_OUTCOME_FINAL_RECONCILE | closed strategy=%s symbol=%s position_id=%s as %s (not TIMEOUT)",
+                                strategy, position.get("symbol", ""), position_id, res,
+                            )
+                            any_closed = True
+                            continue
+                except Exception as e:
+                    logger.warning("LIVE_OUTCOME_FINAL_RECONCILE | failed strategy=%s symbol=%s: %s", strategy, position.get("symbol", ""), e)
+                logger.info(
+                    "LIVE_OUTCOME_TIMEOUT_FALLBACK | strategy=%s symbol=%s position_id=%s position_gone_or_unresolved",
+                    strategy, position.get("symbol", ""), position_id,
+                )
             exit_mode = TIMEOUT_EXIT_MODE if TIMEOUT_EXIT_MODE in ("entry", "sl") else "entry"
             exit_price = float(position["entry"]) if exit_mode == "entry" else float(position["sl"])
             ts_str = now_dt.strftime("%Y-%m-%d %H:%M:%S+00:00")

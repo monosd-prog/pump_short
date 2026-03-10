@@ -1,4 +1,4 @@
-"""Resolve LIVE trade outcome from Bybit (closed PnL / executions) instead of candle touch logic."""
+"""Resolve LIVE trade outcome from Bybit (closed PnL / order history / executions). Cascade fallback."""
 from __future__ import annotations
 
 import logging
@@ -13,6 +13,7 @@ LIVE_OUTCOME_TIMEOUT_SEC = int((__import__("os").getenv("LIVE_OUTCOME_TIMEOUT_SE
 # Entry price match tolerance: 2% (slippage). When position gone on exchange, use 2.5%.
 _ENTRY_TOLERANCE_PCT = 0.02
 _ENTRY_TOLERANCE_RELAXED_PCT = 0.025
+_TIME_WINDOW_START_MS = 5 * 60 * 1000
 
 
 def _parse_ts_to_ms(ts: str) -> Optional[int]:
@@ -86,6 +87,193 @@ def _match_closed_record(
     }
 
 
+def _classify_exit_price(
+    exit_price: float,
+    entry: float,
+    tp: float,
+    sl: float,
+    want_side: str,
+) -> str:
+    """Classify outcome from exit_price. For SHORT: exit<entry=TP, exit>entry=SL. Use nearest boundary on tie."""
+    if want_side == "Sell":
+        if abs(exit_price - tp) / max(tp, 1e-9) < 0.005:
+            return "TP_hit"
+        if abs(exit_price - sl) / max(sl, 1e-9) < 0.005:
+            return "SL_hit"
+        return "TP_hit" if exit_price < entry else "SL_hit"
+    if abs(exit_price - tp) / max(tp, 1e-9) < 0.005:
+        return "TP_hit"
+    if abs(exit_price - sl) / max(sl, 1e-9) < 0.005:
+        return "SL_hit"
+    return "TP_hit" if exit_price > entry else "SL_hit"
+
+
+def _resolve_via_fallback(
+    broker: Any,
+    symbol: str,
+    side: str,
+    entry: float,
+    tp: float,
+    sl: float,
+    opened_ms: int,
+    end_ms: int,
+) -> Optional[dict[str, Any]]:
+    """
+    Cascade fallback when closed-pnl returns nothing. Try order history, then execution list.
+    Returns outcome dict or None.
+    """
+    want_side = "Sell" if (side or "").strip().upper() in ("SHORT", "SELL") else "Buy"
+    close_side = "Buy" if want_side == "Sell" else "Sell"
+    start_ms = opened_ms - _TIME_WINDOW_START_MS
+    if end_ms - start_ms > 7 * 24 * 3600 * 1000:
+        end_ms = start_ms + 7 * 24 * 3600 * 1000 - 1000
+
+    if hasattr(broker, "get_order_history"):
+        try:
+            orders = broker.get_order_history(
+                symbol, start_time_ms=start_ms, end_time_ms=end_ms,
+                order_status="Filled", limit=50, max_pages=5, raise_on_network_error=False,
+            )
+            reduce_only = [
+                o for o in orders
+                if (o.get("reduceOnly") in (True, "true", "True", 1, "1"))
+                and o.get("side") == close_side
+            ]
+            in_time = []
+            for o in reduce_only:
+                um = int(o.get("updatedTime") or o.get("createdTime") or 0)
+                if um >= opened_ms and um <= end_ms:
+                    ap = float(o.get("avgPrice") or 0)
+                    if ap > 0:
+                        in_time.append((ap, um))
+            if in_time:
+                if len(in_time) == 1:
+                    avg_exit, um = in_time[0]
+                else:
+                    in_time_sorted = sorted(in_time, key=lambda x: x[1], reverse=True)
+                    avg_exit, um = in_time_sorted[0]
+                    logger.debug("LIVE_OUTCOME_FALLBACK | order_history multiple_reduceOnly symbol=%s using_latest", symbol)
+                exit_ts = datetime.fromtimestamp(um / 1000.0, tz=timezone.utc).isoformat()
+                status = _classify_exit_price(avg_exit, entry, tp, sl, want_side)
+                pnl_pct = (entry - avg_exit) / entry * 100.0 if want_side == "Sell" else (avg_exit - entry) / entry * 100.0
+                logger.info(
+                    "LIVE_OUTCOME_ORDER_HISTORY_FOUND | symbol=%s status=%s exit=%.4f source=order_history",
+                    symbol, status, avg_exit,
+                )
+                return {"status": status, "exit_price": avg_exit, "exit_ts": exit_ts, "pnl_pct": pnl_pct, "closed_pnl": 0.0}
+        except Exception as e:
+            logger.debug("LIVE_OUTCOME_FALLBACK | order_history error symbol=%s: %s", symbol, e)
+
+    if hasattr(broker, "get_executions_all_pages"):
+        try:
+            execs = broker.get_executions_all_pages(
+                symbol, start_time_ms=start_ms, end_time_ms=end_ms,
+                limit=100, max_pages=5, raise_on_network_error=False,
+            )
+            closing = []
+            for ex in execs:
+                cs = ex.get("closedSize")
+                eq_raw = ex.get("execQty") or ex.get("closedSize") or 0
+                try:
+                    cs_val = float(cs) if cs else 0
+                except (TypeError, ValueError):
+                    cs_val = 0
+                try:
+                    eq_val = float(eq_raw) if eq_raw else 0
+                except (TypeError, ValueError):
+                    eq_val = 0
+                if ex.get("side") == close_side and (cs_val > 0 or eq_val > 0):
+                    ep = float(ex.get("execPrice") or 0)
+                    et = int(ex.get("execTime") or 0)
+                    if ep > 0 and opened_ms <= et <= end_ms:
+                        closing.append({"execPrice": ep, "execQty": max(cs_val, eq_val), "execTime": et})
+            if closing:
+                total_qty = sum(c["execQty"] for c in closing)
+                if total_qty > 0:
+                    avg_exit = sum(c["execPrice"] * c["execQty"] for c in closing) / total_qty
+                    latest_et = max(c["execTime"] for c in closing)
+                    exit_ts = datetime.fromtimestamp(latest_et / 1000.0, tz=timezone.utc).isoformat()
+                    status = _classify_exit_price(avg_exit, entry, tp, sl, want_side)
+                    pnl_pct = (entry - avg_exit) / entry * 100.0 if want_side == "Sell" else (avg_exit - entry) / entry * 100.0
+                    logger.info(
+                        "LIVE_OUTCOME_EXECUTIONS_FOUND | symbol=%s status=%s exit=%.4f n_fills=%d source=execution_list",
+                        symbol, status, avg_exit, len(closing),
+                    )
+                    return {"status": status, "exit_price": avg_exit, "exit_ts": exit_ts, "pnl_pct": pnl_pct, "closed_pnl": 0.0}
+        except Exception as e:
+            logger.debug("LIVE_OUTCOME_FALLBACK | execution_list error symbol=%s: %s", symbol, e)
+    return None
+
+
+def resolve_live_outcome_final_reconcile(
+    broker: Any,
+    symbol: str,
+    side: str,
+    opened_ts: str,
+    entry: float,
+    tp: float,
+    sl: float,
+    *,
+    raise_on_network_error: bool = False,
+) -> Optional[dict[str, Any]]:
+    """
+    One-shot final reconciliation before TIMEOUT. Use when position reached TTL and we want
+    to avoid false TIMEOUT if position already closed on exchange.
+    Returns outcome dict (TP_hit/SL_hit) or None. If position still open, returns None.
+    """
+    opened_ms = _parse_ts_to_ms(opened_ts)
+    if opened_ms is None:
+        return None
+    position_open = True
+    if hasattr(broker, "get_open_position"):
+        try:
+            pos = broker.get_open_position(symbol, side)
+            position_open = pos is not None and float(pos.get("size") or 0) > 0
+        except Exception:
+            pass
+    if position_open:
+        logger.debug("LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s position_still_open skip", symbol)
+        return None
+
+    logger.info("LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s position_gone attempting_resolve", symbol)
+    want_side = "Sell" if (side or "").strip().upper() in ("SHORT", "SELL") else "Buy"
+    entry_tol = _ENTRY_TOLERANCE_RELAXED_PCT
+    end_ms = int(__import__("time").time() * 1000)
+
+    records = []
+    if hasattr(broker, "get_closed_pnl_all_pages"):
+        try:
+            records = broker.get_closed_pnl_all_pages(
+                symbol,
+                start_time_ms=opened_ms - 60_000,
+                end_time_ms=end_ms + 60_000,
+                limit=100,
+                max_pages=5,
+                raise_on_network_error=raise_on_network_error,
+            )
+        except Exception as e:
+            logger.debug("LIVE_OUTCOME_FINAL_RECONCILE | get_closed_pnl_all_pages failed: %s", e)
+    if not records and hasattr(broker, "get_closed_pnl"):
+        records = broker.get_closed_pnl(
+            symbol, start_time_ms=opened_ms - 60_000, end_time_ms=end_ms + 60_000,
+            limit=100, raise_on_network_error=raise_on_network_error,
+        )
+
+    for rec in records:
+        result = _match_closed_record(rec, want_side, entry, tp, sl, opened_ms, entry_tol)
+        if result:
+            logger.info(
+                "LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s CLOSED_PNL_FOUND status=%s",
+                symbol, result["status"],
+            )
+            return result
+
+    fb = _resolve_via_fallback(broker, symbol, side, entry, tp, sl, opened_ms, end_ms)
+    if fb:
+        return fb
+    return None
+
+
 def resolve_live_outcome(
     symbol: str,
     order_id: str,
@@ -143,19 +331,38 @@ def resolve_live_outcome(
         entry_tol = _ENTRY_TOLERANCE_RELAXED_PCT if not position_open else _ENTRY_TOLERANCE_PCT
 
         end_ms = int(time.time() * 1000)
-        records = broker.get_closed_pnl(
-            symbol,
-            start_time_ms=opened_ms - 60_000,
-            end_time_ms=end_ms + 60_000,
-            limit=100,
-            raise_on_network_error=raise_on_network_error,
-        )
+        if hasattr(broker, "get_closed_pnl_all_pages"):
+            try:
+                records = broker.get_closed_pnl_all_pages(
+                    symbol,
+                    start_time_ms=opened_ms - 60_000,
+                    end_time_ms=end_ms + 60_000,
+                    limit=100,
+                    max_pages=5,
+                    raise_on_network_error=raise_on_network_error,
+                )
+            except Exception as e:
+                logger.debug("LIVE_OUTCOME_CHECK | get_closed_pnl_all_pages failed symbol=%s: %s", symbol, e)
+                records = broker.get_closed_pnl(
+                    symbol, start_time_ms=opened_ms - 60_000, end_time_ms=end_ms + 60_000,
+                    limit=100, raise_on_network_error=raise_on_network_error,
+                )
+        else:
+            records = broker.get_closed_pnl(
+                symbol,
+                start_time_ms=opened_ms - 60_000,
+                end_time_ms=end_ms + 60_000,
+                limit=100,
+                raise_on_network_error=raise_on_network_error,
+            )
         n_records = len(records)
         n_side = sum(1 for r in records if r.get("side") == want_side)
         n_after_time = sum(
             1 for r in records
             if r.get("side") == want_side and int(r.get("updatedTime") or 0) >= opened_ms
         )
+        if position_open:
+            logger.debug("LIVE_OUTCOME_OPEN_FOUND | symbol=%s iter=%d", symbol, iter_count)
         logger.debug(
             "LIVE_OUTCOME_CHECK | symbol=%s iter=%d position_open=%s n_closed_pnl=%d n_side=%d n_after_open=%d entry_tol=%.2f%%",
             symbol, iter_count, position_open, n_records, n_side, n_after_time, entry_tol * 100,
@@ -167,11 +374,26 @@ def resolve_live_outcome(
             )
             if result:
                 logger.info(
-                    "LIVE_OUTCOME_RESOLVED | symbol=%s status=%s exit=%.4f closed_pnl=%.4f by=%s",
+                    "LIVE_OUTCOME_CLOSED_PNL_FOUND | symbol=%s status=%s exit=%.4f closed_pnl=%.4f",
                     symbol, result["status"], result["exit_price"], result.get("closed_pnl", 0),
-                    "closed_pnl" + ("_relaxed" if not position_open else ""),
+                )
+                logger.info(
+                    "LIVE_OUTCOME_RESOLVED | symbol=%s status=%s exit=%.4f by=closed_pnl",
+                    symbol, result["status"], result["exit_price"],
                 )
                 return result
+
+        # Position gone but closed-pnl has no match: cascade fallback
+        if not position_open:
+            fb = _resolve_via_fallback(
+                broker, symbol, side, entry_f, tp_f, sl_f, opened_ms, end_ms,
+            )
+            if fb:
+                logger.info(
+                    "LIVE_OUTCOME_RESOLVED | symbol=%s status=%s exit=%.4f by=fallback",
+                    symbol, fb["status"], fb.get("exit_price", 0),
+                )
+                return fb
         time.sleep(poll_sec)
 
     logger.info(
