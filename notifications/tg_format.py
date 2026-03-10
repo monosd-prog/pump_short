@@ -285,6 +285,41 @@ def format_fast0_outcome_message(
     return "\n".join(lines)
 
 
+def format_live_open_message(position: Dict[str, Any]) -> str:
+    """
+    Format LIVE_OPEN notification for a successfully opened live position.
+    Includes strategy, symbol, run_id, event_id, risk_profile, notional, leverage, margin, and entry/tp/sl.
+    """
+    strategy = (position.get("strategy") or "").strip()
+    symbol = (position.get("symbol") or "").strip()
+    side = (position.get("side") or "SHORT").strip().upper()
+    side_emoji = _emoji(side)
+    run_id = (position.get("run_id") or "").strip()
+    event_id = (position.get("event_id") or "").strip()
+    risk_profile = (position.get("risk_profile") or "").strip()
+    notional = position.get("notional_usd")
+    leverage = position.get("leverage")
+    margin_mode = (position.get("margin_mode") or "").strip()
+    entry = position.get("entry")
+    tp = position.get("tp")
+    sl = position.get("sl")
+
+    header = f"{side_emoji} {side} | {strategy} | LIVE_OPEN | sym={symbol}"
+    lines = [header]
+    if run_id or event_id:
+        lines.append(f"run_id={run_id} eid={_short_eid(event_id)}")
+    if entry is not None or tp is not None or sl is not None:
+        lines.append(
+            f"entry={_fmt_num(entry)} tp={_fmt_num(tp)} sl={_fmt_num(sl)}"
+        )
+    if risk_profile or notional or leverage or margin_mode:
+        rp = risk_profile or "n/a"
+        lines.append(
+            f"risk_profile={rp} | notional={_fmt_num(notional, 0)} USD | lev=x{_fmt_num(leverage, 0)} | margin={margin_mode or 'n/a'}"
+        )
+    return "\n".join(lines)
+
+
 def format_outcome(
     *,
     strategy: str,

@@ -75,7 +75,7 @@ def format_tg(signal: Signal) -> str:
 
     if signal.strategy == "short_pump_fast0":
         header = (
-            f"⚡ FAST0 ENTRY_OK | {signal.symbol} | "
+            f"⚡ FAST0 TRADEABLE | {signal.symbol} | "
             f"dist={_fmt_pct(signal.dist_to_peak_pct)} | "
             f"cs={_fmt_num(signal.context_score)} | "
             f"liqL30s={_fmt_num(signal.liq_long_usd_30s, 0)} "
@@ -98,7 +98,7 @@ def format_tg(signal: Signal) -> str:
     else:
         stage_str = str(signal.stage) if signal.stage is not None else "n/a"
         header = (
-            f"{emoji} {side_up} | {signal.strategy} | ENTRY_OK | "
+            f"{emoji} {side_up} | {signal.strategy} | TRADEABLE | "
             f"stage={stage_str} | dist={_fmt_pct(signal.dist_to_peak_pct)} | "
             f"sym={signal.symbol}"
         )
