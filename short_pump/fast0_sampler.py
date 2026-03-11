@@ -434,17 +434,32 @@ def _run_fast0_outcome_watcher(
             )
             liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else 0.0
             if FAST0_TG_OUTCOME_ENABLE and res_val and res_val not in ("", "None"):
-                if not (liq_val > 0):
-                    log_info(
-                        logger,
-                        "TG_FAST0_SKIPPED_LIQ_GATE",
-                        symbol=symbol,
-                        run_id=run_id,
-                        step="FAST0_OUTCOME",
-                        extra={"liq_long_usd_30s": liq_val, "event_id": event_id, "reason": "liq<=0"},
-                    )
-                elif liq_val > 0:
-                    if dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
+                _skip_tg_live = False
+                try:
+                    from trading.config import EXECUTION_MODE
+                    _skip_tg_live = (EXECUTION_MODE or "").strip().lower() == "live"
+                    if _skip_tg_live:
+                        log_info(
+                            logger,
+                            "MODEL_OUTCOME_TG_SKIPPED_LIVE",
+                            symbol=symbol,
+                            run_id=run_id,
+                            step="FAST0_OUTCOME",
+                            extra={"event_id": event_id, "reason": "live_mode_only_live_outcome_tg"},
+                        )
+                except Exception:
+                    pass
+                if not _skip_tg_live:
+                    if not (liq_val > 0):
+                        log_info(
+                            logger,
+                            "TG_FAST0_SKIPPED_LIQ_GATE",
+                            symbol=symbol,
+                            run_id=run_id,
+                            step="FAST0_OUTCOME",
+                            extra={"liq_long_usd_30s": liq_val, "event_id": event_id, "reason": "liq<=0"},
+                        )
+                    elif liq_val > 0 and dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
                         try:
                             from trading.risk_profile import get_risk_profile, get_notional_and_leverage
                             _rp, _rm, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=liq_val)

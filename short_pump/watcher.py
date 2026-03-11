@@ -1381,8 +1381,8 @@ def run_watch_for_symbol(
                     log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
                 try:
-                    from trading.config import MODE
-                    if (MODE or "").strip().lower() == "live":
+                    from trading.config import EXECUTION_MODE
+                    if (EXECUTION_MODE or "").strip().lower() == "live":
                         # Live outcomes resolved by outcome worker (Bybit only); no candle outcome writing
                         log_info(
                             logger,
@@ -1572,55 +1572,67 @@ def run_watch_for_symbol(
 
                     if TG_SEND_OUTCOME:
                         try:
-                            event_id = entry_payload.get("event_id") or run_id
-                            context_score_msg = entry_payload.get("context_score", context_score)
-                            _rp, _rm, _ = ("", 0, 0)
-                            _nt, _lev, _mm = (0, 4, "isolated")
-                            try:
-                                from trading.risk_profile import get_risk_profile, get_notional_and_leverage
-                                _rp, _rm, _ = get_risk_profile(
-                                    "short_pump",
-                                    stage=entry_payload.get("stage"),
-                                    dist_to_peak_pct=entry_payload.get("dist_to_peak_pct"),
-                                    event_id=str(event_id),
-                                    symbol=cfg.symbol,
-                                )
-                                if _rp:
-                                    _nt, _lev, _mm = get_notional_and_leverage(_rm)
-                            except Exception:
-                                pass
-                            send_telegram(
-                                format_outcome(
-                                    strategy="short_pump",
-                                    side="SHORT",
+                            from trading.config import EXECUTION_MODE
+                            if (EXECUTION_MODE or "").strip().lower() == "live":
+                                log_info(
+                                    logger,
+                                    "MODEL_OUTCOME_TG_SKIPPED_LIVE",
                                     symbol=cfg.symbol,
                                     run_id=run_id,
+                                    stage=st.stage,
+                                    step="OUTCOME",
+                                    extra={"reason": "live_mode_only_live_outcome_tg"},
+                                )
+                            else:
+                                event_id = entry_payload.get("event_id") or run_id
+                                context_score_msg = entry_payload.get("context_score", context_score)
+                                _rp, _rm, _ = ("", 0, 0)
+                                _nt, _lev, _mm = (0, 4, "isolated")
+                                try:
+                                    from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+                                    _rp, _rm, _ = get_risk_profile(
+                                        "short_pump",
+                                        stage=entry_payload.get("stage"),
+                                        dist_to_peak_pct=entry_payload.get("dist_to_peak_pct"),
+                                        event_id=str(event_id),
+                                        symbol=cfg.symbol,
+                                    )
+                                    if _rp:
+                                        _nt, _lev, _mm = get_notional_and_leverage(_rm)
+                                except Exception:
+                                    pass
+                                send_telegram(
+                                    format_outcome(
+                                        strategy="short_pump",
+                                        side="SHORT",
+                                        symbol=cfg.symbol,
+                                        run_id=run_id,
+                                        event_id=str(event_id),
+                                        outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
+                                        entry_price=summary.get("entry_price") or entry_snapshot.get("entry_price"),
+                                        tp_price=entry_snapshot.get("tp_price"),
+                                        sl_price=entry_snapshot.get("sl_price"),
+                                        tp_pct=entry_snapshot.get("tp_pct"),
+                                        sl_pct=entry_snapshot.get("sl_pct"),
+                                        pnl_pct=summary.get("pnl_pct"),
+                                        hold_seconds=summary.get("hold_seconds"),
+                                        mae_pct=summary.get("mae_pct"),
+                                        mfe_pct=summary.get("mfe_pct"),
+                                        debug_payload=summary,
+                                        risk_profile=_rp or None,
+                                        notional_usd=_nt if _nt > 0 else None,
+                                        leverage=_lev,
+                                        margin_mode=_mm,
+                                    ),
+                                    strategy="short_pump",
+                                    side="SHORT",
+                                    mode="FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
                                     event_id=str(event_id),
-                                    outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
-                                    entry_price=summary.get("entry_price") or entry_snapshot.get("entry_price"),
-                                    tp_price=entry_snapshot.get("tp_price"),
-                                    sl_price=entry_snapshot.get("sl_price"),
-                                    tp_pct=entry_snapshot.get("tp_pct"),
-                                    sl_pct=entry_snapshot.get("sl_pct"),
-                                    pnl_pct=summary.get("pnl_pct"),
-                                    hold_seconds=summary.get("hold_seconds"),
-                                    mae_pct=summary.get("mae_pct"),
-                                    mfe_pct=summary.get("mfe_pct"),
-                                    debug_payload=summary,
-                                    risk_profile=_rp or None,
-                                    notional_usd=_nt if _nt > 0 else None,
-                                    leverage=_lev,
-                                    margin_mode=_mm,
-                                ),
-                                strategy="short_pump",
-                                side="SHORT",
-                                mode="FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
-                                event_id=str(event_id),
-                                context_score=float(context_score_msg) if context_score_msg is not None else None,
-                                entry_ok=True,
-                                skip_reasons=None,
-                                formatted=True,
-                            )
+                                    context_score=float(context_score_msg) if context_score_msg is not None else None,
+                                    entry_ok=True,
+                                    skip_reasons=None,
+                                    formatted=True,
+                                )
                         except Exception as e:
                             log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
