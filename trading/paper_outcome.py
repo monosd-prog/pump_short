@@ -207,7 +207,10 @@ def close_from_live_outcome(
     open_positions = state.get("open_positions") or {}
     found = _find_position_for_outcome(open_positions, strategy, symbol, run_id, event_id)
     if found is None:
-        logger.warning("close_from_live_outcome: no matching position strategy=%s symbol=%s run_id=%s event_id=%s", strategy, symbol, run_id, event_id)
+        logger.info(
+            "LIVE_OUTCOME_ALREADY_FINALIZED | strategy=%s symbol=%s run_id=%s event_id=%s (no matching position)",
+            strategy, symbol, run_id, event_id,
+        )
         return False
 
     position_id, position = found
@@ -267,9 +270,18 @@ def _send_live_outcome_telegram(
     pnl_r: float,
     ts_utc: str,
 ) -> None:
-    """Send outcome TG for live trade when TG_SEND_OUTCOME=1. Include risk_profile from position."""
+    """Send outcome TG for live trade when TG_SEND_OUTCOME=1. Idempotent: only once per trade_id."""
     try:
         if (__import__("os").getenv("TG_SEND_OUTCOME", "0") or "").strip() != "1":
+            return
+        from trading.state import load_state, save_state, outcome_tg_sent, add_outcome_tg_sent
+        key = make_position_id(strategy, run_id or "", str(event_id or ""), symbol or "")
+        state = load_state()
+        if outcome_tg_sent(state, key):
+            logger.info(
+                "LIVE_OUTCOME_DUPLICATE_SKIPPED | strategy=%s symbol=%s run_id=%s event_id=%s res=%s",
+                strategy, symbol, run_id, event_id, res,
+            )
             return
         from short_pump.telegram import send_telegram
         from notifications.tg_format import format_outcome, format_fast0_outcome_message
@@ -331,6 +343,12 @@ def _send_live_outcome_telegram(
             context_score=None,
             entry_ok=True,
             formatted=True,
+        )
+        add_outcome_tg_sent(state, key)
+        save_state(state)
+        logger.info(
+            "LIVE_OUTCOME_TG_SENT | strategy=%s symbol=%s run_id=%s event_id=%s res=%s",
+            strategy, symbol, run_id, event_id, res,
         )
     except Exception as e:
         logger.debug("_send_live_outcome_telegram: %s", e)

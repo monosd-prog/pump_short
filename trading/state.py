@@ -180,6 +180,30 @@ def update_daily_pnl(state: dict[str, Any], ts_utc: str, pnl_usd: float) -> None
     )
 
 
+_OUTCOME_TG_SENT_MAX = 5000
+
+
+def outcome_tg_sent(state: dict[str, Any], key: str) -> bool:
+    """True if TG outcome was already sent for this key (trade_id/position_id)."""
+    sent = state.get("outcome_tg_sent") or []
+    if not isinstance(sent, list):
+        return False
+    return key in sent
+
+
+def add_outcome_tg_sent(state: dict[str, Any], key: str) -> None:
+    """Mark TG outcome as sent for this key. Prune if over limit."""
+    sent = state.get("outcome_tg_sent") or []
+    if not isinstance(sent, list):
+        sent = []
+    if key not in sent:
+        sent.append(key)
+    if len(sent) > _OUTCOME_TG_SENT_MAX:
+        state["outcome_tg_sent"] = sent[-(_OUTCOME_TG_SENT_MAX // 2) :]
+    else:
+        state["outcome_tg_sent"] = sent
+
+
 def record_close(
     state: dict[str, Any],
     strategy: str,

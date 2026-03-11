@@ -320,7 +320,7 @@ def _run_fast0_outcome_watcher(
                             )
                         except Exception:
                             log_exception(logger, "FAST0_LIVE_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
-                        if FAST0_TG_OUTCOME_ENABLE and res_val:
+                        if (mode or "").strip().lower() != "live" and FAST0_TG_OUTCOME_ENABLE and res_val:
                             dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else 0.0
                             ctx_val = float(context_score) if context_score is not None else 0.0
                             if dist_val >= FAST0_TG_OUTCOME_MIN_DIST and (liq_long_usd_30s or 0) > 0:
