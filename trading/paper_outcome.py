@@ -201,10 +201,10 @@ def close_from_live_outcome(
     If state is provided, modifies it in place (caller must save). Else loads and saves itself.
     Returns True if closed, False if position not found.
     """
-    if res not in ("TP_hit", "SL_hit"):
+    if res not in ("TP_hit", "SL_hit", "EARLY_EXIT"):
         logger.debug("close_from_live_outcome: skip res=%s", res)
         return False
-    close_reason = "tp" if res == "TP_hit" else "sl"
+    close_reason = "tp" if res == "TP_hit" else ("sl" if res == "SL_hit" else "early_exit")
     state = state if state is not None else load_state()
     open_positions = state.get("open_positions") or {}
     found = _find_position_for_outcome(open_positions, strategy, symbol, run_id, event_id)
@@ -390,7 +390,7 @@ def _write_live_outcome_to_datasets(
     mode = position.get("mode", "live")
     opened_ts = position.get("opened_ts", "")
     hold_sec = _hold_seconds(opened_ts, outcome_ts_utc)
-    outcome_str = "TP_hit" if close_reason == "tp" else "SL_hit"
+    outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "EARLY_EXIT")
     notional = float(position.get("notional_usd") or 0)
     pnl_usd = notional * (pnl_pct / 100.0) if notional else 0.0
     risk_abs = abs(entry - sl)
@@ -721,7 +721,7 @@ def close_on_timeout(
                         sl=float(position.get("sl", 0) or 0),
                         raise_on_network_error=False,
                     )
-                    if outcome and outcome.get("status") in ("TP_hit", "SL_hit"):
+                    if outcome and outcome.get("status") in ("TP_hit", "SL_hit", "EARLY_EXIT"):
                         res = outcome["status"]
                         exit_price = float(outcome.get("exit_price", 0) or 0)
                         pnl_pct = float(outcome.get("pnl_pct", 0) or 0)

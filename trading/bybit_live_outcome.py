@@ -13,6 +13,8 @@ LIVE_OUTCOME_TIMEOUT_SEC = int((__import__("os").getenv("LIVE_OUTCOME_TIMEOUT_SE
 # Entry price match tolerance: 2% (slippage). When position gone on exchange, use 2.5%.
 _ENTRY_TOLERANCE_PCT = 0.02
 _ENTRY_TOLERANCE_RELAXED_PCT = 0.025
+# TP/SL level tolerance: exit must cross level to classify as TP_hit/SL_hit (0.5% relative).
+_EXIT_LEVEL_TOLERANCE_PCT = 0.005
 _TIME_WINDOW_START_MS = 5 * 60 * 1000
 
 
@@ -51,6 +53,8 @@ def _match_closed_record(
     sl_f: float,
     opened_ms: int,
     entry_tolerance_pct: float,
+    *,
+    symbol: str = "",
 ) -> Optional[dict[str, Any]]:
     """Check if closed-pnl record matches our position. Returns outcome dict or None."""
     rec_side = rec.get("side", "")
@@ -67,15 +71,13 @@ def _match_closed_record(
         return None
     closed_pnl = float(rec.get("closedPnl") or 0)
     exit_ts = datetime.fromtimestamp(updated_ms / 1000.0, tz=timezone.utc).isoformat()
-    if want_side == "Sell":
-        status = "TP_hit" if avg_exit < entry_f else "SL_hit"
-    else:
-        status = "TP_hit" if avg_exit > entry_f else "SL_hit"
-    if abs(avg_exit - tp_f) / max(tp_f, 1e-9) < 0.005:
-        status = "TP_hit"
-    elif abs(avg_exit - sl_f) / max(sl_f, 1e-9) < 0.005:
-        status = "SL_hit"
+    status = _classify_exit_price(avg_exit, entry_f, tp_f, sl_f, want_side, closed_pnl=closed_pnl, symbol=symbol)
     pnl_pct = (entry_f - avg_exit) / entry_f * 100.0 if want_side == "Sell" else (avg_exit - entry_f) / entry_f * 100.0
+    if status == "EARLY_EXIT":
+        logger.info(
+            "LIVE_OUTCOME_CLASSIFIED_AS_OTHER | symbol=%s exit=%.6f entry=%.6f tp=%.6f sl=%.6f status=EARLY_EXIT",
+            symbol or "?", avg_exit, entry_f, tp_f, sl_f,
+        )
     return {
         "status": status,
         "exit_price": avg_exit,
@@ -93,19 +95,57 @@ def _classify_exit_price(
     tp: float,
     sl: float,
     want_side: str,
+    *,
+    closed_pnl: Optional[float] = None,
+    symbol: str = "",
 ) -> str:
-    """Classify outcome from exit_price. For SHORT: exit<entry=TP, exit>entry=SL. Use nearest boundary on tie."""
+    """
+    Classify outcome from exit_price using TP/SL level boundaries only.
+    TP_hit only if exit crossed TP; SL_hit only if exit crossed SL.
+    If exit is between TP and SL: EARLY_EXIT (manual/other close).
+    """
+    tol = _EXIT_LEVEL_TOLERANCE_PCT
+    tp_tol = tp * (1 + tol) if want_side == "Sell" else tp * (1 - tol)
+    sl_tol = sl * (1 - tol) if want_side == "Sell" else sl * (1 + tol)
+
     if want_side == "Sell":
-        if abs(exit_price - tp) / max(tp, 1e-9) < 0.005:
+        if exit_price <= tp_tol:
+            logger.debug(
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f tp=%.6f SHORT TP_hit (exit<=tp+tol)",
+                symbol or "?", exit_price, tp,
+            )
             return "TP_hit"
-        if abs(exit_price - sl) / max(sl, 1e-9) < 0.005:
+        if exit_price >= sl_tol:
+            logger.debug(
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f sl=%.6f SHORT SL_hit (exit>=sl-tol)",
+                symbol or "?", exit_price, sl,
+            )
             return "SL_hit"
-        return "TP_hit" if exit_price < entry else "SL_hit"
-    if abs(exit_price - tp) / max(tp, 1e-9) < 0.005:
-        return "TP_hit"
-    if abs(exit_price - sl) / max(sl, 1e-9) < 0.005:
-        return "SL_hit"
-    return "TP_hit" if exit_price > entry else "SL_hit"
+    else:
+        if exit_price >= tp_tol:
+            logger.debug(
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f tp=%.6f LONG TP_hit (exit>=tp-tol)",
+                symbol or "?", exit_price, tp,
+            )
+            return "TP_hit"
+        if exit_price <= sl_tol:
+            logger.debug(
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f sl=%.6f LONG SL_hit (exit<=sl+tol)",
+                symbol or "?", exit_price, sl,
+            )
+            return "SL_hit"
+
+    gross_fav = (exit_price < entry) if want_side == "Sell" else (exit_price > entry)
+    if closed_pnl is not None and closed_pnl < 0 and gross_fav:
+        logger.info(
+            "LIVE_OUTCOME_NET_NEGATIVE_GROSS_POSITIVE | symbol=%s exit=%.6f entry=%.6f tp=%.6f sl=%.6f closed_pnl=%.4f",
+            symbol or "?", exit_price, entry, tp, sl, closed_pnl,
+        )
+    logger.info(
+        "LIVE_OUTCOME_BETWEEN_LEVELS | symbol=%s exit=%.6f entry=%.6f tp=%.6f sl=%.6f -> EARLY_EXIT",
+        symbol or "?", exit_price, entry, tp, sl,
+    )
+    return "EARLY_EXIT"
 
 
 def _resolve_via_fallback(
@@ -154,7 +194,7 @@ def _resolve_via_fallback(
                     avg_exit, um = in_time_sorted[0]
                     logger.debug("LIVE_OUTCOME_FALLBACK | order_history multiple_reduceOnly symbol=%s using_latest", symbol)
                 exit_ts = datetime.fromtimestamp(um / 1000.0, tz=timezone.utc).isoformat()
-                status = _classify_exit_price(avg_exit, entry, tp, sl, want_side)
+                status = _classify_exit_price(avg_exit, entry, tp, sl, want_side, symbol=symbol)
                 pnl_pct = (entry - avg_exit) / entry * 100.0 if want_side == "Sell" else (avg_exit - entry) / entry * 100.0
                 logger.info(
                     "LIVE_OUTCOME_ORDER_HISTORY_FOUND | symbol=%s status=%s exit=%.4f source=order_history",
@@ -193,7 +233,7 @@ def _resolve_via_fallback(
                     avg_exit = sum(c["execPrice"] * c["execQty"] for c in closing) / total_qty
                     latest_et = max(c["execTime"] for c in closing)
                     exit_ts = datetime.fromtimestamp(latest_et / 1000.0, tz=timezone.utc).isoformat()
-                    status = _classify_exit_price(avg_exit, entry, tp, sl, want_side)
+                    status = _classify_exit_price(avg_exit, entry, tp, sl, want_side, symbol=symbol)
                     pnl_pct = (entry - avg_exit) / entry * 100.0 if want_side == "Sell" else (avg_exit - entry) / entry * 100.0
                     logger.info(
                         "LIVE_OUTCOME_EXECUTIONS_FOUND | symbol=%s status=%s exit=%.4f n_fills=%d source=execution_list",
@@ -260,7 +300,7 @@ def resolve_live_outcome_final_reconcile(
         )
 
     for rec in records:
-        result = _match_closed_record(rec, want_side, entry, tp, sl, opened_ms, entry_tol)
+        result = _match_closed_record(rec, want_side, entry, tp, sl, opened_ms, entry_tol, symbol=symbol)
         if result:
             logger.info(
                 "LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s CLOSED_PNL_FOUND status=%s",
@@ -370,7 +410,7 @@ def resolve_live_outcome(
 
         for rec in records:
             result = _match_closed_record(
-                rec, want_side, entry_f, tp_f, sl_f, opened_ms, entry_tol,
+                rec, want_side, entry_f, tp_f, sl_f, opened_ms, entry_tol, symbol=symbol,
             )
             if result:
                 logger.info(

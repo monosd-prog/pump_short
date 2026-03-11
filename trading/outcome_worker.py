@@ -132,7 +132,7 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
 
         if outcome:
             res = outcome.get("status", "")
-            if res in ("TP_hit", "SL_hit"):
+            if res in ("TP_hit", "SL_hit", "EARLY_EXIT"):
                 exit_price = float(outcome.get("exit_price", 0) or 0)
                 pnl_pct = float(outcome.get("pnl_pct", 0) or 0)
                 exit_ts = outcome.get("exit_ts", datetime.now(timezone.utc).isoformat())
