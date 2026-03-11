@@ -48,13 +48,15 @@ def _parse_opened_ts(opened_ts: str) -> datetime | None:
 def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
     """
     Iterate over live open positions, resolve outcomes via Bybit, close on TP/SL.
+    Skips positions already in outcome_tg_sent. Modifies state in place.
     Network/timeout must NOT close position; log OUTCOME_PENDING and keep open.
     """
     from trading.bybit_live_outcome import resolve_live_outcome
     from trading.paper_outcome import close_from_live_outcome
-    from trading.state import save_state
+    from trading.state import load_state, save_state, outcome_tg_sent, make_position_id
 
     open_positions = state.get("open_positions") or {}
+    state_fresh = load_state()
     live_positions: list[tuple[str, str, dict[str, Any]]] = []
 
     for strategy, strat_pos in open_positions.items():
@@ -69,6 +71,18 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
             order_id = position.get("order_id")
             position_idx = position.get("position_idx")
             if not order_id or position_idx is None:
+                continue
+            key = make_position_id(
+                strategy,
+                position.get("run_id", "") or "",
+                str(position.get("event_id", "") or ""),
+                position.get("symbol", "") or "",
+            )
+            if outcome_tg_sent(state_fresh, key):
+                logger.info(
+                    "OUTCOME_WORKER_SKIP_FINALIZED | LIVE_OUTCOME_ALREADY_FINALIZED_SKIP | strategy=%s symbol=%s run_id=%s event_id=%s",
+                    strategy, position.get("symbol", ""), position.get("run_id", ""), position.get("event_id", ""),
+                )
                 continue
             live_positions.append((strategy, position_id, position))
 
@@ -131,6 +145,7 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
                     exit_price=exit_price,
                     pnl_pct=pnl_pct,
                     ts_utc=exit_ts,
+                    state=state,
                 )
                 if ok:
                     print(

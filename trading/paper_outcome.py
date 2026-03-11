@@ -194,16 +194,18 @@ def close_from_live_outcome(
     ts_utc: str,
     *,
     log_path: Optional[str] = None,
+    state: Optional[dict[str, Any]] = None,
 ) -> bool:
     """
     Close LIVE position from Bybit-resolved outcome. Uses actual exit_price and pnl_pct from exchange.
+    If state is provided, modifies it in place (caller must save). Else loads and saves itself.
     Returns True if closed, False if position not found.
     """
     if res not in ("TP_hit", "SL_hit"):
         logger.debug("close_from_live_outcome: skip res=%s", res)
         return False
     close_reason = "tp" if res == "TP_hit" else "sl"
-    state = load_state()
+    state = state if state is not None else load_state()
     open_positions = state.get("open_positions") or {}
     found = _find_position_for_outcome(open_positions, strategy, symbol, run_id, event_id)
     if found is None:
@@ -225,6 +227,10 @@ def close_from_live_outcome(
 
     record_close(state, strategy, position_id, close_reason, exit_price, pnl_r, pnl_usd, ts_utc)
     save_state(state)
+    logger.info(
+        "STATE_FINALIZED_SAVED | strategy=%s symbol=%s position_id=%s reason=%s",
+        strategy, symbol, position_id, close_reason,
+    )
 
     path = log_path or CLOSES_PATH
     _append_close_row(
@@ -254,6 +260,7 @@ def close_from_live_outcome(
     _write_live_outcome_to_datasets(position, close_reason, exit_price, pnl_r, pnl_pct, ts_utc)
     _send_live_outcome_telegram(
         position, strategy, symbol, run_id, event_id, res, exit_price, pnl_pct, pnl_r, ts_utc,
+        state=state,
     )
     return True
 
@@ -269,6 +276,8 @@ def _send_live_outcome_telegram(
     pnl_pct: float,
     pnl_r: float,
     ts_utc: str,
+    *,
+    state: Optional[dict[str, Any]] = None,
 ) -> None:
     """Send outcome TG for live trade when TG_SEND_OUTCOME=1. Idempotent: only once per trade_id."""
     try:
@@ -276,11 +285,11 @@ def _send_live_outcome_telegram(
             return
         from trading.state import load_state, save_state, outcome_tg_sent, add_outcome_tg_sent
         key = make_position_id(strategy, run_id or "", str(event_id or ""), symbol or "")
-        state = load_state()
+        state = state if state is not None else load_state()
         if outcome_tg_sent(state, key):
             logger.info(
-                "LIVE_OUTCOME_DUPLICATE_SKIPPED | strategy=%s symbol=%s run_id=%s event_id=%s res=%s",
-                strategy, symbol, run_id, event_id, res,
+                "LIVE_OUTCOME_DUPLICATE_BLOCKED | strategy=%s symbol=%s run_id=%s event_id=%s res=%s key=%s",
+                strategy, symbol, run_id, event_id, res, key[:64],
             )
             return
         from short_pump.telegram import send_telegram
@@ -681,6 +690,23 @@ def close_on_timeout(
             if age_sec < ttl:
                 continue
             mode_val = (position.get("mode") or "").strip().lower()
+            if mode_val == "live":
+                from trading.state import outcome_tg_sent, make_position_id
+                key = make_position_id(
+                    strategy,
+                    position.get("run_id", "") or "",
+                    str(position.get("event_id", "") or ""),
+                    position.get("symbol", "") or "",
+                )
+                if outcome_tg_sent(state, key):
+                    logger.info(
+                        "LIVE_OUTCOME_ALREADY_FINALIZED_SKIP | strategy=%s symbol=%s run_id=%s event_id=%s (stale in open_positions)",
+                        strategy, position.get("symbol", ""), position.get("run_id", ""), position.get("event_id", ""),
+                    )
+                    ts_str = now_dt.strftime("%Y-%m-%d %H:%M:%S+00:00")
+                    record_close(state, strategy, position_id, "stale_cleanup", float(position.get("entry", 0)), 0.0, 0.0, ts_str)
+                    any_closed = True
+                    continue
             # Pre-timeout reconciliation for live: avoid false TIMEOUT when position already closed on exchange
             if mode_val == "live" and broker:
                 try:
@@ -710,6 +736,7 @@ def close_on_timeout(
                             pnl_pct=pnl_pct,
                             ts_utc=exit_ts,
                             log_path=path,
+                            state=state,
                         )
                         if ok:
                             logger.info(
@@ -778,6 +805,7 @@ def close_on_timeout(
                         pnl_pct=pnl_pct_timeout,
                         pnl_r=pnl_r,
                         ts_utc=ts_str,
+                        state=state,
                     )
             except Exception as e:
                 logger.debug("close_on_timeout: live outcome telegram failed: %s", e)
