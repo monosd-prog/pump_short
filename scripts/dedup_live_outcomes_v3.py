@@ -79,6 +79,14 @@ def _write_csv(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
         w.writerows(rows)
 
 
+def _rel_path(path: Path, root: Path) -> str:
+    """Safe relative path; fallback to full path if not under root."""
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
 def _deduplicate(rows: list[dict]) -> tuple[list[dict], int]:
     """
     Deduplicate by key. Keep first occurrence.
@@ -98,6 +106,7 @@ def _deduplicate(rows: list[dict]) -> tuple[list[dict], int]:
 
 
 def run(root: Path, apply: bool) -> dict:
+    root = Path(root).resolve()
     files_found = _find_live_outcome_files(root)
     files_changed = 0
     total_before = 0
@@ -122,9 +131,9 @@ def run(root: Path, apply: bool) -> dict:
             shutil.copy2(path, backup)
             _write_csv(path, kept, fieldnames)
             files_changed += 1
-            print(f"  APPLIED | {path.relative_to(root)} | backup={backup.name} | removed={removed}", flush=True)
+            print(f"  APPLIED | {_rel_path(path, root)} | backup={backup.name} | removed={removed}", flush=True)
         elif removed > 0:
-            print(f"  DRY-RUN | {path.relative_to(root)} | would_remove={removed}", flush=True)
+            print(f"  DRY-RUN | {_rel_path(path, root)} | would_remove={removed}", flush=True)
 
     return {
         "files_scanned": len(files_found),
@@ -161,7 +170,8 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path(DATASET_BASE_DIR), help="Datasets root")
     parser.add_argument("--apply", action="store_true", help="Apply changes (default: dry-run)")
     args = parser.parse_args()
-    summary = run(args.root, apply=args.apply)
+    root_path = Path(args.root).resolve()
+    summary = run(root_path, apply=args.apply)
     _print_summary(summary, apply=args.apply)
     return 0
 
