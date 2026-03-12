@@ -100,9 +100,13 @@ def _classify_exit_price(
     symbol: str = "",
 ) -> str:
     """
-    Classify outcome from exit_price using TP/SL level boundaries only.
+    Low-level helper: classify outcome from exit_price using TP/SL level boundaries only.
     TP_hit only if exit crossed TP; SL_hit only if exit crossed SL.
     If exit is between TP and SL: EARLY_EXIT (manual/other close).
+
+    IMPORTANT:
+    - PnL / UI labels / commissions do NOT influence classification.
+    - Only relative position of exit_price vs TP/SL with tolerance is used.
     """
     tol = _EXIT_LEVEL_TOLERANCE_PCT
     tp_tol = tp * (1 + tol) if want_side == "Sell" else tp * (1 - tol)
@@ -111,26 +115,26 @@ def _classify_exit_price(
     if want_side == "Sell":
         if exit_price <= tp_tol:
             logger.debug(
-                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f tp=%.6f SHORT TP_hit (exit<=tp+tol)",
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels closed_pnl_based=0 symbol=%s exit=%.6f tp=%.6f SHORT TP_hit (exit<=tp+tol)",
                 symbol or "?", exit_price, tp,
             )
             return "TP_hit"
         if exit_price >= sl_tol:
             logger.debug(
-                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f sl=%.6f SHORT SL_hit (exit>=sl-tol)",
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels closed_pnl_based=0 symbol=%s exit=%.6f sl=%.6f SHORT SL_hit (exit>=sl-tol)",
                 symbol or "?", exit_price, sl,
             )
             return "SL_hit"
     else:
         if exit_price >= tp_tol:
             logger.debug(
-                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f tp=%.6f LONG TP_hit (exit>=tp-tol)",
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels closed_pnl_based=0 symbol=%s exit=%.6f tp=%.6f LONG TP_hit (exit>=tp-tol)",
                 symbol or "?", exit_price, tp,
             )
             return "TP_hit"
         if exit_price <= sl_tol:
             logger.debug(
-                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | symbol=%s exit=%.6f sl=%.6f LONG SL_hit (exit<=sl+tol)",
+                "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels closed_pnl_based=0 symbol=%s exit=%.6f sl=%.6f LONG SL_hit (exit<=sl+tol)",
                 symbol or "?", exit_price, sl,
             )
             return "SL_hit"
@@ -138,7 +142,7 @@ def _classify_exit_price(
     gross_fav = (exit_price < entry) if want_side == "Sell" else (exit_price > entry)
     if closed_pnl is not None and closed_pnl < 0 and gross_fav:
         logger.info(
-            "LIVE_OUTCOME_NET_NEGATIVE_GROSS_POSITIVE | symbol=%s exit=%.6f entry=%.6f tp=%.6f sl=%.6f closed_pnl=%.4f",
+            "LIVE_OUTCOME_NET_NEGATIVE_DUE_TO_FEES | symbol=%s exit=%.6f entry=%.6f tp=%.6f sl=%.6f closed_pnl=%.4f",
             symbol or "?", exit_price, entry, tp, sl, closed_pnl,
         )
     logger.info(
@@ -146,6 +150,40 @@ def _classify_exit_price(
         symbol or "?", exit_price, entry, tp, sl,
     )
     return "EARLY_EXIT"
+
+
+def classify_live_outcome_by_levels(
+    *,
+    exit_price: float,
+    entry: float,
+    tp: float,
+    sl: float,
+    side: str,
+    closed_pnl: Optional[float] = None,
+    symbol: str = "",
+) -> str:
+    """
+    Public helper used by all live outcome paths.
+
+    Rules:
+    - SHORT (side in {\"SHORT\",\"Sell\"}):
+      - TP_hit  if exit_price <= tp + tolerance
+      - SL_hit  if exit_price >= sl - tolerance
+      - EARLY_EXIT if tp < exit_price < sl
+    - LONG (side in {\"LONG\",\"Buy\"}) зеркально.
+
+    Net PnL / комиссии / UI label \"Lose\" не переопределяют level-based статус.
+    """
+    want_side = "Sell" if (side or "").strip().upper() in ("SHORT", "SELL") else "Buy"
+    return _classify_exit_price(
+        exit_price=exit_price,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        want_side=want_side,
+        closed_pnl=closed_pnl,
+        symbol=symbol,
+    )
 
 
 def _resolve_via_fallback(
