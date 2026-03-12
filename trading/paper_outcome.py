@@ -375,7 +375,9 @@ def _write_live_outcome_to_datasets(
     """Write live close to datasets/outcomes_v3.csv with trade_type=LIVE."""
     try:
         from common.outcome_tracker import build_outcome_row
-        from common.io_dataset import write_outcome_row
+        from common.io_dataset import write_outcome_row, _dataset_dir
+        import os
+        import pandas as pd
     except ImportError:
         logger.debug("_write_live_outcome_to_datasets: skip (no common)")
         return
@@ -419,6 +421,31 @@ def _write_live_outcome_to_datasets(
         "trade_type": "LIVE",
         "details_payload": '{"source":"bybit","tp_hit":%s,"sl_hit":%s}' % ("true" if close_reason == "tp" else "false", "true" if close_reason == "sl" else "false"),
     }
+    # Dataset safety: skip duplicate outcomes for same event_id (idempotent by event_id).
+    try:
+        ds_base = base_dir or DATASET_BASE_DIR
+        dir_path = _dataset_dir(strategy, outcome_ts_utc, base_dir=ds_base, path_mode=mode)
+        outcomes_path = os.path.join(dir_path, "outcomes_v3.csv")
+        if os.path.exists(outcomes_path):
+            try:
+                existing_df = pd.read_csv(outcomes_path)
+                if "event_id" in existing_df.columns:
+                    if (existing_df["event_id"].astype(str) == str(event_id)).any():
+                        logger.info(
+                            "OUTCOME_DUPLICATE_SKIPPED | strategy=%s symbol=%s run_id=%s event_id=%s",
+                            strategy,
+                            symbol,
+                            run_id,
+                            event_id,
+                        )
+                        return
+            except Exception:
+                # Best-effort guard; do not block dataset write on read error.
+                pass
+    except Exception:
+        # If directory resolution fails, fall back to normal write (safety net is analytics dedup).
+        pass
+
     orow = build_outcome_row(
         summary,
         trade_id=trade_id,
