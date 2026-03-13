@@ -8,6 +8,10 @@ from pathlib import Path
 AUTO_TRADING_ENABLE = os.getenv("AUTO_TRADING_ENABLE", "0").strip().lower() in ("1", "true", "yes")
 AUTO_TRADING_MODE = os.getenv("AUTO_TRADING_MODE", "paper")
 
+# Auto Risk Guard feature flags
+AUTO_RISK_GUARD_ENABLE = os.getenv("AUTO_RISK_GUARD_ENABLE", "false").strip().lower() in ("1", "true", "yes")
+AUTO_RISK_GUARD_ENFORCE = os.getenv("AUTO_RISK_GUARD_ENFORCE", "false").strip().lower() in ("1", "true", "yes")
+
 # Execution: "paper" | "live" (paper = gating + simulated fills; live = exchange adapter)
 EXECUTION_MODE = os.getenv("EXECUTION_MODE", os.getenv("AUTO_TRADING_MODE", "paper")).strip().lower()
 if EXECUTION_MODE not in ("paper", "live"):
@@ -72,3 +76,9 @@ RUNNER_LOCK_PATH = os.getenv("TRADING_RUNNER_LOCK_PATH", str(_ROOT / "datasets" 
 SIGNALS_QUEUE_PATH = os.getenv("SIGNALS_QUEUE_PATH", str(_ROOT / "datasets" / "signals_queue.jsonl"))
 PROCESSING_PATH = SIGNALS_QUEUE_PATH + ".processing"
 PROCESSED_PATH = SIGNALS_QUEUE_PATH + ".processed"
+
+# Persisted state for Auto Risk Guard (shared with analytics / reports)
+AUTO_RISK_GUARD_STATE_PATH = os.getenv(
+    "AUTO_RISK_GUARD_STATE_PATH",
+    str(_ROOT / "datasets" / "auto_risk_guard_state.json"),
+)

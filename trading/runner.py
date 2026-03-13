@@ -46,6 +46,7 @@ from trading.config import (
     STATE_PATH,
 )
 from trading.broker import get_broker
+from trading.auto_risk_guard import is_entry_allowed_for_signal
 from trading.risk_profile import get_risk_profile
 from trading.risk import (
     calc_position_size,
@@ -427,6 +428,20 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 trade_id=str(getattr(signal, "trade_id", "") or ""),
                 symbol=signal.symbol or "",
             )
+
+        # Auto Risk Guard: self-healing gate per боевой режим (profile)
+        allowed_guard, guard_reason = is_entry_allowed_for_signal(signal, risk_profile_name)
+        if not allowed_guard:
+            logger.info(
+                "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s risk_profile=%s reason=%s",
+                signal.strategy,
+                signal.symbol,
+                risk_profile_name,
+                guard_reason,
+            )
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
         fixed_notional_override = None
         if risk_profile_name and EXECUTION_MODE == "live":
             fixed_notional_override = LIVE_FIXED_NOTIONAL_USD * risk_mult
