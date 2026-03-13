@@ -70,6 +70,33 @@ def _sanitize_dist_to_peak(val: object) -> float:
     return v
 
 
+def _watcher_should_skip_outcome_live(
+    run_id: str,
+    event_id: str,
+    symbol: str,
+) -> tuple[bool, str]:
+    """
+    Live mode: watcher must NOT send outcome TG nor write second outcome.
+    Returns (should_skip, reason).
+    """
+    try:
+        from trading.config import EXECUTION_MODE
+        if (EXECUTION_MODE or "").strip().lower() == "live":
+            return True, "live_mode"
+    except Exception:
+        pass
+    try:
+        from trading.state import load_state, outcome_tg_sent, make_position_id
+        state = load_state()
+        for strat in ("short_pump", "short_pump_fast0"):
+            key = make_position_id(strat, run_id or "", str(event_id or ""), symbol)
+            if outcome_tg_sent(state, key):
+                return True, "already_finalized"
+    except Exception:
+        pass
+    return False, ""
+
+
 def _ds_event(
     *,
     run_id: str,
@@ -1380,22 +1407,32 @@ def run_watch_for_symbol(
                 except Exception as e:
                     log_exception(logger, "TELEGRAM_SEND failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
 
-                try:
-                    from trading.config import EXECUTION_MODE
-                    if (EXECUTION_MODE or "").strip().lower() == "live":
-                        # Live outcomes resolved by outcome worker (Bybit only); no candle outcome writing
+                skip_outcome, skip_reason = _watcher_should_skip_outcome_live(run_id, str(event_id), cfg.symbol)
+                if skip_outcome:
+                    if skip_reason == "live_mode":
                         log_info(
                             logger,
-                            "LIVE_OUTCOME_VIA_WORKER",
+                            "WATCHER_OUTCOME_SKIPPED_LIVE",
                             symbol=cfg.symbol,
                             run_id=run_id,
                             stage=st.stage,
                             step="OUTCOME",
-                            extra={"reason": "candle_outcome_skipped"},
+                            extra={"event_id": str(event_id), "reason": "EXECUTION_MODE=live"},
                         )
-                        _cleanup_symbol()
-                        return {"run_id": run_id, "symbol": cfg.symbol, "end_reason": "LIVE_OUTCOME_VIA_WORKER"}
+                    else:
+                        log_info(
+                            logger,
+                            "WATCHER_OUTCOME_ALREADY_FINALIZED",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="OUTCOME",
+                            extra={"event_id": str(event_id), "reason": skip_reason},
+                        )
+                    _cleanup_symbol()
+                    return {"run_id": run_id, "symbol": cfg.symbol, "end_reason": "LIVE_OUTCOME_VIA_WORKER"}
 
+                try:
                     summary = track_outcome_short(
                         cfg=cfg,
                         entry_ts_utc=entry_ts_utc,
@@ -1513,8 +1550,12 @@ def run_watch_for_symbol(
                             extra=None,
                         )
                     # For LIVE+auto: outcome from close_from_live_outcome/close_on_timeout only. Skip to avoid duplicate.
+                    _skip_write, _skip_reason = _watcher_should_skip_outcome_live(run_id, str(event_id), cfg.symbol)
                     from trading.config import AUTO_TRADING_ENABLE, EXECUTION_MODE
-                    skip_watcher_outcome_write = AUTO_TRADING_ENABLE and (EXECUTION_MODE or "").strip().lower() == "live"
+                    skip_watcher_outcome_write = (
+                        _skip_write
+                        or (AUTO_TRADING_ENABLE and (EXECUTION_MODE or "").strip().lower() == "live")
+                    )
                     outcome_row = None if skip_watcher_outcome_write else build_outcome_row(
                         summary,
                         trade_id=str(trade_id),
@@ -1572,16 +1613,16 @@ def run_watch_for_symbol(
 
                     if TG_SEND_OUTCOME:
                         try:
-                            from trading.config import EXECUTION_MODE
-                            if (EXECUTION_MODE or "").strip().lower() == "live":
+                            _skip_tg, _tg_reason = _watcher_should_skip_outcome_live(run_id, str(event_id), cfg.symbol)
+                            if _skip_tg:
                                 log_info(
                                     logger,
-                                    "MODEL_OUTCOME_TG_SKIPPED_LIVE",
+                                    "WATCHER_OUTCOME_TG_BLOCKED_LIVE" if _tg_reason == "live_mode" else "WATCHER_OUTCOME_ALREADY_FINALIZED",
                                     symbol=cfg.symbol,
                                     run_id=run_id,
                                     stage=st.stage,
                                     step="OUTCOME",
-                                    extra={"reason": "live_mode_only_live_outcome_tg"},
+                                    extra={"event_id": str(event_id), "reason": _tg_reason},
                                 )
                             else:
                                 event_id = entry_payload.get("event_id") or run_id
