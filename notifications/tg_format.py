@@ -285,6 +285,46 @@ def format_fast0_outcome_message(
     return "\n".join(lines)
 
 
+def format_tpsl_failed_closed_message(
+    position: Dict[str, Any],
+    *,
+    pnl_pct: float | None = None,
+    exit_price: float | None = None,
+) -> str:
+    """
+    Format TG alert for: entry filled, TP/SL setup failed, position force-closed.
+    """
+    strategy = (position.get("strategy") or "").strip()
+    symbol = (position.get("symbol") or "").strip()
+    side = (position.get("side") or "SHORT").strip().upper()
+    side_emoji = _emoji(side)
+    run_id = (position.get("run_id") or "").strip()
+    event_id = (position.get("event_id") or "").strip()
+    entry = position.get("entry")
+    tp = position.get("tp")
+    sl = position.get("sl")
+    risk_profile = (position.get("risk_profile") or "").strip()
+    notional = position.get("notional_usd")
+    leverage = position.get("leverage")
+    exit_px = exit_price if exit_price is not None else position.get("exit_price")
+    pnl = pnl_pct if pnl_pct is not None else position.get("pnl_pct")
+
+    header = f"{side_emoji} {side} | {strategy} | TPSL_SETUP_FAILED_CLOSED | sym={symbol}"
+    lines = [header]
+    lines.append("⚠️ Entry filled, TP/SL setup failed → position force-closed")
+    if run_id or event_id:
+        lines.append(f"run_id={run_id} eid={_short_eid(event_id)}")
+    lines.append(f"entry={_fmt_num(entry)} tp={_fmt_num(tp)} sl={_fmt_num(sl)}")
+    if exit_px is not None:
+        lines.append(f"exit≈{_fmt_num(exit_px)}")
+    if pnl is not None:
+        lines.append(f"pnl≈{_fmt_pct(pnl)}")
+    if risk_profile or notional or leverage:
+        rp = risk_profile or "n/a"
+        lines.append(f"risk_profile={rp} | notional={_fmt_num(notional, 0)} USD | lev=x{_fmt_num(leverage, 0)}")
+    return "\n".join(lines)
+
+
 def format_live_open_message(position: Dict[str, Any]) -> str:
     """
     Format LIVE_OPEN notification for a successfully opened live position.

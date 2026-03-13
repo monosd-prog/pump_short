@@ -363,6 +363,82 @@ def _send_live_outcome_telegram(
         logger.debug("_send_live_outcome_telegram: %s", e)
 
 
+def record_tpsl_failed_closed(
+    position: dict[str, Any],
+    signal: Any,
+    *,
+    log_path: Optional[str] = None,
+) -> None:
+    """
+    Record a live case where entry filled but TPSL setup failed and position was force-closed.
+    Writes to trading_closes, datasets/outcomes_v3.csv, and sends TG alert.
+    """
+    from datetime import datetime, timezone
+    strategy = position.get("strategy", "") or getattr(signal, "strategy", "")
+    symbol = position.get("symbol", "") or getattr(signal, "symbol", "")
+    side = (position.get("side") or "SHORT").strip()
+    entry = float(position.get("entry", 0))
+    tp = float(position.get("tp", 0))
+    sl = float(position.get("sl", 0))
+    exit_price = float(position.get("exit_price", entry))
+    pnl_pct = float(position.get("pnl_pct", 0))
+    run_id = (position.get("run_id") or "") or getattr(signal, "run_id", "")
+    event_id = str(position.get("event_id") or "") or str(getattr(signal, "event_id", "") or "")
+    notional = float(position.get("notional_usd", 0) or 0)
+    risk_abs = abs(entry - sl)
+    risk_pct = (risk_abs / entry * 100.0) if entry > 0 else 1.0
+    pnl_r = (pnl_pct / risk_pct) if risk_pct > 0 else 0.0
+    pnl_usd = notional * (pnl_pct / 100.0) if notional else 0.0
+    ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000+00:00")
+    close_reason = "tpsl_setup_failed"
+
+    path = log_path or CLOSES_PATH
+    _append_close_row(
+        ts=ts_utc,
+        strategy=strategy,
+        symbol=symbol,
+        side=side,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        exit_price=exit_price,
+        close_reason=close_reason,
+        pnl_r=pnl_r,
+        pnl_usd=pnl_usd,
+        run_id=run_id,
+        event_id=event_id,
+        log_path=path,
+    )
+    _write_live_outcome_to_datasets(
+        position,
+        close_reason=close_reason,
+        exit_price=exit_price,
+        pnl_r=pnl_r,
+        pnl_pct=pnl_pct,
+        outcome_ts_utc=ts_utc,
+    )
+    try:
+        from notifications.tg_format import format_tpsl_failed_closed_message
+        from short_pump.telegram import send_telegram
+        msg = format_tpsl_failed_closed_message(position, pnl_pct=pnl_pct, exit_price=exit_price)
+        send_telegram(
+            msg,
+            strategy=strategy,
+            side=side,
+            mode="LIVE",
+            event_id=event_id,
+            context_score=None,
+            entry_ok=True,
+            formatted=True,
+        )
+        logger.info(
+            "TPSL_FAILED_CLOSED_RECORDED | strategy=%s symbol=%s run_id=%s event_id=%s exit=%.4f pnl_pct=%.2f",
+            strategy, symbol, run_id, event_id, exit_price, pnl_pct,
+        )
+    except Exception as e:
+        logger.warning("TPSL_FAILED_TG_SEND_FAILED | strategy=%s symbol=%s: %s", strategy, symbol, e)
+
+
 def _write_live_outcome_to_datasets(
     position: dict[str, Any],
     close_reason: str,
@@ -392,7 +468,10 @@ def _write_live_outcome_to_datasets(
     mode = position.get("mode", "live")
     opened_ts = position.get("opened_ts", "")
     hold_sec = _hold_seconds(opened_ts, outcome_ts_utc)
-    outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "EARLY_EXIT")
+    if close_reason == "tpsl_setup_failed":
+        outcome_str = "TPSL_SETUP_FAILED_CLOSED"
+    else:
+        outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "EARLY_EXIT")
     notional = float(position.get("notional_usd") or 0)
     pnl_usd = notional * (pnl_pct / 100.0) if notional else 0.0
     risk_abs = abs(entry - sl)
@@ -419,7 +498,11 @@ def _write_live_outcome_to_datasets(
         "margin_mode": position.get("margin_mode"),
         "risk_profile": position.get("risk_profile"),
         "trade_type": "LIVE",
-        "details_payload": '{"source":"bybit","tp_hit":%s,"sl_hit":%s}' % ("true" if close_reason == "tp" else "false", "true" if close_reason == "sl" else "false"),
+        "details_payload": (
+            '{"source":"bybit","tpsl_setup_failed":true}'
+            if close_reason == "tpsl_setup_failed"
+            else '{"source":"bybit","tp_hit":%s,"sl_hit":%s}' % ("true" if close_reason == "tp" else "false", "true" if close_reason == "sl" else "false")
+        ),
     }
     # Dataset safety: skip duplicate outcomes for same event_id (idempotent by event_id).
     try:

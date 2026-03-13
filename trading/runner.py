@@ -533,6 +533,19 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             save_state(state)
             return
 
+        if position.get("status") == "TPSL_SETUP_FAILED_CLOSED":
+            try:
+                from trading.paper_outcome import record_tpsl_failed_closed
+                position["risk_profile"] = risk_profile_name
+                record_tpsl_failed_closed(position, signal)
+            except Exception:
+                logger.exception(
+                    "TPSL_FAILED_RECORD_ERROR | strategy=%s symbol=%s",
+                    signal.strategy, signal.symbol,
+                )
+            _finish_queue_processing(raw_lines)
+            return
+
         position["risk_profile"] = risk_profile_name
         if EXECUTION_MODE == "live":
             position["margin_mode"] = LIVE_MARGIN_MODE

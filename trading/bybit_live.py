@@ -695,11 +695,12 @@ class BybitLiveBroker:
         sl: float,
         tick_size: float,
         qty: float,
-    ) -> bool:
+    ) -> tuple[bool, Optional[dict]]:
         """
         Set TP/SL. On failure: retry once with recomputed TP/SL from current price.
-        If retry fails: close position (reduce-only) and return False.
-        Returns True on success.
+        If retry fails: close position (reduce-only) and return (False, close_info).
+        Returns (True, None) on success, (False, close_info) on failure.
+        close_info: {entry_actual, last_price, qty, side, tp, sl} for historicity.
         """
         try:
             logger.info(
@@ -707,7 +708,7 @@ class BybitLiveBroker:
                 symbol, entry_price, tp, sl, tick_size,
             )
             self.set_trading_stop(symbol, position_idx, tp, sl)
-            return True
+            return (True, None)
         except RuntimeError as e:
             err_str = str(e)
             logger.warning(
@@ -719,15 +720,17 @@ class BybitLiveBroker:
             last_price = None
             if ticker:
                 last_price = ticker.get("lastPrice") or ticker.get("markPrice")
+            if last_price is not None and last_price > 0:
+                last_price = float(last_price)
+            entry_actual = float(pos.get("avgPrice", entry_price)) if pos else entry_price
             if last_price is None or last_price <= 0:
                 logger.warning("LIVE_TPSL_RETRY | symbol=%s no_last_price, closing position", symbol)
                 self._close_position_immediate(symbol, side, qty, position_idx)
                 logger.info(
                     "LIVE_TPSL_FAILED_CLOSED | symbol=%s | side=%s | entry=%.4f | last=N/A | tp=%.4f | sl=%.4f | retCode=N/A retMsg=no_last_price",
-                    symbol, side, entry_price, tp, sl,
+                    symbol, side, entry_actual, tp, sl,
                 )
-                return False
-            entry_actual = float(pos.get("avgPrice", entry_price)) if pos else entry_price
+                return (False, {"entry_actual": entry_actual, "last_price": None, "qty": qty, "side": side, "tp": tp, "sl": sl})
             tp_retry, sl_retry = _recompute_tpsl_for_price_move(
                 side, entry_actual, tp, sl, last_price, tick_size,
             )
@@ -737,7 +740,7 @@ class BybitLiveBroker:
             )
             try:
                 self.set_trading_stop(symbol, position_idx, tp_retry, sl_retry)
-                return True
+                return (True, None)
             except RuntimeError as e2:
                 ret_code = ""
                 ret_msg = str(e2)
@@ -751,7 +754,7 @@ class BybitLiveBroker:
                     symbol, side, entry_actual, last_price, tp_retry, sl_retry, ret_code, ret_msg,
                 )
                 self._close_position_immediate(symbol, side, qty, position_idx)
-                return False
+                return (False, {"entry_actual": entry_actual, "last_price": last_price, "qty": qty, "side": side, "tp": tp, "sl": sl})
 
     def _close_position_immediate(
         self, symbol: str, side: str, qty: float, position_idx: int
@@ -859,7 +862,7 @@ class BybitLiveBroker:
                 symbol, position_idx,
             )
         else:
-            tpsl_ok = self._set_tpsl_with_retry(
+            tpsl_ok, close_info = self._set_tpsl_with_retry(
                 symbol=symbol,
                 position_idx=position_idx,
                 side=side,
@@ -869,6 +872,43 @@ class BybitLiveBroker:
                 tick_size=tick_size,
                 qty=qty,
             )
+            if not tpsl_ok and close_info:
+                entry_act = float(close_info.get("entry_actual", entry_price))
+                last_px = close_info.get("last_price")
+                exit_approx = float(last_px) if last_px is not None and last_px > 0 else entry_act
+                pnl_pct_approx = 0.0
+                if entry_act > 0 and last_px is not None and last_px > 0:
+                    if (side or "").strip().upper() in ("SHORT", "SELL"):
+                        pnl_pct_approx = (entry_act - exit_approx) / entry_act * 100.0
+                    else:
+                        pnl_pct_approx = (exit_approx - entry_act) / entry_act * 100.0
+                from trading.state import make_position_id
+                strategy = getattr(signal, "strategy", "") or ""
+                run_id = getattr(signal, "run_id", "") or ""
+                event_id = str(getattr(signal, "event_id", "") or "")
+                trade_id = make_position_id(strategy, run_id, event_id, symbol)
+                return {
+                    "strategy": strategy,
+                    "symbol": symbol,
+                    "side": side,
+                    "entry": entry_act,
+                    "tp": tp_rounded,
+                    "sl": sl_rounded,
+                    "opened_ts": opened_ts,
+                    "notional_usd": notional,
+                    "risk_usd": risk_usd,
+                    "leverage": leverage,
+                    "status": "TPSL_SETUP_FAILED_CLOSED",
+                    "run_id": run_id,
+                    "event_id": event_id,
+                    "trade_id": trade_id,
+                    "mode": "live",
+                    "order_id": order_id,
+                    "position_idx": position_idx,
+                    "exit_price": exit_approx,
+                    "pnl_pct": pnl_pct_approx,
+                    "close_reason": "tpsl_setup_failed",
+                }
             if not tpsl_ok:
                 return None
 
