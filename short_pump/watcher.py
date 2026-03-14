@@ -76,13 +76,17 @@ def _watcher_should_skip_outcome_live(
     symbol: str,
 ) -> tuple[bool, str]:
     """
-    Live mode: watcher must NOT send outcome TG nor write second outcome.
+    Watcher must NOT send outcome TG when outcome will come from runner (live path).
     Returns (should_skip, reason).
+    Skip when: EXECUTION_MODE=live OR AUTO_TRADING_ENABLE (positions opened by runner,
+    outcomes from outcome_worker/close_on_timeout).
     """
     try:
-        from trading.config import EXECUTION_MODE
+        from trading.config import EXECUTION_MODE, AUTO_TRADING_ENABLE
         if (EXECUTION_MODE or "").strip().lower() == "live":
             return True, "live_mode"
+        if AUTO_TRADING_ENABLE:
+            return True, "auto_trading_outcome_via_runner"
     except Exception:
         pass
     try:
@@ -1418,6 +1422,16 @@ def run_watch_for_symbol(
                             stage=st.stage,
                             step="OUTCOME",
                             extra={"event_id": str(event_id), "reason": "EXECUTION_MODE=live"},
+                        )
+                    elif skip_reason == "auto_trading_outcome_via_runner":
+                        log_info(
+                            logger,
+                            "WATCHER_OUTCOME_SKIPPED_LIVE",
+                            symbol=cfg.symbol,
+                            run_id=run_id,
+                            stage=st.stage,
+                            step="OUTCOME",
+                            extra={"event_id": str(event_id), "reason": "AUTO_TRADING_ENABLE=outcome_via_runner"},
                         )
                     else:
                         log_info(
