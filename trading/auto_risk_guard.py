@@ -10,6 +10,7 @@ from trading.config import (
     AUTO_RISK_GUARD_ENABLE,
     AUTO_RISK_GUARD_ENFORCE,
     AUTO_RISK_GUARD_STATE_PATH,
+    EXECUTION_MODE,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,14 +166,11 @@ def is_entry_allowed_for_signal(signal: Any, risk_profile_name: str) -> Tuple[bo
     """
     Enforcement hook for runner/broker.
 
-    - When AUTO_RISK_GUARD_ENABLE is false  -> always allow, no I/O.
-    - When AUTO_RISK_GUARD_ENABLE is true and ENFORCE is false -> always allow, but
-      we still read state and log the current guard mode (dry-run).
-    - When ENFORCE is true -> DISABLED and RECOVERY modes block live entries.
+    - When risk_profile is not in guard set (mode_name is None) -> allow.
+    - LIVE mode: DISABLED and RECOVERY ALWAYS block, regardless of AUTO_RISK_GUARD_ENABLE/ENFORCE.
+      This is critical: DISABLED = no live orders, period.
+    - Paper mode: respect AUTO_RISK_GUARD_ENABLE and ENFORCE (dry-run vs block).
     """
-    if not AUTO_RISK_GUARD_ENABLE:
-        return True, ""
-
     mode_name = _mode_name_for_signal_and_profile(signal, risk_profile_name)
     if mode_name is None:
         # Guard is only defined for specific боевые режимы; everything else passes through.
@@ -180,6 +178,22 @@ def is_entry_allowed_for_signal(signal: Any, risk_profile_name: str) -> Tuple[bo
 
     entry = get_mode_state(mode_name)
     state = entry.current_state
+
+    # LIVE mode: DISABLED/RECOVERY must ALWAYS block — no reliance on env flags.
+    if (EXECUTION_MODE or "").strip().lower() == "live" and state in {STATE_DISABLED, STATE_RECOVERY}:
+        logger.info(
+            "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s profile=%s state=%s reason=%s",
+            getattr(signal, "strategy", ""),
+            getattr(signal, "symbol", ""),
+            mode_name,
+            state,
+            entry.reason or "guard_disabled",
+        )
+        return False, f"guard_state={state}"
+
+    # Paper mode or ACTIVE/WATCH: respect feature flags
+    if not AUTO_RISK_GUARD_ENABLE:
+        return True, ""
 
     # Dry-run: log state but don't block.
     if not AUTO_RISK_GUARD_ENFORCE:
@@ -192,14 +206,14 @@ def is_entry_allowed_for_signal(signal: Any, risk_profile_name: str) -> Tuple[bo
         )
         return True, ""
 
-    # Enforcement: DISABLED and RECOVERY block live entries; ACTIVE/WATCH allowed.
+    # Enforcement (paper): DISABLED and RECOVERY block
     if state in {STATE_DISABLED, STATE_RECOVERY}:
         logger.info(
-            "AUTO_RISK_GUARD_BLOCKED | mode=%s state=%s strategy=%s symbol=%s reason=%s",
-            mode_name,
-            state,
+            "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s profile=%s state=%s reason=%s",
             getattr(signal, "strategy", ""),
             getattr(signal, "symbol", ""),
+            mode_name,
+            state,
             entry.reason or "",
         )
         return False, f"guard_state={state}"

@@ -433,7 +433,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
         allowed_guard, guard_reason = is_entry_allowed_for_signal(signal, risk_profile_name)
         if not allowed_guard:
             logger.info(
-                "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s risk_profile=%s reason=%s",
+                "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s profile=%s reason=%s",
                 signal.strategy,
                 signal.symbol,
                 risk_profile_name,
