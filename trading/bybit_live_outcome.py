@@ -112,7 +112,22 @@ def _classify_exit_price(
     tp_tol = tp * (1 + tol) if want_side == "Sell" else tp * (1 - tol)
     sl_tol = sl * (1 - tol) if want_side == "Sell" else sl * (1 + tol)
 
+    # Sanity: TP_hit = profit. SHORT profit iff exit < entry; LONG profit iff exit > entry.
+    # If exit is in loss zone, never classify as TP_hit (handles invalid tp>entry for short / tp<entry for long).
     if want_side == "Sell":
+        if exit_price > entry:
+            # Loss: cannot be TP_hit
+            if exit_price >= sl_tol:
+                logger.debug(
+                    "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels symbol=%s exit=%.6f sl=%.6f SHORT SL_hit (exit>=sl-tol, loss_zone)",
+                    symbol or "?", exit_price, sl,
+                )
+                return "SL_hit"
+            logger.info(
+                "LIVE_OUTCOME_INVALID_TP_ZONE | symbol=%s exit=%.6f entry=%.6f tp=%.6f SHORT exit>entry (loss) tp_zone_invalid -> EARLY_EXIT",
+                symbol or "?", exit_price, entry, tp,
+            )
+            return "EARLY_EXIT"
         if exit_price <= tp_tol:
             logger.debug(
                 "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels closed_pnl_based=0 symbol=%s exit=%.6f tp=%.6f SHORT TP_hit (exit<=tp+tol)",
@@ -126,6 +141,19 @@ def _classify_exit_price(
             )
             return "SL_hit"
     else:
+        if exit_price < entry:
+            # Loss: cannot be TP_hit
+            if exit_price <= sl_tol:
+                logger.debug(
+                    "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels symbol=%s exit=%.6f sl=%.6f LONG SL_hit (exit<=sl+tol, loss_zone)",
+                    symbol or "?", exit_price, sl,
+                )
+                return "SL_hit"
+            logger.info(
+                "LIVE_OUTCOME_INVALID_TP_ZONE | symbol=%s exit=%.6f entry=%.6f tp=%.6f LONG exit<entry (loss) tp_zone_invalid -> EARLY_EXIT",
+                symbol or "?", exit_price, entry, tp,
+            )
+            return "EARLY_EXIT"
         if exit_price >= tp_tol:
             logger.debug(
                 "LIVE_OUTCOME_CLASSIFY_BY_LEVELS | source=levels closed_pnl_based=0 symbol=%s exit=%.6f tp=%.6f LONG TP_hit (exit>=tp-tol)",
