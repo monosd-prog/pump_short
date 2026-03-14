@@ -107,6 +107,25 @@ def _dataset_dir(
     return os.path.join("datasets", *rel_parts)
 
 
+def _live_outcome_duplicate(path: str, row: Dict[str, Any]) -> bool:
+    """Return True if trade_id already exists in outcomes_v3.csv (idempotency for live)."""
+    tid = (row.get("trade_id") or row.get("tradeId") or "").strip()
+    if not tid:
+        return False
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "r", newline="", encoding="utf-8", errors="replace") as f:
+            r = csv.DictReader(f)
+            for existing in r:
+                et = (existing.get("trade_id") or existing.get("tradeId") or "").strip()
+                if et == tid:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def _write_row(path: str, row: Dict[str, Any], fieldnames: list[str] | None = None) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     file_exists = os.path.isfile(path)
@@ -276,10 +295,19 @@ def write_outcome_row(
     if not row.get("outcome_time_utc"):
         row["outcome_time_utc"] = wall_time_utc
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir, path_mode=pm)
+    mode_for_path = pm if pm in ("paper", "live") else _get_exec_mode()
     _log_dataset_write_once("outcome", strategy, pm or exec_mode, dir_path, base_dir, row_mode, row)
     if schema_version == 3:
         path = os.path.join(dir_path, "outcomes_v3.csv")
         row_v3 = normalize_outcome_v3(row)
+        if mode_for_path == "live" and _live_outcome_duplicate(path, row_v3):
+            logging.getLogger(__name__).info(
+                "OUTCOME_DUPLICATE_SKIPPED | strategy=%s trade_id=%s event_id=%s (already in outcomes_v3)",
+                strategy,
+                row_v3.get("trade_id", ""),
+                row_v3.get("event_id", ""),
+            )
+            return
         _write_row(path, row_v3, OUTCOME_FIELDS_V3)
         if os.getenv("DATASET_V1", "1") == "1":
             _write_row(os.path.join(dir_path, "outcomes.csv"), row)
