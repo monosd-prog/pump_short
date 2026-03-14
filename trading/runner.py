@@ -597,28 +597,35 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             signal.strategy, signal.symbol, pid or position_id, entry_log, notional_usd, risk_usd,
         )
 
-        # LIVE_OPEN Telegram: only for successfully opened live positions
+        # LIVE_OPEN Telegram: only after position confirmed on exchange (get_open_position size > 0)
         if EXECUTION_MODE == "live":
-            try:
-                from notifications.tg_format import format_live_open_message
-                from short_pump.telegram import send_telegram
-
-                live_open_msg = format_live_open_message(position)
-                send_telegram(
-                    live_open_msg,
-                    strategy=str(position.get("strategy", signal.strategy or "")),
-                    side=str(position.get("side", signal.side or "SHORT")),
-                    mode="LIVE",
-                    event_id=str(position.get("event_id", signal.event_id or "")),
-                    context_score=getattr(signal, "context_score", None),
-                    entry_ok=True,
-                    formatted=True,
-                )
-            except Exception:
-                logger.exception(
-                    "LIVE_OPEN_TG_FAILED | strategy=%s symbol=%s",
+            if not position.get("confirmed_on_exchange", True):
+                logger.info(
+                    "LIVE_OPEN_SKIPPED_UNCONFIRMED | strategy=%s symbol=%s position_id=%s (position not visible on exchange)",
                     signal.strategy, signal.symbol,
+                    make_position_id(signal.strategy, signal.run_id or "", str(signal.event_id or ""), signal.symbol),
                 )
+            else:
+                try:
+                    from notifications.tg_format import format_live_open_message
+                    from short_pump.telegram import send_telegram
+
+                    live_open_msg = format_live_open_message(position)
+                    send_telegram(
+                        live_open_msg,
+                        strategy=str(position.get("strategy", signal.strategy or "")),
+                        side=str(position.get("side", signal.side or "SHORT")),
+                        mode="LIVE",
+                        event_id=str(position.get("event_id", signal.event_id or "")),
+                        context_score=getattr(signal, "context_score", None),
+                        entry_ok=True,
+                        formatted=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "LIVE_OPEN_TG_FAILED | strategy=%s symbol=%s",
+                        signal.strategy, signal.symbol,
+                    )
 
         save_state(state)
     finally:

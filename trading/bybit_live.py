@@ -913,14 +913,20 @@ class BybitLiveBroker:
                 return None
 
         # Use actual fill price for outcome resolution (closed-pnl matches avgEntryPrice)
+        # Require position visible on exchange (size > 0) for LIVE_OPEN; else skip TG to avoid false LIVE_OPEN
         actual_entry = entry_price
+        pos = None
         try:
             pos = self.get_open_position(symbol, side)
             if pos and float(pos.get("avgPrice") or 0) > 0:
                 actual_entry = float(pos["avgPrice"])
                 logger.info("LIVE_ENTRY_ACTUAL | symbol=%s avgPrice=%.6f (from exchange)", symbol, actual_entry)
+            if pos is None:
+                time.sleep(1)
+                pos = self.get_open_position(symbol, side)
         except Exception as e:
             logger.debug("LIVE_ENTRY_ACTUAL | symbol=%s fallback to signal entry: %s", symbol, e)
+        confirmed_on_exchange = pos is not None and float(pos.get("size") or 0) > 0
 
         from trading.state import make_position_id
         strategy = getattr(signal, "strategy", "") or ""
@@ -945,5 +951,6 @@ class BybitLiveBroker:
             "mode": "live",
             "order_id": order_id,
             "position_idx": position_idx,
+            "confirmed_on_exchange": confirmed_on_exchange,
         }
         return position
