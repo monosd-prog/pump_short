@@ -441,6 +441,104 @@ def record_tpsl_failed_closed(
         logger.warning("TPSL_FAILED_TG_SEND_FAILED | strategy=%s symbol=%s: %s", strategy, symbol, e)
 
 
+def record_guard_blocked_paper(
+    signal: Any,
+    risk_profile_name: str,
+    guard_reason: str,
+) -> None:
+    """
+    Record a PAPER observation when AUTO_RISK_GUARD blocks a signal.
+    No position opened, no order, no LIVE_OPEN. Only analytical paper trace in datasets.
+    Writes to datasets/date=.../strategy=.../mode=paper/outcomes_v3.csv with outcome=GUARD_BLOCKED.
+    """
+    _write_guard_blocked_paper_to_datasets(signal, risk_profile_name, guard_reason)
+
+
+def _write_guard_blocked_paper_to_datasets(
+    signal: Any,
+    risk_profile_name: str,
+    guard_reason: str,
+    base_dir: Optional[str] = None,
+) -> None:
+    """Write GUARD_BLOCKED paper outcome to datasets. Safe: no order, no state change."""
+    try:
+        from common.outcome_tracker import build_outcome_row
+        from common.io_dataset import write_outcome_row
+    except ImportError:
+        logger.debug("_write_guard_blocked_paper_to_datasets: skip (no common)")
+        return
+
+    strategy = (getattr(signal, "strategy", "") or "").strip()
+    symbol = (getattr(signal, "symbol", "") or "").strip()
+    if not strategy or not symbol:
+        return
+
+    entry = getattr(signal, "entry_price", None) or 0.0
+    tp = getattr(signal, "tp_price", None) or 0.0
+    sl = getattr(signal, "sl_price", None) or 0.0
+    if not entry or not tp or not sl:
+        logger.debug("record_guard_blocked_paper: skip missing entry/tp/sl")
+        return
+
+    run_id = str(getattr(signal, "run_id", "") or "")
+    event_id = str(getattr(signal, "event_id", "") or "")
+    side = (getattr(signal, "side", "") or "SHORT").strip()
+    opened_ts = str(getattr(signal, "ts_utc", "") or "")
+
+    from datetime import datetime, timezone
+    ts_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000000+00:00")
+    trade_id = make_position_id(strategy, run_id, event_id, symbol)
+
+    summary = {
+        "end_reason": "GUARD_BLOCKED",
+        "outcome": "GUARD_BLOCKED",
+        "pnl_pct": 0.0,
+        "hold_seconds": 0.0,
+        "mae_pct": 0.0,
+        "mfe_pct": 0.0,
+        "entry_price": float(entry),
+        "tp_price": tp,
+        "sl_price": sl,
+        "exit_price": float(entry),
+        "pnl_r": 0.0,
+        "pnl_usd": 0.0,
+        "opened_ts": opened_ts,
+        "trade_type": "PAPER",
+        "risk_profile": risk_profile_name or "",
+        "details_payload": json.dumps({
+            "guard_blocked": True,
+            "reason": guard_reason or "",
+        }, ensure_ascii=False),
+    }
+
+    orow = build_outcome_row(
+        summary,
+        trade_id=trade_id,
+        event_id=event_id,
+        run_id=run_id,
+        symbol=symbol,
+        strategy=strategy,
+        mode="paper",
+        side=side,
+        outcome_time_utc=ts_utc,
+    )
+    if orow:
+        orow["outcome_source"] = "guard_blocked_paper"
+        write_outcome_row(
+            orow,
+            strategy=strategy,
+            mode="paper",
+            wall_time_utc=ts_utc,
+            schema_version=3,
+            base_dir=base_dir or DATASET_BASE_DIR,
+            path_mode="paper",
+        )
+        logger.info(
+            "GUARD_BLOCKED_PAPER_RECORDED | strategy=%s symbol=%s run_id=%s event_id=%s profile=%s",
+            strategy, symbol, run_id, event_id, risk_profile_name,
+        )
+
+
 def _write_live_outcome_to_datasets(
     position: dict[str, Any],
     close_reason: str,

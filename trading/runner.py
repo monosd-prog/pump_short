@@ -57,7 +57,7 @@ from trading.risk import (
     validate_stop_distance,
     can_open,
 )
-from trading.paper_outcome import close_on_timeout
+from trading.paper_outcome import close_on_timeout, record_guard_blocked_paper
 from trading.signal_io import signal_from_dict
 from trading.state import (
     count_open_positions,
@@ -439,6 +439,13 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 risk_profile_name,
                 guard_reason,
             )
+            try:
+                record_guard_blocked_paper(signal, risk_profile_name, guard_reason)
+            except Exception as e:
+                logger.warning(
+                    "GUARD_BLOCKED_PAPER_RECORD_FAILED | strategy=%s symbol=%s: %s",
+                    signal.strategy, signal.symbol, e,
+                )
             _finish_queue_processing(raw_lines)
             save_state(state)
             return
