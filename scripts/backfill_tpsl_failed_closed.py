@@ -106,7 +106,7 @@ def main() -> None:
         return
 
     from trading.paper_outcome import record_tpsl_failed_closed
-    record_tpsl_failed_closed(position, signal)
+    record_tpsl_failed_closed(position, signal, outcome_source="backfill")
     print("OK: TPSL_FAILED_CLOSED backfilled for", run_id, symbol)
 
 

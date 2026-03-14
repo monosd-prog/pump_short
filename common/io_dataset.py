@@ -132,7 +132,7 @@ def _write_row(path: str, row: Dict[str, Any], fieldnames: list[str] | None = No
     with open(path, "a", newline="", encoding="utf-8") as f:
         if fieldnames is None:
             fieldnames = list(row.keys())
-        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         if not file_exists:
             w.writeheader()
         w.writerow(row)
@@ -308,7 +308,16 @@ def write_outcome_row(
                 row_v3.get("event_id", ""),
             )
             return
-        _write_row(path, row_v3, OUTCOME_FIELDS_V3)
+        fieldnames = OUTCOME_FIELDS_V3
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", newline="", encoding="utf-8", errors="replace") as f:
+                    header = next(csv.reader(f), [])
+                    if "outcome_source" not in header:
+                        fieldnames = [f for f in OUTCOME_FIELDS_V3 if f != "outcome_source"]
+            except Exception:
+                pass
+        _write_row(path, row_v3, fieldnames)
         if os.getenv("DATASET_V1", "1") == "1":
             _write_row(os.path.join(dir_path, "outcomes.csv"), row)
     elif schema_version >= 2:

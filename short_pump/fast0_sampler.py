@@ -404,6 +404,7 @@ def _run_fast0_outcome_watcher(
             outcome_time_utc=outcome_time_utc,
         )
         if orow:
+            orow["outcome_source"] = "fast0"
             write_outcome_row(
                 orow,
                 strategy=STRATEGY,

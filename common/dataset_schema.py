@@ -97,6 +97,7 @@ OUTCOME_FIELDS_V3 = OUTCOME_FIELDS_V2 + [
     "notional_usd",
     "leverage",
     "margin_mode",
+    "outcome_source",
 ]
 
 
@@ -193,5 +194,6 @@ def normalize_outcome_v3(row: Dict[str, Any]) -> Dict[str, Any]:
             "outcome": row.get("end_reason") or row.get("outcome") or "UNKNOWN",
             "details_json": row.get("details_payload") or row.get("details_json") or "",
             "source_mode": row.get("source_mode", ""),
+            "outcome_source": row.get("outcome_source", ""),
         },
     )

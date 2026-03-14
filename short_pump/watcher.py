@@ -235,6 +235,7 @@ def _ds_outcome(
         "outcome": outcome,
         "pnl_pct": pnl_pct,
         "details_json": details_json,
+        "outcome_source": "watcher",
     }
     try:
         write_outcome_row(row, strategy="short_pump", mode="live", wall_time_utc=outcome_time_utc, schema_version=3)
@@ -1593,6 +1594,7 @@ def run_watch_for_symbol(
                         },
                     )
                     if outcome_row is not None:
+                        outcome_row["outcome_source"] = "watcher"
                         try:
                             details_obj = json.loads(outcome_row.get("details_json") or "{}")
                             if "entry_time_wall_utc" not in details_obj or "outcome_time_wall_utc" not in details_obj:

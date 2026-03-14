@@ -368,6 +368,7 @@ def record_tpsl_failed_closed(
     signal: Any,
     *,
     log_path: Optional[str] = None,
+    outcome_source: str = "tpsl_failed_closed",
 ) -> None:
     """
     Record a live case where entry filled but TPSL setup failed and position was force-closed.
@@ -416,6 +417,7 @@ def record_tpsl_failed_closed(
         pnl_r=pnl_r,
         pnl_pct=pnl_pct,
         outcome_ts_utc=ts_utc,
+        outcome_source=outcome_source,
     )
     try:
         from notifications.tg_format import format_tpsl_failed_closed_message
@@ -447,6 +449,8 @@ def _write_live_outcome_to_datasets(
     pnl_pct: float,
     outcome_ts_utc: str,
     base_dir: Optional[str] = None,
+    *,
+    outcome_source: str = "live_outcome_worker",
 ) -> None:
     """Write live close to datasets/outcomes_v3.csv with trade_type=LIVE."""
     try:
@@ -541,6 +545,7 @@ def _write_live_outcome_to_datasets(
         outcome_time_utc=outcome_ts_utc,
     )
     if orow:
+        orow["outcome_source"] = outcome_source
         write_outcome_row(
             orow,
             strategy=strategy,
@@ -631,6 +636,7 @@ def close_from_outcome(
         position, close_reason, exit_price, pnl_r, ts_utc,
         mfe_pct=outcome_meta.get("mfe_pct") if outcome_meta else None,
         mae_pct=outcome_meta.get("mae_pct") if outcome_meta else None,
+        outcome_source="paper_close",
     )
     return True
 
@@ -653,6 +659,8 @@ def _write_paper_outcome_to_datasets(
     mfe_pct: Optional[float] = None,
     mae_pct: Optional[float] = None,
     base_dir: Optional[str] = None,
+    *,
+    outcome_source: str = "runner_timeout",
 ) -> None:
     """Write paper close to datasets/outcomes_v3.csv so analytics stays identical to live."""
     try:
@@ -721,6 +729,7 @@ def _write_paper_outcome_to_datasets(
         outcome_time_utc=outcome_ts_utc,
     )
     if orow:
+        orow["outcome_source"] = outcome_source
         write_outcome_row(
             orow,
             strategy=strategy,
@@ -893,6 +902,7 @@ def close_on_timeout(
             _write_paper_outcome_to_datasets(
                 position, "timeout", exit_price, pnl_r, ts_str,
                 mfe_pct=0.0, mae_pct=0.0,
+                outcome_source="runner_timeout",
             )
             # Live timeout: send TG outcome just like TP/SL live outcomes.
             # Use TIMEOUT as outcome label; reuse same position fields (risk_profile, notional, leverage, margin, entry/tp/sl).
