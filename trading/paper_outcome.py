@@ -748,6 +748,32 @@ def _hold_seconds(opened_ts: str, outcome_ts_utc: str) -> float:
     return max(0.0, (out_dt - open_dt).total_seconds())
 
 
+def _paper_outcome_final_already_written(
+    strategy: str,
+    mode: str,
+    trade_id: str,
+    event_id: str,
+    base_dir: Optional[str],
+    ts_utc_list: list[str],
+) -> bool:
+    """Return True if any outcomes file for the given dates already has a final outcome for this trade/event."""
+    try:
+        from common.io_dataset import get_dataset_dir, paper_outcome_final_in_file
+    except ImportError:
+        return False
+    for ts in ts_utc_list:
+        if not (ts or str(ts).strip()):
+            continue
+        try:
+            dir_path = get_dataset_dir(strategy, ts, base_dir=base_dir or "", path_mode=mode)
+            path = str(Path(dir_path) / "outcomes_v3.csv")
+            if paper_outcome_final_in_file(path, trade_id, event_id):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _write_paper_outcome_to_datasets(
     position: dict[str, Any],
     close_reason: str,
@@ -776,6 +802,15 @@ def _write_paper_outcome_to_datasets(
     event_id = (position.get("event_id") or "") or ""
     trade_id = make_position_id(strategy, run_id, event_id, symbol)
     mode = position.get("mode", "live")
+    outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "TIMEOUT")
+    if outcome_str in ("TP_hit", "SL_hit", "TIMEOUT"):
+        ts_list = [outcome_ts_utc, (position.get("opened_ts") or "").strip()]
+        if _paper_outcome_final_already_written(strategy, mode, trade_id, event_id, base_dir, ts_list):
+            logger.info(
+                "PAPER_OUTCOME_SKIPPED_ALREADY_FINAL | strategy=%s trade_id=%s event_id=%s outcome=%s",
+                strategy, trade_id, event_id, outcome_str,
+            )
+            return
     opened_ts = position.get("opened_ts", "")
     hold_sec = _hold_seconds(opened_ts, outcome_ts_utc)
     if entry <= 0:
@@ -784,7 +819,6 @@ def _write_paper_outcome_to_datasets(
         pnl_pct = (entry - exit_price) / entry * 100.0
     else:
         pnl_pct = (exit_price - entry) / entry * 100.0
-    outcome_str = "TP_hit" if close_reason == "tp" else ("SL_hit" if close_reason == "sl" else "TIMEOUT")
     pos_mode = (position.get("mode") or "paper").strip().lower()
     trade_type = "LIVE" if pos_mode == "live" else "PAPER"
     notional = float(position.get("notional_usd") or 0)
@@ -907,6 +941,27 @@ def close_on_timeout(
             if age_sec < ttl:
                 continue
             mode_val = (position.get("mode") or "").strip().lower()
+            # Paper: if a final outcome (TP/SL/TIMEOUT) already written (e.g. by candle path), skip timeout write
+            if mode_val == "paper":
+                ts_str = now_dt.strftime("%Y-%m-%d %H:%M:%S+00:00")
+                trade_id_check = make_position_id(
+                    strategy,
+                    position.get("run_id", "") or "",
+                    str(position.get("event_id", "") or ""),
+                    position.get("symbol", "") or "",
+                )
+                event_id_check = (position.get("event_id") or "") or ""
+                ts_list = [ts_str, opened_ts]
+                if _paper_outcome_final_already_written(
+                    strategy, "paper", trade_id_check, event_id_check, DATASET_BASE_DIR, ts_list
+                ):
+                    logger.info(
+                        "PAPER_TIMEOUT_SKIPPED_ALREADY_RESOLVED | strategy=%s symbol=%s run_id=%s event_id=%s position_id=%s",
+                        strategy, position.get("symbol", ""), position.get("run_id", ""), position.get("event_id", ""), position_id,
+                    )
+                    record_close(state, strategy, position_id, "already_resolved", float(position.get("entry", 0)), 0.0, 0.0, ts_str)
+                    any_closed = True
+                    continue
             if mode_val == "live":
                 from trading.state import outcome_tg_sent, make_position_id
                 key = make_position_id(

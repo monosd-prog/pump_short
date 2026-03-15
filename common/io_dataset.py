@@ -107,6 +107,37 @@ def _dataset_dir(
     return os.path.join("datasets", *rel_parts)
 
 
+# Final outcomes: once written, no second final outcome for same trade (idempotency for paper).
+PAPER_FINAL_OUTCOMES = ("TP_hit", "SL_hit", "TIMEOUT")
+
+
+def paper_outcome_final_in_file(path: str, trade_id: str, event_id: str) -> bool:
+    """
+    Return True if outcomes_v3.csv at path already contains a row with this trade_id or event_id
+    and outcome in (TP_hit, SL_hit, TIMEOUT). Used to avoid duplicate paper outcome writes.
+    """
+    if not path or not os.path.isfile(path):
+        return False
+    tid = (trade_id or "").strip()
+    eid = (event_id or "").strip()
+    if not tid and not eid:
+        return False
+    try:
+        with open(path, "r", newline="", encoding="utf-8", errors="replace") as f:
+            r = csv.DictReader(f)
+            for existing in r:
+                out = (existing.get("outcome") or "").strip()
+                if out not in PAPER_FINAL_OUTCOMES:
+                    continue
+                et = (existing.get("trade_id") or existing.get("tradeId") or "").strip()
+                ev = (existing.get("event_id") or "").strip()
+                if (tid and et == tid) or (eid and ev == eid):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def _live_outcome_duplicate(path: str, row: Dict[str, Any]) -> bool:
     """Return True if trade_id already exists in outcomes_v3.csv (idempotency for live)."""
     tid = (row.get("trade_id") or row.get("tradeId") or "").strip()
@@ -308,6 +339,19 @@ def write_outcome_row(
                 row_v3.get("event_id", ""),
             )
             return
+        if (row_mode == "paper" or pm == "paper") and (row_v3.get("outcome") or "").strip() in PAPER_FINAL_OUTCOMES:
+            if paper_outcome_final_in_file(
+                path,
+                row_v3.get("trade_id") or row_v3.get("tradeId") or "",
+                row_v3.get("event_id") or "",
+            ):
+                logging.getLogger(__name__).info(
+                    "PAPER_OUTCOME_DUPLICATE_SKIPPED | strategy=%s trade_id=%s event_id=%s (final outcome already in file)",
+                    strategy,
+                    row_v3.get("trade_id", ""),
+                    row_v3.get("event_id", ""),
+                )
+                return
         fieldnames = OUTCOME_FIELDS_V3
         if os.path.isfile(path):
             try:
