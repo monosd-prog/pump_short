@@ -352,15 +352,31 @@ def _run_fast0_outcome_watcher(
                     )
                     return
             else:
-                # no_position / no_order_id: do NOT candle fallback; outcome worker will resolve if position appears.
-                fallback_reason = "no_position" if not position else "no_order_id"
-                logger.info(
-                    "UNKNOWN_LIVE_NOT_RESOLVED | reason=%s | symbol=%s run_id=%s | no candle fallback",
-                    fallback_reason, symbol, run_id,
-                )
-                return
+                # position exists but no order_id = guard-blocked paper position (DISABLED → paper on)
+                if position and not position.get("order_id"):
+                    pos_mode = (position.get("mode") or "").strip().lower()
+                    if pos_mode == "paper":
+                        logger.info(
+                            "GUARD_BLOCKED_PAPER_OUTCOME | symbol=%s run_id=%s | running candle outcome path (path_mode=paper)",
+                            symbol, run_id,
+                        )
+                        mode = "paper"  # use paper path for outcome write
+                    else:
+                        fallback_reason = "no_order_id"
+                        logger.info(
+                            "UNKNOWN_LIVE_NOT_RESOLVED | reason=%s | symbol=%s run_id=%s | no candle fallback",
+                            fallback_reason, symbol, run_id,
+                        )
+                        return
+                else:
+                    # no_position: outcome worker will resolve if position appears
+                    logger.info(
+                        "UNKNOWN_LIVE_NOT_RESOLVED | reason=no_position | symbol=%s run_id=%s | no candle fallback",
+                        symbol, run_id,
+                    )
+                    return
 
-        # Paper only: candle-based outcome. Live outcomes resolved by outcome worker (Bybit only).
+        # Paper outcome path: candle-based TP/SL/TIMEOUT. Also used for guard-blocked (position.mode=paper).
         if (mode or "").strip().lower() == "live":
             return
 
@@ -405,6 +421,8 @@ def _run_fast0_outcome_watcher(
         )
         if orow:
             orow["outcome_source"] = "fast0"
+            if (mode or "").strip().lower() == "paper":
+                orow["trade_type"] = "PAPER"
             write_outcome_row(
                 orow,
                 strategy=STRATEGY,
@@ -495,10 +513,10 @@ def _run_fast0_outcome_watcher(
                             )
                         except Exception:
                             log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
-            # Paper: close position on OUTCOME (TP_hit/SL_hit)
+            # Paper: close position on OUTCOME (TP_hit/SL_hit). Also for guard-blocked (position.mode=paper).
             try:
                 from trading.config import AUTO_TRADING_ENABLE, MODE
-                if AUTO_TRADING_ENABLE and MODE == "paper":
+                if AUTO_TRADING_ENABLE and (MODE == "paper" or (mode or "").strip().lower() == "paper"):
                     from trading.paper_outcome import close_from_outcome
                     close_from_outcome(
                         strategy=STRATEGY,

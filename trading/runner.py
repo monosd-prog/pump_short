@@ -247,6 +247,82 @@ def run_once(*, dry_run_live: bool = False) -> None:
                 pass
 
 
+def _open_guard_blocked_paper_position(
+    signal: Any,
+    risk_profile_name: str,
+    guard_reason: str,
+    state: dict,
+    equity: float,
+    entry_f: float,
+    tp: float,
+    sl_f: float,
+    stop_distance_pct: float,
+    risk_mult: float,
+    last_signal_ids: dict,
+) -> None:
+    """
+    DISABLED = live off, paper on. Open paper position when guard blocks.
+    No exchange order, no LIVE_OPEN. Outcome will be resolved by outcome watcher (TP/SL/TIMEOUT).
+    """
+    paper_equity = PAPER_EQUITY_USD
+    fixed_override = FIXED_POSITION_USD * risk_mult if risk_profile_name and FIXED_POSITION_USD > 0 else None
+    notional_usd, risk_usd, reject_reason = calc_position_size(
+        entry_f, sl_f, paper_equity, signal.symbol or "", RISK_PCT, stop_distance_pct,
+        risk_usd_override=None, fixed_notional_override=fixed_override,
+    )
+    if reject_reason:
+        logger.debug("_open_guard_blocked_paper: sizing reject %s", reject_reason)
+        return
+    paper_broker = get_broker("paper")
+    position = paper_broker.open_position(
+        signal,
+        qty_notional_usd=notional_usd,
+        risk_usd=risk_usd,
+        leverage=LEVERAGE,
+        opened_ts=signal.ts_utc or "",
+    )
+    if position is None:
+        logger.debug("_open_guard_blocked_paper: paper broker rejected")
+        return
+    position["mode"] = "paper"
+    position["risk_profile"] = risk_profile_name
+    position = _normalize_position_for_record(
+        position, signal=signal,
+        notional_usd=notional_usd, risk_usd=risk_usd,
+        entry_f=entry_f, tp=tp, sl_f=sl_f, leverage_use=LEVERAGE,
+    )
+    position["mode"] = "paper"
+    pid = record_open(state, position)
+    if pid:
+        lst = last_signal_ids.setdefault(signal.strategy, [])
+        if not isinstance(lst, list):
+            lst = [lst] if lst else []
+        if pid not in lst:
+            lst.append(pid)
+        last_signal_ids[signal.strategy] = lst
+    _append_trade_row(
+        ts=signal.ts_utc or "",
+        strategy=signal.strategy,
+        symbol=signal.symbol,
+        side=signal.side or "SHORT",
+        entry=entry_f,
+        tp=tp,
+        sl=sl_f,
+        notional_usd=notional_usd,
+        risk_usd=risk_usd,
+        stop_pct=stop_distance_pct,
+        run_id=position.get("run_id", signal.run_id or ""),
+        event_id=str(position.get("event_id", signal.event_id or "")),
+        volume_1m=getattr(signal, "volume_1m", None),
+        volume_sma_20=getattr(signal, "volume_sma_20", None),
+        volume_zscore_20=getattr(signal, "volume_zscore_20", None),
+    )
+    logger.info(
+        "GUARD_BLOCKED_PAPER_OPENED | strategy=%s symbol=%s position_id=%s entry=%.4f (paper, no live order)",
+        signal.strategy, signal.symbol, pid or _dedupe_key(signal), entry_f,
+    )
+
+
 def _normalize_position_for_record(
     position: dict,
     *,
@@ -433,19 +509,26 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
         allowed_guard, guard_reason = is_entry_allowed_for_signal(signal, risk_profile_name)
         if not allowed_guard:
             logger.info(
-                "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s profile=%s reason=%s",
+                "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s profile=%s reason=%s → paper trade path",
                 signal.strategy,
                 signal.symbol,
                 risk_profile_name,
                 guard_reason,
             )
             try:
-                record_guard_blocked_paper(signal, risk_profile_name, guard_reason)
+                _open_guard_blocked_paper_position(
+                    signal, risk_profile_name, guard_reason, state, equity, entry_f, tp, sl_f,
+                    stop_distance_pct, risk_mult, last_signal_ids,
+                )
             except Exception as e:
                 logger.warning(
-                    "GUARD_BLOCKED_PAPER_RECORD_FAILED | strategy=%s symbol=%s: %s",
+                    "GUARD_BLOCKED_PAPER_OPEN_FAILED | strategy=%s symbol=%s: %s",
                     signal.strategy, signal.symbol, e,
                 )
+                try:
+                    record_guard_blocked_paper(signal, risk_profile_name, guard_reason)
+                except Exception as e2:
+                    logger.debug("record_guard_blocked_paper fallback failed: %s", e2)
             _finish_queue_processing(raw_lines)
             save_state(state)
             return

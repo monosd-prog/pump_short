@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -99,6 +100,133 @@ def _watcher_should_skip_outcome_live(
     except Exception:
         pass
     return False, ""
+
+
+def _run_short_pump_guard_blocked_outcome_watcher(
+    *,
+    cfg: Config,
+    run_id: str,
+    event_id: str,
+    trade_id: str,
+    symbol: str,
+    entry_ts_utc: pd.Timestamp,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    entry_source: str,
+    entry_type: str,
+    entry_snapshot: Dict[str, Any],
+    entry_payload: Dict[str, Any],
+) -> None:
+    """
+    Daemon thread: wait for position, if guard-blocked paper (mode=paper, no order_id)
+    run track_outcome + write to paper + close_from_outcome. Mirrors fast0 guard-blocked path.
+    """
+    from trading.state import load_state, make_position_id
+
+    STRATEGY = "short_pump"
+    wait_sec = 0
+    max_wait = 60
+    poll_interval = 5
+    position = None
+    while wait_sec < max_wait:
+        try:
+            state = load_state()
+            open_positions = state.get("open_positions") or {}
+            strat_pos = open_positions.get(STRATEGY) or {}
+            pid = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
+            position = strat_pos.get(pid) if isinstance(strat_pos, dict) else None
+            if not position:
+                for _k, p in (strat_pos.items() if isinstance(strat_pos, dict) else []):
+                    if not isinstance(p, dict):
+                        continue
+                    if p.get("symbol") != symbol or p.get("run_id") != run_id:
+                        continue
+                    if str(p.get("event_id") or "") != str(event_id or ""):
+                        continue
+                    position = p
+                    break
+        except Exception:
+            position = None
+        if position:
+            if position.get("order_id") and position.get("position_idx") is not None:
+                return  # live position, outcome_worker handles
+            if (position.get("mode") or "").strip().lower() == "paper":
+                break  # guard-blocked paper, run outcome path
+        time.sleep(poll_interval)
+        wait_sec += poll_interval
+    if not position or (position.get("mode") or "").strip().lower() != "paper":
+        return
+    log_info(
+        logger,
+        "GUARD_BLOCKED_PAPER_OUTCOME",
+        symbol=symbol,
+        run_id=run_id,
+        step="OUTCOME",
+        extra={"event_id": event_id, "reason": "short_pump paper position, running candle outcome"},
+    )
+    try:
+        summary = track_outcome_short(
+            cfg=cfg,
+            entry_ts_utc=entry_ts_utc,
+            entry_price=entry_price,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            entry_source=entry_source,
+            entry_type=entry_type,
+            run_id=run_id,
+            symbol=symbol,
+        )
+        end_reason = summary.get("end_reason") or summary.get("outcome") or "TIMEOUT"
+        outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+        hold_sec = summary.get("hold_seconds") or 0.0
+        summary["hold_seconds"] = max(1.0, hold_sec)
+        orow = build_outcome_row(
+            summary,
+            trade_id=trade_id,
+            event_id=event_id,
+            run_id=run_id,
+            symbol=symbol,
+            strategy=STRATEGY,
+            mode="paper",
+            side="SHORT",
+            outcome_time_utc=outcome_time_utc,
+            entry_snapshot=entry_snapshot,
+            extra_details={
+                "entry_mode": cfg.entry_mode,
+                "context_score": entry_snapshot.get("context_score"),
+            },
+        )
+        if orow:
+            orow["outcome_source"] = "watcher_guard_blocked"
+            orow["trade_type"] = "PAPER"
+            orow["risk_profile"] = position.get("risk_profile") or "short_pump_active_1R"
+            write_outcome_row(
+                orow,
+                strategy=STRATEGY,
+                mode="paper",
+                wall_time_utc=outcome_time_utc,
+                schema_version=3,
+                path_mode="paper",
+            )
+        from trading.paper_outcome import close_from_outcome
+        close_from_outcome(
+                strategy=STRATEGY,
+                symbol=symbol,
+                run_id=run_id,
+                event_id=str(event_id),
+                res=end_reason,
+                pnl_pct=summary.get("pnl_pct"),
+                ts_utc=outcome_time_utc,
+                outcome_meta={
+                    "mfe_pct": summary.get("mfe_pct"),
+                    "mae_pct": summary.get("mae_pct"),
+                    "mfe_r": summary.get("mfe_r"),
+                    "mae_r": summary.get("mae_r"),
+                },
+            )
+    except Exception as e:
+        log_exception(logger, "GUARD_BLOCKED_PAPER_OUTCOME_ERROR", symbol=symbol, run_id=run_id, step="OUTCOME", extra={"error": str(e)})
 
 
 def _ds_event(
@@ -1424,6 +1552,27 @@ def run_watch_for_symbol(
                             step="OUTCOME",
                             extra={"event_id": str(event_id), "reason": "EXECUTION_MODE=live"},
                         )
+                        t = threading.Thread(
+                            target=_run_short_pump_guard_blocked_outcome_watcher,
+                            kwargs={
+                                "cfg": cfg,
+                                "run_id": run_id,
+                                "event_id": str(event_id),
+                                "trade_id": str(trade_id),
+                                "symbol": cfg.symbol,
+                                "entry_ts_utc": entry_ts_utc,
+                                "entry_price": entry_price,
+                                "tp_price": tp_price,
+                                "sl_price": sl_price,
+                                "entry_source": entry_source,
+                                "entry_type": entry_type,
+                                "entry_snapshot": entry_snapshot,
+                                "entry_payload": entry_payload,
+                            },
+                            name=f"short_pump_guard_blocked_{cfg.symbol}_{trade_id[:20]}",
+                            daemon=True,
+                        )
+                        t.start()
                     elif skip_reason == "auto_trading_outcome_via_runner":
                         log_info(
                             logger,
@@ -1434,7 +1583,29 @@ def run_watch_for_symbol(
                             step="OUTCOME",
                             extra={"event_id": str(event_id), "reason": "AUTO_TRADING_ENABLE=outcome_via_runner"},
                         )
+                        t = threading.Thread(
+                            target=_run_short_pump_guard_blocked_outcome_watcher,
+                            kwargs={
+                                "cfg": cfg,
+                                "run_id": run_id,
+                                "event_id": str(event_id),
+                                "trade_id": str(trade_id),
+                                "symbol": cfg.symbol,
+                                "entry_ts_utc": entry_ts_utc,
+                                "entry_price": entry_price,
+                                "tp_price": tp_price,
+                                "sl_price": sl_price,
+                                "entry_source": entry_source,
+                                "entry_type": entry_type,
+                                "entry_snapshot": entry_snapshot,
+                                "entry_payload": entry_payload,
+                            },
+                            name=f"short_pump_guard_blocked_{cfg.symbol}_{trade_id[:20]}",
+                            daemon=True,
+                        )
+                        t.start()
                     else:
+                        # already_finalized - do not spawn, outcome already processed
                         log_info(
                             logger,
                             "WATCHER_OUTCOME_ALREADY_FINALIZED",
