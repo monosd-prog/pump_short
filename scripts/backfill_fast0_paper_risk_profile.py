@@ -8,6 +8,8 @@ Lookup order for source of risk_profile (liq_long_usd_30s, dist_to_peak_pct):
   b) mode=live events by event_id (FAST0 paper outcomes are driven by live FAST0 events)
   c) mode=live trades by trade_id/event_id/run_id as fallback, then resolve event from live events
 Then get_risk_profile("short_pump_fast0", liq_long_usd_30s=..., dist_to_peak_pct=...) to set risk_profile.
+If get_risk_profile returns empty (historical fast0 rules no longer match), fallback by liq only:
+  liq > 100k -> fast0_2R; 5k < liq <= 25k -> fast0_1p5R; liq <= 5k -> fast0_base_1R.
 Only updates rows where risk_profile is empty/NaN. Safe to run multiple times (idempotent).
 
 Usage:
@@ -138,6 +140,22 @@ def _resolve_event_row_for_outcome(
     return None
 
 
+# Historical fallback: liq-only buckets when get_risk_profile returns empty (old fast0 rules).
+# Used only inside this backfill script; do not change runtime/live risk_profile logic.
+_HISTORICAL_LIQ_5K = 5000.0
+_HISTORICAL_LIQ_25K = 25000.0
+_HISTORICAL_LIQ_100K = 100000.0
+
+
+def _historical_risk_profile_from_liq(liq_f: float) -> str:
+    """Infer risk_profile from liq_long_usd_30s only for old paper outcomes that no longer match get_risk_profile."""
+    if liq_f > _HISTORICAL_LIQ_100K:
+        return "fast0_2R"
+    if liq_f > _HISTORICAL_LIQ_5K and liq_f <= _HISTORICAL_LIQ_25K:
+        return "fast0_1p5R"
+    return "fast0_base_1R"
+
+
 def _get_risk_profile_for_row(event_row: dict) -> str:
     try:
         from trading.risk_profile import get_risk_profile
@@ -156,7 +174,12 @@ def _get_risk_profile_for_row(event_row: dict) -> str:
             liq_long_usd_30s=liq_f,
             dist_to_peak_pct=dist_f,
         )
-        return (rp or "").strip()
+        rp = (rp or "").strip()
+        if rp:
+            return rp
+        # Fallback for historical paper outcomes: current get_risk_profile can return empty
+        # (old fast0 rules / dist checks). Use liq-only buckets; do not use dist as blocking.
+        return _historical_risk_profile_from_liq(liq_f)
     except Exception:
         return ""
 
