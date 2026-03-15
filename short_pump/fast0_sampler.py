@@ -408,6 +408,21 @@ def _run_fast0_outcome_watcher(
         summary["hold_seconds"] = max(1.0, hold_sec)
         pnl = summary.get("pnl_pct")
         summary["pnl_pct"] = float(pnl) if pnl is not None else 0.0
+        # PAPER outcomes must have risk_profile so analytics/report can split by submode (fast0_base_1R, fast0_2R, etc.)
+        if not summary.get("risk_profile") and (mode or "").strip().lower() == "paper":
+            try:
+                from trading.risk_profile import get_risk_profile
+                _rp, _, _ = get_risk_profile(
+                    "short_pump_fast0",
+                    liq_long_usd_30s=liq_long_usd_30s if liq_long_usd_30s is not None else 0,
+                    dist_to_peak_pct=dist_to_peak_pct,
+                )
+                summary["risk_profile"] = (_rp or "").strip()
+            except Exception:
+                log_exception(logger, "FAST0_PAPER_RISK_PROFILE", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+                summary["risk_profile"] = ""
+        elif not summary.get("risk_profile"):
+            summary["risk_profile"] = ""
         orow = build_outcome_row(
             summary,
             trade_id=trade_id,
