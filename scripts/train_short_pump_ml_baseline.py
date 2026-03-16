@@ -466,6 +466,10 @@ def main() -> None:
     "model_score_logreg": scores_lr,
     "model_score_rf": scores_rf,
   })
+  # Sort predictions by time for easier analysis.
+  if "outcome_time_utc" in out_df.columns:
+    out_df["outcome_time_utc"] = pd.to_datetime(out_df["outcome_time_utc"], errors="coerce", utc=True)
+    out_df = out_df.sort_values("outcome_time_utc")
   out_path = reports_dir / "short_pump_ml_test_predictions.csv"
   out_df.to_csv(out_path, index=False)
   print(f"Test predictions written to: {out_path}")

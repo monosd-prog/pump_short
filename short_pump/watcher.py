@@ -265,6 +265,9 @@ def _ds_event(
         "context_score": context_score if context_score is not None else "",
         "price": pl.get("price", ""),
         "dist_to_peak_pct": float(pl.get("dist_to_peak_pct") or 0.0),
+        # Pre-entry delta ratios from short_pump.entry payload (analysis-only logging).
+        "delta_ratio_30s": pl.get("delta_ratio_30s", ""),
+        "delta_ratio_1m": pl.get("delta_ratio_1m", ""),
         "cvd_delta_ratio_30s": pl.get("cvd_delta_ratio_30s", ""),
         "cvd_delta_ratio_1m": pl.get("cvd_delta_ratio_1m", ""),
         "oi_change_5m_pct": (extra or {}).get("oi_change_5m_pct", ""),
