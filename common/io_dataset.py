@@ -139,9 +139,13 @@ def paper_outcome_final_in_file(path: str, trade_id: str, event_id: str) -> bool
 
 
 def _live_outcome_duplicate(path: str, row: Dict[str, Any]) -> bool:
-    """Return True if trade_id already exists in outcomes_v3.csv (idempotency for live)."""
+    """
+    Return True if an outcome row for the same trade_id or event_id already exists in outcomes_v3.csv.
+    Used as idempotency guard for live outcomes (e.g. retries in outcome workers).
+    """
     tid = (row.get("trade_id") or row.get("tradeId") or "").strip()
-    if not tid:
+    eid = (row.get("event_id") or "").strip()
+    if not tid and not eid:
         return False
     if not os.path.isfile(path):
         return False
@@ -150,7 +154,10 @@ def _live_outcome_duplicate(path: str, row: Dict[str, Any]) -> bool:
             r = csv.DictReader(f)
             for existing in r:
                 et = (existing.get("trade_id") or existing.get("tradeId") or "").strip()
-                if et == tid:
+                ev = (existing.get("event_id") or "").strip()
+                if tid and et == tid:
+                    return True
+                if eid and ev and ev == eid:
                     return True
     except Exception:
         pass
