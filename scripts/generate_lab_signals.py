@@ -30,6 +30,51 @@ class LabSignal:
     source: str
 
 
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    msg = str(exc)
+    return ("10006" in msg) or ("Too many visits" in msg) or ("too many visits" in msg)
+
+
+def _fetch_klines_with_retry(
+    *,
+    category: str,
+    symbol: str,
+    end_ms: int,
+    limit: int,
+    max_retries: int,
+    base_sleep_sec: float,
+    debug: bool,
+) -> Tuple[Optional[pd.DataFrame], str]:
+    """
+    Returns (df_or_none, status):
+      - status="ok" on success
+      - status="rate_limited" if exhausted retries due to retCode=10006
+      - status="error" for other failures
+    """
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            df = get_klines_1m_range(category, symbol, start_ms=None, end_ms=end_ms, limit=limit)
+            return df, "ok"
+        except Exception as e:
+            last_exc = e
+            if _is_rate_limit_error(e):
+                sleep_sec = base_sleep_sec * (2 ** (attempt - 1))
+                if debug:
+                    print(
+                        f"[RATE_LIMIT] symbol={symbol} attempt={attempt}/{max_retries} "
+                        f"sleep_sec={sleep_sec:.1f} err={type(e).__name__}"
+                    )
+                time.sleep(sleep_sec)
+                continue
+            if debug:
+                print(f"[ERROR] symbol={symbol} kline_fetch_failed err={type(e).__name__} msg={str(e)[:200]}")
+            return None, "error"
+    if debug and last_exc is not None:
+        print(f"[RATE_LIMIT] symbol={symbol} exhausted_retries err={type(last_exc).__name__} msg={str(last_exc)[:200]}")
+    return None, "rate_limited"
+
+
 def _utc_now() -> pd.Timestamp:
     return pd.Timestamp.now(tz="UTC")
 
@@ -46,8 +91,10 @@ def _fetch_1m_klines_days(
     symbol: str,
     days: int,
     limit: int = 1000,
-    sleep_ms: int = 0,
+    sleep_ms: int = 200,
     debug: bool = False,
+    max_retries: int = 5,
+    retry_base_sleep_sec: float = 1.0,
 ) -> pd.DataFrame:
     """
     Fetch ~days of 1m candles with simple pagination (Bybit limit is typically 1000 rows).
@@ -64,8 +111,19 @@ def _fetch_1m_klines_days(
     guard = 0
     while end_cursor > start_ms and guard < 2000:
         guard += 1
-        df = get_klines_1m_range(category, symbol, start_ms=None, end_ms=end_cursor, limit=limit)
-        if df is None or df.empty:
+        df, status = _fetch_klines_with_retry(
+            category=category,
+            symbol=symbol,
+            end_ms=end_cursor,
+            limit=limit,
+            max_retries=max_retries,
+            base_sleep_sec=retry_base_sleep_sec,
+            debug=debug,
+        )
+        if df is None:
+            # rate-limited or hard error: keep already fetched frames and stop symbol gracefully
+            break
+        if df.empty:
             break
         df = df.sort_values("ts").reset_index(drop=True)
         frames.append(df)
@@ -134,8 +192,17 @@ def generate_signals_for_symbol(
     debug: bool = False,
     mode: str = "prodlike",
     top_k_explore: int = 50,
+    sleep_ms: int = 200,
+    max_retries: int = 5,
 ) -> list[LabSignal]:
-    df = _fetch_1m_klines_days(category=category, symbol=symbol, days=days, debug=debug)
+    df = _fetch_1m_klines_days(
+        category=category,
+        symbol=symbol,
+        days=days,
+        debug=debug,
+        sleep_ms=sleep_ms,
+        max_retries=max_retries,
+    )
     if df is None or df.empty or len(df) <= lookback_min:
         if debug:
             print(f"[DEBUG] symbol={symbol} candles=0 (or <=lookback) days={days}")
@@ -224,6 +291,8 @@ def main() -> None:
     ap.add_argument("--debug", action="store_true", help="Print debug stats per symbol")
     ap.add_argument("--mode", default="prodlike", choices=["prodlike", "explore"], help="prodlike: threshold-based; explore: emit top moves when none")
     ap.add_argument("--top-k", type=int, default=50, help="Explore mode: emit top-K moves per symbol (default: 50)")
+    ap.add_argument("--sleep-ms", type=int, default=200, help="Sleep between kline chunks in ms (default: 200)")
+    ap.add_argument("--max-retries", type=int, default=5, help="Max retries on rate limit (default: 5)")
     args = ap.parse_args()
 
     symbols = [s.strip().upper() for s in args.symbols if s.strip()]
@@ -248,6 +317,8 @@ def main() -> None:
             debug=bool(args.debug),
             mode=str(args.mode),
             top_k_explore=int(args.top_k),
+            sleep_ms=int(args.sleep_ms),
+            max_retries=int(args.max_retries),
         )
         per_symbol_counts[sym] = len(sigs)
         all_signals.extend(sigs)
