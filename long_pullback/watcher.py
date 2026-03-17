@@ -261,6 +261,16 @@ def run_watch_for_symbol(
                                     entry_ok=True,
                                     skip_reasons=None,
                                     formatted=True,
+                                    meta={
+                                        "kind": "ENTRY_OK",
+                                        "exec_mode": "live",
+                                        "risk_profile": "",
+                                        "symbol": symbol,
+                                        "entry_price": float(price) if price is not None else 0.0,
+                                        "tp_price": tp_price,
+                                        "sl_price": sl_price,
+                                        "context_score": ctx_score,
+                                    },
                                 )
                             except Exception:
                                 logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)
@@ -470,6 +480,18 @@ def run_watch_for_symbol(
                                             entry_ok=True,
                                             skip_reasons=None,
                                             formatted=True,
+                                            meta={
+                                                "kind": "OUTCOME",
+                                                "exec_mode": "live",
+                                                "risk_profile": "",
+                                                "symbol": symbol,
+                                                "entry_price": entry_snapshot.get("entry_price"),
+                                                "tp_price": entry_snapshot.get("tp_price"),
+                                                "sl_price": entry_snapshot.get("sl_price"),
+                                                "exit_price": summary.get("exit_price"),
+                                                "pnl_pct": summary.get("pnl_pct"),
+                                                "context_score": entry_snapshot.get("context_score"),
+                                            },
                                         )
                                     except Exception:
                                         logger.exception("LONG_TG_SEND_ERROR | symbol=%s", symbol)

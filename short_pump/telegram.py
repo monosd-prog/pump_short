@@ -101,6 +101,7 @@ def send_telegram(
     entry_ok: bool,
     skip_reasons: str | None = None,
     formatted: bool = False,
+    meta: dict | None = None,
 ) -> None:
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
@@ -112,8 +113,91 @@ def send_telegram(
         score_val = float(context_score) if context_score is not None else 0.0
         eid = (event_id or "")[:8] or "--------"
 
+        meta = meta or {}
+        kind = (meta.get("kind") or "").strip().upper()
+        exec_mode = (meta.get("exec_mode") or "").strip().lower()
+        risk_profile = (meta.get("risk_profile") or "").strip()
+        symbol = (meta.get("symbol") or "").strip()
+        entry_price = meta.get("entry_price")
+        exit_price = meta.get("exit_price")
+        tp_price = meta.get("tp_price")
+        sl_price = meta.get("sl_price")
+        pnl_pct = meta.get("pnl_pct")
+        notional_usd = meta.get("notional_usd")
+        leverage = meta.get("leverage")
+        margin_mode = (meta.get("margin_mode") or "").strip()
+        dist_to_peak_pct = meta.get("dist_to_peak_pct")
+        liq_long_usd_30s = meta.get("liq_long_usd_30s")
+
+        def _fmt(val, digits: int = 4) -> str:
+            if val is None:
+                return "n/a"
+            try:
+                return f"{float(val):.{digits}f}"
+            except (TypeError, ValueError):
+                return "n/a"
+
+        def _fmt_pct(val) -> str:
+            if val is None:
+                return "n/a"
+            try:
+                return f"{float(val):.2f}%"
+            except (TypeError, ValueError):
+                return "n/a"
+
+        header_parts: list[str] = []
+        if kind:
+            header_parts.append(kind)
+        else:
+            header_parts.append("EVENT")
+        if exec_mode:
+            header_parts.append(f"mode={exec_mode}")
+        header_parts.append(f"strategy={strategy_name}")
+        if risk_profile:
+            header_parts.append(f"risk_profile={risk_profile}")
+        header_parts.append(f"side={side_up}")
+        if symbol:
+            header_parts.append(f"symbol={symbol}")
+        header_parts.append(f"eid={eid}")
+
+        second_parts: list[str] = []
+        if entry_price is not None:
+            second_parts.append(f"entry={_fmt(entry_price)}")
+        if tp_price is not None:
+            second_parts.append(f"tp={_fmt(tp_price)}")
+        if sl_price is not None:
+            second_parts.append(f"sl={_fmt(sl_price)}")
+        if exit_price is not None:
+            second_parts.append(f"exit={_fmt(exit_price)}")
+        if pnl_pct is not None:
+            second_parts.append(f"pnl={_fmt_pct(pnl_pct)}")
+        if notional_usd is not None:
+            try:
+                second_parts.append(f"notional={float(notional_usd):.0f} USD")
+            except (TypeError, ValueError):
+                second_parts.append(f"notional={notional_usd}")
+        if leverage is not None:
+            second_parts.append(f"lev=x{_fmt(leverage, 0)}")
+        if margin_mode:
+            second_parts.append(f"margin={margin_mode}")
+        if dist_to_peak_pct is not None:
+            second_parts.append(f"dist_to_peak={_fmt(dist_to_peak_pct, 2)}%")
+        if liq_long_usd_30s is not None:
+            try:
+                second_parts.append(f"liqL30s={float(liq_long_usd_30s):.0f} USD")
+            except (TypeError, ValueError):
+                second_parts.append(f"liqL30s={liq_long_usd_30s}")
+        if context_score is not None:
+            second_parts.append(f"context_score={score_val:.2f}")
+
         if formatted:
-            lines = [text] if text else []
+            lines: list[str] = []
+            header_line = f"{emoji} " + " | ".join(header_parts)
+            lines.append(header_line)
+            if second_parts:
+                lines.append(" | ".join(second_parts))
+            if text:
+                lines.append(text)
         else:
             header = f"{emoji} {side_up} | {strategy_name} | {mode_up} | score={score_val:.2f} | eid={eid}"
             lines = [header]

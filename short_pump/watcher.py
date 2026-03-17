@@ -211,6 +211,35 @@ def _run_short_pump_guard_blocked_outcome_watcher(
                 schema_version=3,
                 path_mode="paper",
             )
+        try:
+            from short_pump.telegram import send_telegram as _send_tg
+            rp = str(position.get("risk_profile") or "short_pump_active_1R")
+            _send_tg(
+                "",
+                strategy=STRATEGY,
+                side="SHORT",
+                mode="PAPER",
+                event_id=str(event_id),
+                context_score=summary.get("context_score"),
+                entry_ok=True,
+                formatted=True,
+                meta={
+                    "kind": "GUARD_BLOCKED_PAPER",
+                    "exec_mode": "paper",
+                    "risk_profile": rp,
+                    "symbol": symbol,
+                    "entry_price": entry_price,
+                    "tp_price": tp_price,
+                    "sl_price": sl_price,
+                    "exit_price": summary.get("exit_price"),
+                    "pnl_pct": summary.get("pnl_pct"),
+                    "dist_to_peak_pct": entry_snapshot.get("dist_to_peak_pct"),
+                    "liq_long_usd_30s": entry_snapshot.get("liq_long_usd_30s"),
+                    "context_score": entry_snapshot.get("context_score"),
+                },
+            )
+        except Exception:
+            log_exception(logger, "GUARD_BLOCKED_PAPER_TG_ERROR", symbol=symbol, run_id=run_id, step="OUTCOME")
         from trading.paper_outcome import close_from_outcome
         close_from_outcome(
                 strategy=STRATEGY,
@@ -1514,6 +1543,20 @@ def run_watch_for_symbol(
                     entry_source = entry_payload.get("entry_source", "unknown")
                     mode = "FAST" if entry_source == "fast" else "ARMED"
                     context_score_msg = entry_payload.get("context_score", context_score)
+                    # Compute risk_profile for ENTRY_OK (for TG only; trading logic uses runner)
+                    try:
+                        from trading.risk_profile import get_risk_profile as _get_risk_profile_sp
+                        _rp_entry, _, _ = _get_risk_profile_sp(
+                            "short_pump",
+                            stage=st.stage,
+                            dist_to_peak_pct=dist_to_peak,
+                            liq_long_usd_30s=entry_payload.get("liq_long_usd_30s"),
+                            context_score=context_score_msg,
+                            event_id=str(event_id),
+                            symbol=cfg.symbol,
+                        )
+                    except Exception:
+                        _rp_entry = ""
                     sig = build_short_pump_signal(
                         strategy="short_pump",
                         side="SHORT",
@@ -1549,6 +1592,18 @@ def run_watch_for_symbol(
                         entry_ok=True,
                         skip_reasons=None,
                         formatted=True,
+                        meta={
+                            "kind": "ENTRY_OK",
+                            "exec_mode": (cfg.mode or "").strip().lower() or "paper",
+                            "risk_profile": _rp_entry or "",
+                            "symbol": cfg.symbol,
+                            "entry_price": entry_price,
+                            "tp_price": tp_price,
+                            "sl_price": sl_price,
+                            "dist_to_peak_pct": dist_to_peak,
+                            "liq_long_usd_30s": entry_payload.get("liq_long_usd_30s"),
+                            "context_score": context_score_msg,
+                        },
                     )
                     # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)
                     try:
@@ -1881,6 +1936,23 @@ def run_watch_for_symbol(
                                     entry_ok=True,
                                     skip_reasons=None,
                                     formatted=True,
+                                    meta={
+                                        "kind": "OUTCOME",
+                                        "exec_mode": (cfg.mode or "").strip().lower() or "paper",
+                                        "risk_profile": _rp or "",
+                                        "symbol": cfg.symbol,
+                                        "entry_price": summary.get("entry_price") or entry_snapshot.get("entry_price"),
+                                        "tp_price": entry_snapshot.get("tp_price"),
+                                        "sl_price": entry_snapshot.get("sl_price"),
+                                        "exit_price": summary.get("exit_price"),
+                                        "pnl_pct": summary.get("pnl_pct"),
+                                        "notional_usd": _nt if _nt > 0 else None,
+                                        "leverage": _lev,
+                                        "margin_mode": _mm,
+                                        "dist_to_peak_pct": entry_payload.get("dist_to_peak_pct"),
+                                        "liq_long_usd_30s": entry_payload.get("liq_long_usd_30s"),
+                                        "context_score": context_score_msg,
+                                    },
                                 )
                         except Exception as e:
                             log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")

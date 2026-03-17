@@ -712,6 +712,18 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                         context_score=getattr(signal, "context_score", None),
                         entry_ok=True,
                         formatted=True,
+                        meta={
+                            "kind": "LIVE_OPEN",
+                            "exec_mode": "live",
+                            "risk_profile": str(position.get("risk_profile") or ""),
+                            "symbol": str(position.get("symbol") or signal.symbol or ""),
+                            "entry_price": position.get("entry"),
+                            "tp_price": position.get("tp"),
+                            "sl_price": position.get("sl"),
+                            "notional_usd": position.get("notional_usd"),
+                            "leverage": position.get("leverage"),
+                            "margin_mode": position.get("margin_mode") or "",
+                        },
                     )
                 except Exception:
                     logger.exception(

@@ -292,7 +292,33 @@ def _run_fast0_outcome_watcher(
                                         risk_profile=_rp or None, notional_usd=_nt if _nt > 0 else None,
                                         leverage=_lev, margin_mode=_mm,
                                     )
-                                    send_telegram(msg, strategy=STRATEGY, side="SHORT", mode="FAST0", event_id=event_id, context_score=ctx_val, entry_ok=True, formatted=True)
+                                    send_telegram(
+                                        msg,
+                                        strategy=STRATEGY,
+                                        side="SHORT",
+                                        mode="FAST0",
+                                        event_id=event_id,
+                                        context_score=ctx_val,
+                                        entry_ok=True,
+                                        formatted=True,
+                                        meta={
+                                            "kind": "OUTCOME",
+                                            "exec_mode": "paper",
+                                            "risk_profile": _rp or "",
+                                            "symbol": symbol,
+                                            "entry_price": entry_price,
+                                            "tp_price": tp_price,
+                                            "sl_price": sl_price,
+                                            "exit_price": exit_price_val,
+                                            "pnl_pct": pnl_val,
+                                            "notional_usd": _nt if _nt > 0 else None,
+                                            "leverage": _lev,
+                                            "margin_mode": _mm,
+                                            "dist_to_peak_pct": dist_val,
+                                            "liq_long_usd_30s": liq_long_usd_30s,
+                                            "context_score": ctx_val,
+                                        },
+                                    )
                                 except Exception:
                                     log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
                         return
@@ -481,6 +507,23 @@ def _run_fast0_outcome_watcher(
                                 context_score=ctx_val if ctx_val else None,
                                 entry_ok=True,
                                 formatted=True,
+                                meta={
+                                    "kind": "OUTCOME",
+                                    "exec_mode": (mode or "").strip().lower() or "paper",
+                                    "risk_profile": _rp or "",
+                                    "symbol": symbol,
+                                    "entry_price": entry_price,
+                                    "tp_price": tp_price,
+                                    "sl_price": sl_price,
+                                    "exit_price": exit_price_val,
+                                    "pnl_pct": pnl_val,
+                                    "notional_usd": _nt if _nt > 0 else None,
+                                    "leverage": _lev,
+                                    "margin_mode": _mm,
+                                    "dist_to_peak_pct": dist_val if dist_val else None,
+                                    "liq_long_usd_30s": liq_val,
+                                    "context_score": ctx_val if ctx_val else None,
+                                },
                             )
                         except Exception:
                             log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
@@ -769,6 +812,20 @@ def run_fast0_for_symbol(
                             )
                         else:
                             try:
+                                # Compute fast0 risk_profile for ENTRY_OK (TG only; trading logic uses runner)
+                                try:
+                                    from trading.risk_profile import get_risk_profile as _get_risk_profile_f0
+                                    _rp_entry, _, _ = _get_risk_profile_f0(
+                                        "short_pump_fast0",
+                                        dist_to_peak_pct=dist_to_peak,
+                                        liq_long_usd_30s=liq_long_usd_30s,
+                                        context_score=context_score,
+                                        volume_1m=volume_1m_val,
+                                        event_id=str(event_id),
+                                        symbol=cfg.symbol,
+                                    )
+                                except Exception:
+                                    _rp_entry = ""
                                 send_telegram(
                                     format_tg(sig),
                                     strategy=STRATEGY,
@@ -778,6 +835,18 @@ def run_fast0_for_symbol(
                                     context_score=context_score,
                                     entry_ok=True,
                                     formatted=True,
+                                    meta={
+                                        "kind": "ENTRY_OK",
+                                        "exec_mode": (mode or "").strip().lower() or "paper",
+                                        "risk_profile": _rp_entry or "",
+                                        "symbol": cfg.symbol,
+                                        "entry_price": entry_price,
+                                        "tp_price": tp_price,
+                                        "sl_price": sl_price,
+                                        "dist_to_peak_pct": dist_to_peak,
+                                        "liq_long_usd_30s": liq_long_usd_30s,
+                                        "context_score": context_score,
+                                    },
                                 )
                             except Exception:
                                 log_exception(logger, "FAST0_TG_SEND_ERROR", symbol=cfg.symbol, run_id=run_id, step="FAST0")
