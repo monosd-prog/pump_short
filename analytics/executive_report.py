@@ -528,7 +528,6 @@ def _filter_lines_short_pump_mid() -> list[str]:
 def _filter_lines_short_pump_deep() -> list[str]:
     return [
         "strategy = short_pump",
-        "stage = 3",
         "dist ∈ [7.5, 10)%",
         "context_score ∈ [0.40, 0.60)",
         "liqL30s = 0",
@@ -1099,7 +1098,7 @@ def build_executive_compact_report(
         )
         if prog:
             if gst_sp == "WATCH":
-                lines.append("        live-входы пока разрешены")
+                lines.append("        live-входы запрещены (paper only)")
             lines.append(f"        {prog}")
             if gst_sp == "WATCH":
                 lines.append(f"        {_guard_progress_watch_to_active(trades_neg_sp, DECISION_WINDOW_VERDICT)}")
@@ -1147,7 +1146,7 @@ def build_executive_compact_report(
         )
         if prog:
             if gst_sp_legacy == "WATCH":
-                lines.append("        live-входы пока разрешены")
+                lines.append("        live-входы запрещены (paper only)")
             lines.append(f"        {prog}")
             if gst_sp_legacy == "WATCH":
                 lines.append(f"        {_guard_progress_watch_to_active(trades_neg_sp, DECISION_WINDOW_VERDICT)}")
