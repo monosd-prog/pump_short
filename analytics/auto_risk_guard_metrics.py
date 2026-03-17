@@ -81,9 +81,12 @@ def build_guard_metrics_by_mode(
     Build GuardModeMetrics for боевые режимы:
 
     - short_pump_active_1R  (short_pump ACTIVE Base 1R: stage=4, dist>=tg_dist_min)
+    - short_pump_mid        (short_pump MID: dist in [3.5,5), cs in [0.4,0.6))
+    - short_pump_deep       (short_pump DEEP: stage=3, dist in [7.5,10), cs in [0.4,0.6), liqL30s=0)
     - fast0_base_1R         (dist<=1.5, liq=0)
     - fast0_1p5R            (dist<=1.5, 5k<liq<=25k)
     - fast0_2R              (dist<=1.5, liq>100k)
+    - fast0_selective       (fast0 selective: cs in [0.4,0.6), optional vol1m>1e6 when present)
 
     Uses the same filters and math as executive_report.
     """
@@ -100,6 +103,38 @@ def build_guard_metrics_by_mode(
     else:
         metrics["short_pump_active_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
 
+    # SHORT_PUMP MID / DEEP (prefer risk_profile label; fallback to feature filters)
+    if df_sp is not None and not df_sp.empty:
+        rp = df_sp["risk_profile"].astype(str).str.strip().str.lower() if "risk_profile" in df_sp.columns else pd.Series([""] * len(df_sp), index=df_sp.index)
+        has_rp = (rp != "") & (rp != "nan")
+
+        # MID
+        by_rp_mid = has_rp & (rp == "short_pump_mid")
+        if "dist_to_peak_pct" in df_sp.columns and "context_score" in df_sp.columns:
+            dist = pd.to_numeric(df_sp["dist_to_peak_pct"], errors="coerce")
+            cs = pd.to_numeric(df_sp["context_score"], errors="coerce")
+            fb_mid = (~has_rp) & dist.notna() & cs.notna() & (dist >= 3.5) & (dist < 5.0) & (cs >= 0.4) & (cs < 0.6)
+        else:
+            fb_mid = pd.Series([False] * len(df_sp), index=df_sp.index)
+        sub_mid = df_sp[(by_rp_mid | fb_mid) & _core_mask(df_sp["outcome"])].copy() if "outcome" in df_sp.columns else pd.DataFrame()
+        metrics["short_pump_mid"] = _metrics_for_subset(sub_mid, rolling_n)
+
+        # DEEP
+        by_rp_deep = has_rp & (rp == "short_pump_deep")
+        if "stage" in df_sp.columns and "dist_to_peak_pct" in df_sp.columns and "context_score" in df_sp.columns and "liq_long_usd_30s" in df_sp.columns:
+            st = pd.to_numeric(df_sp["stage"], errors="coerce")
+            dist = pd.to_numeric(df_sp["dist_to_peak_pct"], errors="coerce")
+            cs = pd.to_numeric(df_sp["context_score"], errors="coerce")
+            liq = pd.to_numeric(df_sp["liq_long_usd_30s"], errors="coerce")
+            fb_deep = (~has_rp) & st.notna() & dist.notna() & cs.notna() & liq.notna() & (st == 3) & (dist >= 7.5) & (dist < 10.0) & (cs >= 0.4) & (cs < 0.6) & (liq == 0)
+        else:
+            fb_deep = pd.Series([False] * len(df_sp), index=df_sp.index)
+        sub_deep = df_sp[(by_rp_deep | fb_deep) & _core_mask(df_sp["outcome"])].copy() if "outcome" in df_sp.columns else pd.DataFrame()
+        metrics["short_pump_deep"] = _metrics_for_subset(sub_deep, rolling_n)
+    else:
+        metrics["short_pump_mid"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
+        metrics["short_pump_deep"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
+
     # FAST0 modes (core subset + liq/dist buckets identical to executive_report)
     df_f0 = df_fast0_enriched.copy() if df_fast0_enriched is not None else None
     if df_f0 is not None and not df_f0.empty and "outcome" in df_f0.columns:
@@ -113,9 +148,21 @@ def build_guard_metrics_by_mode(
         ]:
             sub = df_f0_core[mask_fn(df_f0_core)]
             metrics[mode_name] = _metrics_for_subset(sub, rolling_n)
+
+        # FAST0 SELECTIVE (prefer risk_profile label; fallback to context_score window)
+        rp = df_f0["risk_profile"].astype(str).str.strip().str.lower() if "risk_profile" in df_f0.columns else pd.Series([""] * len(df_f0), index=df_f0.index)
+        has_rp = (rp != "") & (rp != "nan")
+        by_rp = has_rp & (rp == "fast0_selective")
+        if "context_score" in df_f0.columns:
+            cs = pd.to_numeric(df_f0["context_score"], errors="coerce")
+            fb = (~has_rp) & cs.notna() & (cs >= 0.4) & (cs < 0.6)
+        else:
+            fb = pd.Series([False] * len(df_f0), index=df_f0.index)
+        sub_sel = df_f0_core[by_rp.loc[df_f0_core.index] | fb.loc[df_f0_core.index]]
+        metrics["fast0_selective"] = _metrics_for_subset(sub_sel, rolling_n)
     else:
         # No FAST0 data: still populate keys with empty metrics for safety
-        for mode_name in ("fast0_base_1R", "fast0_1p5R", "fast0_2R"):
+        for mode_name in ("fast0_base_1R", "fast0_1p5R", "fast0_2R", "fast0_selective"):
             metrics[mode_name] = _metrics_for_subset(pd.DataFrame(), rolling_n)
 
     return metrics

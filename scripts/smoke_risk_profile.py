@@ -74,6 +74,34 @@ def main() -> None:
     assert profile3 == "", f"expected no profile for stage3, got {profile3}"
     print("OK: short_pump stage3 -> reject")
 
+    # 1b. short_pump_mid: dist in [3.5,5) and cs in [0.4,0.6) -> short_pump_mid
+    sig_mid = _signal("short_pump", stage=4, dist_to_peak_pct=4.2, context_score=0.5)
+    profile_mid, risk_mid, _ = get_risk_profile(
+        "short_pump",
+        stage=sig_mid.stage,
+        dist_to_peak_pct=sig_mid.dist_to_peak_pct,
+        liq_long_usd_30s=sig_mid.liq_long_usd_30s,
+        context_score=sig_mid.context_score,
+        symbol="XUSDT",
+    )
+    assert profile_mid == "short_pump_mid", f"expected short_pump_mid, got {profile_mid}"
+    assert 0 < risk_mid <= 1.0, f"expected reduced risk_mult for short_pump_mid, got {risk_mid}"
+    print("OK: short_pump dist[3.5,5) cs[0.4,0.6) -> short_pump_mid")
+
+    # 1c. short_pump_deep: stage=3, dist in [7.5,10), cs in [0.4,0.6), liqL30s=0 -> short_pump_deep
+    sig_deep = _signal("short_pump", stage=3, dist_to_peak_pct=8.0, context_score=0.5, liq_long_usd_30s=0)
+    profile_deep, risk_deep, _ = get_risk_profile(
+        "short_pump",
+        stage=sig_deep.stage,
+        dist_to_peak_pct=sig_deep.dist_to_peak_pct,
+        liq_long_usd_30s=sig_deep.liq_long_usd_30s,
+        context_score=sig_deep.context_score,
+        symbol="XUSDT",
+    )
+    assert profile_deep == "short_pump_deep", f"expected short_pump_deep, got {profile_deep}"
+    assert 0 < risk_deep <= 1.0, f"expected reduced risk_mult for short_pump_deep, got {risk_deep}"
+    print("OK: short_pump stage=3 dist[7.5,10) cs[0.4,0.6) liq=0 -> short_pump_deep")
+
     # 2a. fast0 liq=0 dist=1.0 -> fast0_base_1R (pass)
     sig_b = _signal("short_pump_fast0", liq_long_usd_30s=0, dist_to_peak_pct=1.0)
     ok_b, _ = allow_entry_short_pump_fast0(sig_b)
@@ -82,6 +110,20 @@ def main() -> None:
     assert profile_b == "fast0_base_1R", f"expected fast0_base_1R, got {profile_b}"
     assert risk_b == 1.0, f"expected risk_mult=1.0, got {risk_b}"
     print("OK: fast0 liq=0 dist=1.0 -> fast0_base_1R, 1R")
+
+    # 2a2. fast0_selective: cs in [0.4,0.6), optional vol filter (ignored when None) -> fast0_selective
+    sig_sel = _signal("short_pump_fast0", liq_long_usd_30s=0, dist_to_peak_pct=1.0, context_score=0.5)
+    profile_sel, risk_sel, _ = get_risk_profile(
+        "short_pump_fast0",
+        liq_long_usd_30s=sig_sel.liq_long_usd_30s,
+        dist_to_peak_pct=sig_sel.dist_to_peak_pct,
+        context_score=sig_sel.context_score,
+        volume_1m=None,
+        symbol="XUSDT",
+    )
+    assert profile_sel == "fast0_selective", f"expected fast0_selective, got {profile_sel}"
+    assert 0 < risk_sel <= 1.0, f"expected reduced risk_mult for fast0_selective, got {risk_sel}"
+    print("OK: fast0 cs[0.4,0.6) -> fast0_selective (volume filter optional)")
 
     # 2b. fast0 liq=2k dist=1.0 -> reject (liq not in bucket)
     sig_b2 = _signal("short_pump_fast0", liq_long_usd_30s=2000, dist_to_peak_pct=1.0)

@@ -56,6 +56,8 @@ def _get_risk_profile_line(signal: Signal) -> str | None:
             stage=getattr(signal, "stage", None),
             dist_to_peak_pct=getattr(signal, "dist_to_peak_pct", None),
             liq_long_usd_30s=getattr(signal, "liq_long_usd_30s", None),
+            context_score=getattr(signal, "context_score", None),
+            volume_1m=getattr(signal, "volume_1m", None),
             event_id=str(getattr(signal, "event_id", "") or ""),
             trade_id="",
             symbol=signal.symbol or "",

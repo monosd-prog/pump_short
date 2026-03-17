@@ -459,6 +459,19 @@ def _fast0_mode_mask_2r(df: pd.DataFrame) -> pd.Series:
     return by_profile | fallback
 
 
+def _fast0_mode_mask_selective(df: pd.DataFrame) -> pd.Series:
+    """Prefer risk_profile when present; fallback to context_score window."""
+    rp = df["risk_profile"].astype(str).str.strip() if "risk_profile" in df.columns else pd.Series([""] * len(df), index=df.index)
+    has_rp = rp.notna() & (rp != "") & (rp != "nan")
+    by_profile = has_rp & (rp.str.lower() == "fast0_selective")
+    if "context_score" in df.columns:
+        cs = pd.to_numeric(df["context_score"], errors="coerce")
+        fb = (~has_rp) & cs.notna() & (cs >= 0.4) & (cs < 0.6)
+    else:
+        fb = pd.Series([False] * len(df), index=df.index)
+    return by_profile | fb
+
+
 def _timeout_count(df: pd.DataFrame) -> int:
     """Count TIMEOUT outcomes in df. Returns 0 if df empty or no outcome column."""
     if df is None or df.empty or "outcome" not in df.columns:
@@ -473,12 +486,62 @@ def _filter_lines_short_pump_active(tg_dist_min: float) -> list[str]:
     return ["stage = 4", f"dist ≥ {d}%", "liq = 0"]
 
 
+def _filter_lines_short_pump_mid() -> list[str]:
+    return [
+        "strategy = short_pump",
+        "dist ∈ [3.5, 5)%",
+        "context_score ∈ [0.40, 0.60)",
+    ]
+
+
+def _filter_lines_short_pump_deep() -> list[str]:
+    return [
+        "strategy = short_pump",
+        "stage = 3",
+        "dist ∈ [7.5, 10)%",
+        "context_score ∈ [0.40, 0.60)",
+        "liqL30s = 0",
+    ]
+
+
+def _short_pump_mode_mask(df: pd.DataFrame, *, mode_name: str) -> pd.Series:
+    """Prefer risk_profile when present; fallback to feature filters for known modes."""
+    rp = df["risk_profile"].astype(str).str.strip().str.lower() if "risk_profile" in df.columns else pd.Series([""] * len(df), index=df.index)
+    has_rp = rp.notna() & (rp != "") & (rp != "nan")
+    by_profile = has_rp & (rp == mode_name.lower())
+    if mode_name == "short_pump_mid":
+        if "dist_to_peak_pct" in df.columns and "context_score" in df.columns:
+            dist = pd.to_numeric(df["dist_to_peak_pct"], errors="coerce")
+            cs = pd.to_numeric(df["context_score"], errors="coerce")
+            fb = (~has_rp) & dist.notna() & cs.notna() & (dist >= 3.5) & (dist < 5.0) & (cs >= 0.4) & (cs < 0.6)
+            return by_profile | fb
+        return by_profile
+    if mode_name == "short_pump_deep":
+        if "stage" in df.columns and "dist_to_peak_pct" in df.columns and "context_score" in df.columns and "liq_long_usd_30s" in df.columns:
+            st = pd.to_numeric(df["stage"], errors="coerce")
+            dist = pd.to_numeric(df["dist_to_peak_pct"], errors="coerce")
+            cs = pd.to_numeric(df["context_score"], errors="coerce")
+            liq = pd.to_numeric(df["liq_long_usd_30s"], errors="coerce")
+            fb = (~has_rp) & st.notna() & dist.notna() & cs.notna() & liq.notna() & (st == 3) & (dist >= 7.5) & (dist < 10.0) & (cs >= 0.4) & (cs < 0.6) & (liq == 0)
+            return by_profile | fb
+        return by_profile
+    return by_profile
+
+
 def _filter_lines_fast0_base() -> list[str]:
     """Filter description for FAST0 BASE (liq=0)."""
     return [
         f"dist ≈ 0.8–{FAST0_OP_DIST_MAX}%",
         "context_score ≥ 0.40",
         "liqL30s = 0",
+    ]
+
+
+def _filter_lines_fast0_selective() -> list[str]:
+    return [
+        f"dist ≈ 0.8–{FAST0_OP_DIST_MAX}%",
+        "context_score ∈ [0.40, 0.60)",
+        "(опц.) volume_1m > 1,000,000 если доступно",
     ]
 
 
@@ -677,11 +740,19 @@ def build_executive_compact_report(
         mode_wr["SHORT_PUMP"] = wr_ac
         mode_mdd["SHORT_PUMP"] = mdd_ac
         mode_guard["SHORT_PUMP"] = _guard_state_str(guard_state, "short_pump_active_1R")
+    # SHORT_PUMP MID/DEEP counts (prefer risk_profile)
+    if df_short_pump is not None and not df_short_pump.empty and "outcome" in df_short_pump.columns:
+        out_sp = df_short_pump["outcome"].apply(_normalize_outcome_raw)
+        df_sp_core_pre = df_short_pump[out_sp.isin(["TP_hit", "SL_hit"])].copy()
+        for gk in ("short_pump_mid", "short_pump_deep"):
+            sub = df_sp_core_pre[_short_pump_mode_mask(df_sp_core_pre, mode_name=gk)]
+            mode_n_core[gk] = int(len(sub))
 
     if df_f0 is not None and not df_f0.empty:
         outcome_f0_pre = df_f0["outcome"].apply(_normalize_outcome_raw)
         df_f0_core_pre = df_f0[outcome_f0_pre.isin(["TP_hit", "SL_hit"])]
         for gk, mask_fn, label in [
+            ("fast0_selective", _fast0_mode_mask_selective, "FAST0 SELECTIVE"),
             ("fast0_base_1R", _fast0_mode_mask_base_1r, "FAST0 BASE"),
             ("fast0_1p5R", _fast0_mode_mask_1p5r, "FAST0 1.5R"),
             ("fast0_2R", _fast0_mode_mask_2r, "FAST0 2R"),
@@ -733,7 +804,15 @@ def build_executive_compact_report(
     lines.append("")
     lines.append("🧠 SYSTEM STATE")
     active_c, watch_c, disabled_c, exper_c = 0, 0, 0, 0
-    for gkey in ("short_pump_active_1R", "fast0_base_1R", "fast0_1p5R", "fast0_2R"):
+    for gkey in (
+        "short_pump_active_1R",
+        "short_pump_mid",
+        "short_pump_deep",
+        "fast0_base_1R",
+        "fast0_1p5R",
+        "fast0_2R",
+        "fast0_selective",
+    ):
         st = _guard_state_str(guard_state, gkey)
         n = mode_n_core.get(gkey, 0)
         if n < EXP_THRESHOLD:
@@ -819,8 +898,107 @@ def build_executive_compact_report(
     # 2.1 SHORT_PUMP — только ACTIVE / WATCH / RECOVERY (не DISABLED)
     lines.append("2.1 SHORT_PUMP")
     lines.append("")
-    gst_sp = _guard_state_str(guard_state, "short_pump_active_1R") if guard_state else None
-    if df_active_core is not None and not df_active_core.empty and gst_sp and gst_sp.upper() not in ("DISABLED",):
+    # Build per-submode subsets (prefer risk_profile)
+    df_sp_all = df_short_pump.copy() if df_short_pump is not None else None
+    df_sp_core = None
+    if df_sp_all is not None and not df_sp_all.empty and "outcome" in df_sp_all.columns:
+        out_sp = df_sp_all["outcome"].apply(_normalize_outcome_raw)
+        df_sp_core = df_sp_all[out_sp.isin(["TP_hit", "SL_hit"])].copy()
+
+    short_pump_live_modes: list[tuple[str, str, callable, pd.DataFrame | None, pd.DataFrame | None]] = [
+        ("SHORT_PUMP MID", "short_pump_mid", _filter_lines_short_pump_mid, df_sp_all, df_sp_core),
+        ("SHORT_PUMP DEEP", "short_pump_deep", _filter_lines_short_pump_deep, df_sp_all, df_sp_core),
+        ("ACTIVE (stage4 + dist≥" + (f"{int(tg_dist_min)}" if tg_dist_min == int(tg_dist_min) else f"{tg_dist_min}") + "%)", "short_pump_active_1R", lambda: _filter_lines_short_pump_active(tg_dist_min), df_active, df_active_core),
+    ]
+
+    live_sp_count = 0
+    for sub_label, guard_key, filter_fn, df_all, df_core in short_pump_live_modes:
+        gst_sp = _guard_state_str(guard_state, guard_key) if guard_state else None
+        if not gst_sp or gst_sp.upper() == "DISABLED":
+            continue
+        # Build subset for metrics
+        sub_core = None
+        sub_all = None
+        if guard_key in ("short_pump_mid", "short_pump_deep") and df_sp_all is not None and df_sp_core is not None:
+            mask_all = _short_pump_mode_mask(df_sp_all, mode_name=guard_key)
+            mask_core = _short_pump_mode_mask(df_sp_core, mode_name=guard_key)
+            sub_all = df_sp_all[mask_all].copy()
+            sub_core = df_sp_core[mask_core].copy()
+        else:
+            sub_all = df_all
+            sub_core = df_core
+
+        live_sp_count += 1
+        lines.append(f"    2.1.{live_sp_count} {sub_label}")
+        lines.append("")
+        lines.append("        🔹 Фильтр")
+        for ln in filter_fn():
+            lines.append(f"        {ln}")
+        lines.append("")
+        if sub_core is None or sub_core.empty:
+            lines.append("        🔹 Метрики")
+            lines.append("        WR: N/A   EV: N/A   EV20: N/A")
+            lines.append("        N: 0 | timeout: 0")
+            lines.append("")
+            lines.append("        🔹 Guard")
+            lines.append(f"        {_guard_emoji_label(gst_sp, 0)}")
+            prog = _guard_progress_text(guard_state, guard_key)
+            if prog:
+                if gst_sp == "WATCH":
+                    lines.append("        live-входы пока разрешены")
+                lines.append(f"        {prog}")
+                if gst_sp == "WATCH":
+                    lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
+            lines.append("")
+            continue
+        tp_sub = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+        sl_sub = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+        pnl_sub = _core_pnl_series(sub_core)
+        ev_sub = ev_core_from_tp_sl_pnl(tp_sub, sl_sub, pnl_sub)
+        _, ev20_sub, _ = rolling_wr_ev_core(sub_core, rolling_n)
+        wr_sub = wr_core_from_tp_sl(tp_sub, sl_sub) * 100
+        ec_sub = _edge_consistency_frac(pnl_sub, rolling_n) if len(sub_core) >= 20 else None
+        trades_neg_sp = _trades_since_ev_negative(pnl_sub, rolling_n) if len(sub_core) >= 20 else 0
+        timeout_sub = _timeout_count(sub_all) if sub_all is not None else 0
+        guard_txt_sp = _guard_status_text(
+            guard_state, guard_key,
+            trades_since_negative_start=trades_neg_sp,
+            decision_window=DECISION_WINDOW_VERDICT,
+        )
+        lines.append("        🔹 Метрики")
+        lines.append(f"        WR: {wr_sub:.0f}%   EV: {ev_sub:+.2f}R   EV20: {ev20_sub:+.2f}R")
+        lines.append(f"        N: {len(sub_core)} | timeout: {timeout_sub}")
+        lines.append("")
+        lines.append("        🔹 Guard")
+        lines.append(f"        {_guard_emoji_label(gst_sp, len(sub_core))}")
+        lines.append("")
+        lines.append("        🔹 Диагноз")
+        diag_sp = _diagnosis_v2(
+            ev_sub, ev20_sub, len(sub_core), ec_sub, trades_neg_sp,
+            gst_sp, guard_txt_sp, DECISION_WINDOW_VERDICT,
+        )
+        for d in diag_sp:
+            lines.append(f"        {d}")
+        prog = _guard_progress_text(
+            guard_state, guard_key,
+            trades_since_negative_start=trades_neg_sp,
+            decision_window=DECISION_WINDOW_VERDICT,
+        )
+        if prog:
+            if gst_sp == "WATCH":
+                lines.append("        live-входы пока разрешены")
+            lines.append(f"        {prog}")
+            if gst_sp == "WATCH":
+                lines.append(f"        {_guard_progress_watch_to_active(trades_neg_sp, DECISION_WINDOW_VERDICT)}")
+        lines.append("")
+
+    if live_sp_count == 0:
+        lines.append("    (нет live-подрежимов)")
+        lines.append("")
+
+    # Preserve legacy ACTIVE-only block when data exists but guard missing
+    gst_sp_legacy = _guard_state_str(guard_state, "short_pump_active_1R") if guard_state else None
+    if df_active_core is not None and not df_active_core.empty and gst_sp_legacy and gst_sp_legacy.upper() not in ("DISABLED",):
         trades_neg_sp = _trades_since_ev_negative(pnl_ac, rolling_n) if n_ac >= 20 else 0
         guard_txt_sp = _guard_status_text(
             guard_state, "short_pump_active_1R",
@@ -829,7 +1007,7 @@ def build_executive_compact_report(
         )
         ec_ac = _edge_consistency_frac(pnl_ac, rolling_n) if n_ac >= 20 else None
         timeout_ac = _timeout_count(df_active) if df_active is not None else 0
-        lines.append("    2.1.1 ACTIVE (stage4 + dist≥" + (f"{int(tg_dist_min)}" if tg_dist_min == int(tg_dist_min) else f"{tg_dist_min}") + "%)")
+        lines.append("    2.1.X ACTIVE (legacy block)")
         lines.append("")
         lines.append("        🔹 Фильтр")
         for ln in _filter_lines_short_pump_active(tg_dist_min):
@@ -840,12 +1018,12 @@ def build_executive_compact_report(
         lines.append(f"        N: {n_ac} | timeout: {timeout_ac}")
         lines.append("")
         lines.append("        🔹 Guard")
-        lines.append(f"        {_guard_emoji_label(gst_sp, n_ac)}")
+        lines.append(f"        {_guard_emoji_label(gst_sp_legacy, n_ac)}")
         lines.append("")
         lines.append("        🔹 Диагноз")
         diag_sp = _diagnosis_v2(
             ev_ac, ev20_ac, n_ac, ec_ac, trades_neg_sp,
-            gst_sp, guard_txt_sp, DECISION_WINDOW_VERDICT,
+            gst_sp_legacy, guard_txt_sp, DECISION_WINDOW_VERDICT,
         )
         for d in diag_sp:
             lines.append(f"        {d}")
@@ -855,10 +1033,10 @@ def build_executive_compact_report(
             decision_window=DECISION_WINDOW_VERDICT,
         )
         if prog:
-            if gst_sp == "WATCH":
+            if gst_sp_legacy == "WATCH":
                 lines.append("        live-входы пока разрешены")
             lines.append(f"        {prog}")
-            if gst_sp == "WATCH":
+            if gst_sp_legacy == "WATCH":
                 lines.append(f"        {_guard_progress_watch_to_active(trades_neg_sp, DECISION_WINDOW_VERDICT)}")
     elif not (df_active_core is not None and not df_active_core.empty):
         lines.append("    2.1.1 ACTIVE: нет данных")
@@ -873,6 +1051,7 @@ def build_executive_compact_report(
         df_f0_all = df_f0.copy()
         df_f0_core = df_f0[outcome_f0.isin(["TP_hit", "SL_hit"])].copy()
         fast0_modes = [
+            ("FAST0 SELECTIVE", "fast0_selective", _fast0_mode_mask_selective, _filter_lines_fast0_selective),
             ("FAST0 BASE (liq=0)", "fast0_base_1R", _fast0_mode_mask_base_1r, _filter_lines_fast0_base),
             ("FAST0 1.5R", "fast0_1p5R", _fast0_mode_mask_1p5r, _filter_lines_fast0_1p5r),
             ("FAST0 2R", "fast0_2R", _fast0_mode_mask_2r, _filter_lines_fast0_2r),
@@ -997,6 +1176,7 @@ def build_executive_compact_report(
         df_f0_paper_core = df_f0_for_paper[paper_core_mask].copy()
         df_f0_tpsl_only = df_f0_for_paper[outcome_f0.isin(["TP_hit", "SL_hit"])].copy()
         for label, guard_key, mask_fn, filter_fn in [
+            ("FAST0 SELECTIVE", "fast0_selective", _fast0_mode_mask_selective, _filter_lines_fast0_selective),
             ("FAST0 BASE", "fast0_base_1R", _fast0_mode_mask_base_1r, _filter_lines_fast0_base),
             ("FAST0 1.5R", "fast0_1p5R", _fast0_mode_mask_1p5r, _filter_lines_fast0_1p5r),
             ("FAST0 2R", "fast0_2R", _fast0_mode_mask_2r, _filter_lines_fast0_2r),

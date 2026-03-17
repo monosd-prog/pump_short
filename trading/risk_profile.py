@@ -100,6 +100,8 @@ def get_risk_profile(
     stage: Any = None,
     dist_to_peak_pct: Any = None,
     liq_long_usd_30s: Any = None,
+    context_score: Any = None,
+    volume_1m: Any = None,
     *,
     event_id: str = "",
     trade_id: str = "",
@@ -122,6 +124,55 @@ def get_risk_profile(
             dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else None
         except (TypeError, ValueError):
             pass
+        ctx_val = None
+        try:
+            ctx_val = float(context_score) if context_score is not None else None
+        except (TypeError, ValueError):
+            pass
+        liq_val = None
+        try:
+            liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else None
+        except (TypeError, ValueError):
+            pass
+
+        # New live submodes (ACTIVE-by-default in auto-risk-guard):
+        # - short_pump_deep: stage==3, dist in [7.5,10), ctx in [0.4,0.6), liqL30s==0
+        if (
+            stage_i == 3
+            and dist_val is not None
+            and 7.5 <= dist_val < 10.0
+            and ctx_val is not None
+            and 0.4 <= ctx_val < 0.6
+            and liq_val is not None
+            and liq_val == 0.0
+        ):
+            profile = "short_pump_deep"
+            mult = _float_env("SHORT_PUMP_DEEP_RISK_MULT", 0.7)
+            logger.info(
+                "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s liq_long_usd_30s=%.0f "
+                "selected_profile=%s risk_mult=%.2f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+                strategy, symbol, event_id, trade_id, liq_val or 0, profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+            )
+            return profile, mult, mult
+
+        # - short_pump_mid: dist in [3.5,5), ctx in [0.4,0.6)
+        if (
+            dist_val is not None
+            and 3.5 <= dist_val < 5.0
+            and ctx_val is not None
+            and 0.4 <= ctx_val < 0.6
+        ):
+            profile = "short_pump_mid"
+            mult = _float_env("SHORT_PUMP_MID_RISK_MULT", 0.7)
+            logger.info(
+                "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s liq_long_usd_30s=%s "
+                "selected_profile=%s risk_mult=%.2f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+                strategy, symbol, event_id, trade_id,
+                f"{liq_val:.0f}" if liq_val is not None else "N/A",
+                profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+            )
+            return profile, mult, mult
+
         if stage_i == 4 and dist_val is not None and dist_val >= SHORT_PUMP_AUTO_DIST_MIN:
             profile = "short_pump_active_1R"
             mult = 1.0
@@ -150,6 +201,28 @@ def get_risk_profile(
             pass
         if liq_val is None:
             return ("", 0.0, 0.0)
+        ctx_val = None
+        try:
+            ctx_val = float(context_score) if context_score is not None else None
+        except (TypeError, ValueError):
+            pass
+        vol1_val = None
+        try:
+            vol1_val = float(volume_1m) if volume_1m is not None else None
+        except (TypeError, ValueError):
+            pass
+
+        # New live submode: FAST0 SELECTIVE (context_score in [0.4,0.6), optional volume_1m>1e6 when available)
+        if ctx_val is not None and 0.4 <= ctx_val < 0.6:
+            if vol1_val is None or vol1_val > 1_000_000.0:
+                profile = "fast0_selective"
+                mult = _float_env("FAST0_SELECTIVE_RISK_MULT", 0.7) * FAST0_BASE_RISK_MULT
+                logger.info(
+                    "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s liq_long_usd_30s=%.0f "
+                    "selected_profile=%s risk_mult=%.2f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+                    strategy, symbol, event_id, trade_id, liq_val or 0, profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+                )
+                return profile, mult, mult
         # Buckets: liq==0 -> 1R, 5k<liq<=25k -> 1.5R, liq>100k -> 2R
         if liq_val > FAST0_LIQ_100K:
             profile = "fast0_2R"

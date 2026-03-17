@@ -151,12 +151,17 @@ def _mode_name_for_signal_and_profile(signal: Any, risk_profile_name: str) -> Op
     s = (getattr(signal, "strategy", None) or "").strip()
     if not risk_profile_name:
         return None
-    if s == "short_pump" and risk_profile_name == "short_pump_active_1R":
-        return "short_pump_active_1R"
+    if s == "short_pump" and risk_profile_name in {
+        "short_pump_active_1R",
+        "short_pump_mid",
+        "short_pump_deep",
+    }:
+        return risk_profile_name
     if s == "short_pump_fast0" and risk_profile_name in {
         "fast0_base_1R",
         "fast0_1p5R",
         "fast0_2R",
+        "fast0_selective",
     }:
         return risk_profile_name
     return None
