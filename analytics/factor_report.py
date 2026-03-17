@@ -13,6 +13,8 @@ Responsibilities:
 
 from dataclasses import dataclass, asdict
 from datetime import datetime
+import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -89,6 +91,85 @@ class ComboCandidate:
     ev: float
     ev20: float
     why_candidate: str
+
+
+def _debug_factor_columns(df: pd.DataFrame, *, tag: str) -> None:
+    if os.getenv("FACTOR_REPORT_DEBUG", "0").strip() != "1":
+        return
+    cols = sorted(list(df.columns))
+    print(f"[FACTOR_DEBUG] {tag}: n={len(df)} cols={len(cols)}")
+    print(f"[FACTOR_DEBUG] {tag}: columns={cols}")
+
+
+def _fill_from_payload_json(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fallback: extract key factors from payload_json(_event) when they are not present as CSV columns.
+
+    This makes factor_report resilient when older datasets were written with a schema that didn't include
+    some feature columns (extrasaction=ignore in CSV writer).
+    """
+    if df.empty:
+        return df
+
+    payload_col = None
+    for c in ("payload_json_event", "payload_json", "payload_json_x", "payload_json_y"):
+        if c in df.columns:
+            payload_col = c
+            break
+    if payload_col is None:
+        return df
+
+    def _safe_load(x: Any) -> dict:
+        if not isinstance(x, str) or not x.strip():
+            return {}
+        try:
+            val = json.loads(x)
+            return val if isinstance(val, dict) else {}
+        except Exception:
+            return {}
+
+    payloads = df[payload_col].apply(_safe_load)
+
+    key_map: Dict[str, List[str]] = {
+        "delta_ratio_30s": ["delta_ratio_30s"],
+        "delta_ratio_1m": ["delta_ratio_1m"],
+        "cvd_delta_ratio_30s": ["cvd_delta_ratio_30s"],
+        "cvd_delta_ratio_1m": ["cvd_delta_ratio_1m"],
+        "liq_long_usd_30s": ["liq_long_usd_30s"],
+        "liq_short_usd_30s": ["liq_short_usd_30s"],
+        "oi_change_fast_pct": ["oi_change_fast_pct"],
+        "oi_change_1m_pct": ["oi_change_1m_pct"],
+        "oi_change_5m_pct": ["oi_change_5m_pct"],
+        "funding_rate_abs": ["funding_rate_abs"],
+        "volume_1m": ["volume_1m"],
+        "volume_5m": ["volume_5m"],
+        "volume_sma_20": ["volume_sma_20"],
+        "volume_zscore_20": ["volume_zscore_20", "volume_zscore"],
+        "spread_bps": ["spread_bps"],
+        "orderbook_imbalance_10": ["orderbook_imbalance_10"],
+        "dist_to_peak_pct": ["dist_to_peak_pct"],
+        "context_score": ["context_score"],
+        "stage": ["stage"],
+        "symbol": ["symbol"],
+    }
+
+    out = df.copy()
+    for col, keys in key_map.items():
+        # Only fill if missing entirely or mostly empty
+        if col in out.columns and out[col].notna().any():
+            continue
+        extracted = payloads.apply(
+            lambda d: next((d.get(k) for k in keys if k in d and d.get(k) is not None), None)
+        )
+        if col == "symbol":
+            fill = extracted.astype(str).replace({"None": ""})
+        else:
+            fill = pd.to_numeric(extracted, errors="coerce")
+        if col in out.columns:
+            out[col] = out[col].combine_first(fill)
+        else:
+            out[col] = fill
+    return out
 
 
 def _join_outcomes_trades_events(
@@ -522,6 +603,8 @@ def build_factor_report_for_strategy(
             "candidates": [],
         }
 
+    df = _fill_from_payload_json(df)
+    _debug_factor_columns(df, tag=f"{strategy}:after_payload_fill")
     df = _add_ev_proxy(df)
     summary = _strategy_summary(df, strategy)
 
@@ -716,6 +799,7 @@ def build_factor_report(
             events = events[0]
         # Join chain: outcomes → trades → events so factors from trades_v3 and events_v3 are preserved
         joined = _join_outcomes_trades_events(outcomes, trades, events)
+        _debug_factor_columns(joined, tag=f"{strat}:joined_raw")
         dprint(DEBUG_ENABLED, f"[FACTOR] strategy={strat} rows={len(joined)}")
         strat_blocks.append(build_factor_report_for_strategy(df=joined, strategy=strat))
 

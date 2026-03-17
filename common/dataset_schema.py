@@ -21,6 +21,9 @@ EVENT_FIELDS_V2 = [
     "context_score",
     "price",
     "dist_to_peak_pct",
+    # Pre-entry delta ratios (logged by watcher/entry; required for factor_report)
+    "delta_ratio_30s",
+    "delta_ratio_1m",
     "cvd_delta_ratio_30s",
     "cvd_delta_ratio_1m",
     "oi_change_5m_pct",
@@ -32,6 +35,13 @@ EVENT_FIELDS_V2 = [
     "liq_short_usd_30s",
     "liq_long_count_30s",
     "liq_long_usd_30s",
+    # Market microstructure / volume features (used by FAST0 + factor_report)
+    "volume_1m",
+    "volume_5m",
+    "volume_sma_20",
+    "volume_zscore_20",
+    "spread_bps",
+    "orderbook_imbalance_10",
     "payload_json",
 ]
 
