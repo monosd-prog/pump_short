@@ -1193,13 +1193,13 @@ def build_executive_compact_report(
             lines.append("")
             lines.append("        🔹 Guard")
             lines.append(f"        {_guard_emoji_label(gst, 0)}")
-                prog = _guard_progress_text(guard_state, guard_key)
-                if prog:
-                    if gst == "WATCH":
-                        lines.append("        live-входы запрещены (paper only)")
-                    lines.append(f"        {prog}")
-                    if gst == "WATCH":
-                        lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
+            prog = _guard_progress_text(guard_state, guard_key)
+            if prog:
+                if gst == "WATCH":
+                    lines.append("        live-входы запрещены (paper only)")
+                lines.append(f"        {prog}")
+                if gst == "WATCH":
+                    lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
             lines.append("")
             lines.append("        🔹 Диагноз")
             lines.append("        bootstrap / нет сделок за период")
