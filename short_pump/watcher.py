@@ -43,6 +43,7 @@ from notifications.tg_format import build_short_pump_signal, format_armed_short,
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.runtime import wall_time_utc
 from common.feature_contract import normalize_event_feature_row
+from common.market_features import liquidation_features, market_features_snapshot
 
 logger = get_logger(__name__)
 
@@ -843,30 +844,33 @@ def run_watch_for_symbol(
                         decision_1m_ok, decision_1m_payload = decide_entry_1m(
                             cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                         )
-                        # Volume features from 1m candles (no extra API calls)
+                        # Unified snapshot features from already-fetched data (no new API calls)
                         try:
-                            from short_pump.fast0_sampler import _volume_1m_features as _v1m
-                            v1, vsma, vz = _v1m(candles_1m, lookback=20)
-                            decision_1m_payload["volume_1m"] = v1
-                            decision_1m_payload["volume_sma_20"] = vsma
-                            decision_1m_payload["volume_zscore_20"] = vz
-                        except Exception:
-                            pass
-                        try:
-                            if candles_5m is not None and not candles_5m.empty and "volume" in candles_5m.columns:
-                                decision_1m_payload["volume_5m"] = float(candles_5m["volume"].tail(1).sum())
+                            snap = market_features_snapshot(
+                                trades=trades_1m,
+                                oi=oi_1m,
+                                candles_1m=candles_1m,
+                                candles_5m=candles_5m,
+                                funding_payload=funding_payload,
+                            )
+                            decision_1m_payload.update({k: v for k, v in snap.items() if v is not None})
                         except Exception:
                             pass
                         # Update context_score with CVD if available
                         context_score_with_cvd = decision_1m_payload.get("context_score", context_score)
                         ctx_parts = decision_1m_payload.get("context_parts", ctx_parts)
 
-                        # Liquidation stats
+                        # Liquidation stats (unified with fast0)
                         now_ts = time.time()
-                        liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")
-                        liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
-                        liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
-                        liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                        liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats)
+                        liq_short_count_30s = liq["liq_short_count_30s"]
+                        liq_short_usd_30s = liq["liq_short_usd_30s"]
+                        liq_short_count_1m = liq["liq_short_count_1m"]
+                        liq_short_usd_1m = liq["liq_short_usd_1m"]
+                        liq_long_count_30s = liq["liq_long_count_30s"]
+                        liq_long_usd_30s = liq["liq_long_usd_30s"]
+                        liq_long_count_1m = liq["liq_long_count_1m"]
+                        liq_long_usd_1m = liq["liq_long_usd_1m"]
                         dbg = get_liq_debug_state(cfg.symbol)
                         log_info(
                             logger,
@@ -957,19 +961,14 @@ def run_watch_for_symbol(
                                 },
                             )
                             run_watch_for_symbol._liq_sample_warned.add(run_id)
-                        decision_1m_payload.update({
-                            "liq_short_count_30s": liq_short_count_30s,
-                            "liq_short_usd_30s": liq_short_usd_30s,
-                            "liq_short_count_1m": liq_short_count_1m,
-                            "liq_short_usd_1m": liq_short_usd_1m,
-                            "liq_long_count_30s": liq_long_count_30s,
-                            "liq_long_usd_30s": liq_long_usd_30s,
-                            "liq_long_count_1m": liq_long_count_1m,
-                            "liq_long_usd_1m": liq_long_usd_1m,
-                            "funding_rate": funding_rate,
-                            "funding_rate_ts_utc": funding_rate_ts_utc,
-                            "funding_rate_abs": funding_rate_abs,
-                        })
+                        decision_1m_payload.update(
+                            {
+                                **liq,
+                                "funding_rate": funding_rate,
+                                "funding_rate_ts_utc": funding_rate_ts_utc,
+                                "funding_rate_abs": funding_rate_abs,
+                            }
+                        )
                         now_decision_ts = time.time()
                         if entry_candidate_active and now_decision_ts > entry_candidate_expires_ts:
                             entry_candidate_active = False
@@ -1078,31 +1077,33 @@ def run_watch_for_symbol(
                     ok_fast, payload_fast = decide_entry_fast(
                         cfg, trades_fast, oi_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                     )
-                    # Volume features from 1m candles when available (reuse last fetched candles_1m if present)
+                    # Unified snapshot features from already-fetched data (reuse candles_1m if available; no new API calls)
                     try:
-                        if "candles_1m" in locals() and candles_1m is not None and not candles_1m.empty:
-                            from short_pump.fast0_sampler import _volume_1m_features as _v1m
-                            v1, vsma, vz = _v1m(candles_1m, lookback=20)
-                            payload_fast["volume_1m"] = v1
-                            payload_fast["volume_sma_20"] = vsma
-                            payload_fast["volume_zscore_20"] = vz
-                    except Exception:
-                        pass
-                    try:
-                        if candles_5m is not None and not candles_5m.empty and "volume" in candles_5m.columns:
-                            payload_fast["volume_5m"] = float(candles_5m["volume"].tail(1).sum())
+                        snap = market_features_snapshot(
+                            trades=trades_fast,
+                            oi=oi_fast,
+                            candles_1m=candles_1m if "candles_1m" in locals() else None,
+                            candles_5m=candles_5m,
+                            funding_payload=funding_payload,
+                        )
+                        payload_fast.update({k: v for k, v in snap.items() if v is not None})
                     except Exception:
                         pass
                     # Update context_score with CVD if available
                     context_score_with_cvd = payload_fast.get("context_score", context_score)
                     ctx_parts = payload_fast.get("context_parts", ctx_parts)
 
-                    # Liquidation stats
+                    # Liquidation stats (unified with fast0)
                     now_ts = time.time()
-                    liq_short_count_30s, liq_short_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="short")
-                    liq_short_count_1m, liq_short_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="short")
-                    liq_long_count_30s, liq_long_usd_30s = get_liq_stats(cfg.symbol, now_ts, 30, side="long")
-                    liq_long_count_1m, liq_long_usd_1m = get_liq_stats(cfg.symbol, now_ts, 60, side="long")
+                    liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats)
+                    liq_short_count_30s = liq["liq_short_count_30s"]
+                    liq_short_usd_30s = liq["liq_short_usd_30s"]
+                    liq_short_count_1m = liq["liq_short_count_1m"]
+                    liq_short_usd_1m = liq["liq_short_usd_1m"]
+                    liq_long_count_30s = liq["liq_long_count_30s"]
+                    liq_long_usd_30s = liq["liq_long_usd_30s"]
+                    liq_long_count_1m = liq["liq_long_count_1m"]
+                    liq_long_usd_1m = liq["liq_long_usd_1m"]
                     dbg = get_liq_debug_state(cfg.symbol)
                     log_info(
                         logger,
@@ -1193,19 +1194,14 @@ def run_watch_for_symbol(
                             },
                         )
                         run_watch_for_symbol._liq_sample_warned.add(run_id)
-                    payload_fast.update({
-                        "liq_short_count_30s": liq_short_count_30s,
-                        "liq_short_usd_30s": liq_short_usd_30s,
-                        "liq_short_count_1m": liq_short_count_1m,
-                        "liq_short_usd_1m": liq_short_usd_1m,
-                        "liq_long_count_30s": liq_long_count_30s,
-                        "liq_long_usd_30s": liq_long_usd_30s,
-                        "liq_long_count_1m": liq_long_count_1m,
-                        "liq_long_usd_1m": liq_long_usd_1m,
-                        "funding_rate": funding_rate,
-                        "funding_rate_ts_utc": funding_rate_ts_utc,
-                        "funding_rate_abs": funding_rate_abs,
-                    })
+                    payload_fast.update(
+                        {
+                            **liq,
+                            "funding_rate": funding_rate,
+                            "funding_rate_ts_utc": funding_rate_ts_utc,
+                            "funding_rate_abs": funding_rate_abs,
+                        }
+                    )
                     now_decision_ts = time.time()
                     if entry_candidate_active and now_decision_ts > entry_candidate_expires_ts:
                         entry_candidate_active = False
