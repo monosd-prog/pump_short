@@ -41,18 +41,33 @@ def _get_json(path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         raise
 
 
-def _klines(category: str, symbol: str, interval: str, limit: int) -> pd.DataFrame:
+def _klines(
+    category: str,
+    symbol: str,
+    interval: str,
+    limit: int,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+) -> pd.DataFrame:
     category = _norm_category(category)
     symbol = _norm_symbol(symbol)
 
+    params: Dict[str, Any] = {
+        "category": category,
+        "symbol": symbol,
+        "interval": str(interval),
+        "limit": str(limit),
+    }
+    # Optional historical window (ms). Safe: when not supported, API will ignore or return latest.
+    if start_ms is not None:
+        params["start"] = str(int(start_ms))
+    if end_ms is not None:
+        params["end"] = str(int(end_ms))
+
     j = _get_json(
         "/v5/market/kline",
-        {
-            "category": category,
-            "symbol": symbol,
-            "interval": str(interval),
-            "limit": str(limit),
-        },
+        params,
     )
     if j.get("retCode") != 0:
         error_msg = f"Bybit kline({interval}) error: {j}"
@@ -75,6 +90,28 @@ def get_klines_5m(category: str, symbol: str, limit: int = 250) -> pd.DataFrame:
 
 def get_klines_1m(category: str, symbol: str, limit: int = 300) -> pd.DataFrame:
     return _klines(category, symbol, "1", limit)
+
+
+def get_klines_1m_range(
+    category: str,
+    symbol: str,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    limit: int = 1000,
+) -> pd.DataFrame:
+    return _klines(category, symbol, "1", limit, start_ms=start_ms, end_ms=end_ms)
+
+
+def get_klines_5m_range(
+    category: str,
+    symbol: str,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    limit: int = 1000,
+) -> pd.DataFrame:
+    return _klines(category, symbol, "5", limit, start_ms=start_ms, end_ms=end_ms)
 
 
 def get_open_interest(category: str, symbol: str, limit: int = 80) -> pd.DataFrame:

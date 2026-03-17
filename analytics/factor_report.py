@@ -826,13 +826,14 @@ def save_factor_report_files(
     base_dir: Path | str,
     days: int,
     strategies: Sequence[str] | None = None,
+    mode: str = "live",
     reports_dir: Path | str | None = None,
 ) -> Tuple[Path, Path, str]:
     """
     Convenience entrypoint for CLI/Telegram.
     Returns (txt_path, json_path, summary_text).
     """
-    json_report, txt = build_factor_report(base_dir=base_dir, days=days, strategies=strategies)
+    json_report, txt = build_factor_report(base_dir=base_dir, days=days, strategies=strategies, mode=mode)
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     if reports_dir is None:
         reports_dir = Path("reports")

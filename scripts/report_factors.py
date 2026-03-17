@@ -47,16 +47,30 @@ def main() -> None:
         default=None,
         help="Strategies to include (default: short_pump, short_pump_fast0)",
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        default="live",
+        help="Datasets mode to read (live|paper|lab). Default: live",
+    )
     args = parser.parse_args()
 
     base_dir = args.data_dir
     days = int(args.days)
     strategies = args.strategies
+    mode = str(args.mode)
+
+    if mode.strip().lower() == "lab":
+        print("[LAB MODE V1] WARNING: factor report on mode=lab is candle-only.")
+        print("[LAB MODE V1] WARNING: delta/cvd/liq/oi/funding/spread/orderbook/context/stage are NOT reconstructed unless historical sources are added.")
+        print("[LAB MODE V1] TIP: use audit_feature_contract.py --mode lab to inspect coverage.")
+        print("")
 
     txt_path, json_path, summary = save_factor_report_files(
         base_dir=base_dir,
         days=days,
         strategies=strategies,
+        mode=mode,
     )
 
     print(summary)

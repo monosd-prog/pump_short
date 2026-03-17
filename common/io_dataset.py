@@ -42,9 +42,9 @@ def _get_exec_mode() -> str:
 
 
 def _path_mode_from_caller(mode: str) -> str | None:
-    """If caller's mode is paper|live, use it for path; else None (fallback to env)."""
+    """If caller's mode is paper|live|lab, use it for path; else None (fallback to env)."""
     m = (mode or "").strip().lower()
-    return m if m in ("paper", "live") else None
+    return m if m in ("paper", "live", "lab") else None
 
 
 _logged_writers: set[tuple[str, str, str, str]] = set()
@@ -100,7 +100,7 @@ def _dataset_dir(
         day = dt.strftime("%Y%m%d")
     except Exception:
         day = "unknown_date"
-    mode_for_path = path_mode if path_mode in ("paper", "live") else _get_exec_mode()
+    mode_for_path = path_mode if path_mode in ("paper", "live", "lab") else _get_exec_mode()
     rel_parts = (f"date={day}", f"strategy={strategy}", f"mode={mode_for_path}")
     if base_dir:
         return os.path.join(base_dir, *rel_parts)
@@ -240,10 +240,10 @@ def write_event_row(
     base_dir: str | None = None,
     path_mode: str | None = None,
 ) -> None:
-    """mode = signal source (live/FAST0/ARMED). path_mode overrides: when paper|live, use for path AND row. Else path uses caller mode when paper|live else env."""
+    """mode = signal source (live/FAST0/ARMED/LAB). path_mode overrides: when paper|live|lab, use for path AND row."""
     exec_mode = _get_exec_mode()
-    pm = path_mode if path_mode in ("paper", "live") else _path_mode_from_caller(mode)
-    row_mode = pm if pm in ("paper", "live") else exec_mode
+    pm = path_mode if path_mode in ("paper", "live", "lab") else _path_mode_from_caller(mode)
+    row_mode = pm if pm in ("paper", "live", "lab") else exec_mode
     payload_raw = row.get("entry_payload") or row.get("payload_json") or "{}"
     payload_json = _inject_signal_source_mode(payload_raw, mode)
     row = {**row, "mode": row_mode, "source_mode": row_mode, "payload_json": payload_json}
@@ -276,10 +276,10 @@ def write_trade_row(
     base_dir: str | None = None,
     path_mode: str | None = None,
 ) -> None:
-    """path_mode overrides: when paper|live, use for path AND row. Else path uses caller mode when paper|live."""
+    """path_mode overrides: when paper|live|lab, use for path AND row."""
     exec_mode = _get_exec_mode()
-    pm = path_mode if path_mode in ("paper", "live") else _path_mode_from_caller(mode)
-    row_mode = pm if pm in ("paper", "live") else exec_mode
+    pm = path_mode if path_mode in ("paper", "live", "lab") else _path_mode_from_caller(mode)
+    row_mode = pm if pm in ("paper", "live", "lab") else exec_mode
     row = {
         "trade_type": row.get("trade_type", ""),
         "paper_entry_time_utc": row.get("paper_entry_time_utc", ""),
@@ -319,10 +319,10 @@ def write_outcome_row(
     base_dir: str | None = None,
     path_mode: str | None = None,
 ) -> None:
-    """path_mode overrides: when paper|live, use for path AND row. Else path uses caller mode when paper|live."""
+    """path_mode overrides: when paper|live|lab, use for path AND row."""
     exec_mode = _get_exec_mode()
-    pm = path_mode if path_mode in ("paper", "live") else _path_mode_from_caller(mode)
-    row_mode = pm if pm in ("paper", "live") else exec_mode
+    pm = path_mode if path_mode in ("paper", "live", "lab") else _path_mode_from_caller(mode)
+    row_mode = pm if pm in ("paper", "live", "lab") else exec_mode
     row = {
         "trade_type": row.get("trade_type", ""),
         "details_payload": row.get("details_payload", ""),
@@ -333,7 +333,7 @@ def write_outcome_row(
     if not row.get("outcome_time_utc"):
         row["outcome_time_utc"] = wall_time_utc
     dir_path = _dataset_dir(strategy, wall_time_utc, base_dir=base_dir, path_mode=pm)
-    mode_for_path = pm if pm in ("paper", "live") else _get_exec_mode()
+    mode_for_path = pm if pm in ("paper", "live", "lab") else _get_exec_mode()
     _log_dataset_write_once("outcome", strategy, pm or exec_mode, dir_path, base_dir, row_mode, row)
     if schema_version == 3:
         path = os.path.join(dir_path, "outcomes_v3.csv")
