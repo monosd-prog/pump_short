@@ -35,6 +35,11 @@ EVENT_FIELDS_V2 = [
     "liq_short_usd_30s",
     "liq_long_count_30s",
     "liq_long_usd_30s",
+    # 1m liquidation window (present in canonical contract; may be empty for older runs)
+    "liq_short_count_1m",
+    "liq_short_usd_1m",
+    "liq_long_count_1m",
+    "liq_long_usd_1m",
     # Market microstructure / volume features (used by FAST0 + factor_report)
     "volume_1m",
     "volume_5m",
@@ -42,16 +47,13 @@ EVENT_FIELDS_V2 = [
     "volume_zscore_20",
     "spread_bps",
     "orderbook_imbalance_10",
+    # Outcome label can be logged on outcome events (canonical contract)
+    "outcome_label",
     "payload_json",
 ]
 
 EVENT_FIELDS_V3 = [
     *EVENT_FIELDS_V2[:-1],
-    "liq_short_count_1m",
-    "liq_short_usd_1m",
-    "liq_long_count_1m",
-    "liq_long_usd_1m",
-    "outcome_label",
     "payload_json",
 ]
 

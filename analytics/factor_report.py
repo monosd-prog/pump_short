@@ -28,6 +28,7 @@ from analytics.stats import (
     _normalize_outcome_raw,
 )
 from analytics.utils import dprint, DEBUG_ENABLED
+from common.feature_contract import canonical_event_fields, missing_canonical_fields
 
 
 EV_PROXY = {
@@ -99,6 +100,9 @@ def _debug_factor_columns(df: pd.DataFrame, *, tag: str) -> None:
     cols = sorted(list(df.columns))
     print(f"[FACTOR_DEBUG] {tag}: n={len(df)} cols={len(cols)}")
     print(f"[FACTOR_DEBUG] {tag}: columns={cols}")
+    missing = missing_canonical_fields(cols)
+    if missing:
+        print(f"[FACTOR_DEBUG] {tag}: missing_canonical_fields={missing}")
 
 
 def _fill_from_payload_json(df: pd.DataFrame) -> pd.DataFrame:

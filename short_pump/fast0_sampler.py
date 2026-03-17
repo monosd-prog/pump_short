@@ -25,12 +25,13 @@ from short_pump.bybit_api import (
 )
 from short_pump.config import Config
 from short_pump.context5m import StructureState, build_dbg5, compute_context_score_5m
-from short_pump.features import cvd_delta_ratio, normalize_funding, oi_change_pct
+from short_pump.features import cvd_delta_ratio, delta_ratio, normalize_funding, oi_change_pct
 from short_pump.liquidations import get_liq_stats, register_symbol, unregister_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info
 from common.io_dataset import ensure_dataset_files, write_event_row, write_outcome_row, write_trade_row
 from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import wall_time_utc
+from common.feature_contract import normalize_event_feature_row
 from notifications.tg_format import build_fast0_signal, format_fast0_outcome_message, format_tg
 from short_pump.telegram import FAST0_TG_OUTCOME_ENABLE, FAST0_TG_OUTCOME_MIN_DIST, is_fast0_tg_entry_allowed_with_reason, send_telegram
 
@@ -641,6 +642,8 @@ def run_fast0_for_symbol(
                 trades_df = trades if trades is not None and not trades.empty else pd.DataFrame()
                 cvd_30s = cvd_delta_ratio(trades_df, since_30s) if not trades_df.empty else None
                 cvd_1m = cvd_delta_ratio(trades_df, since_1m) if not trades_df.empty else None
+                dr_30s = delta_ratio(trades_df, since_30s) if not trades_df.empty else 0.0
+                dr_1m = delta_ratio(trades_df, since_1m) if not trades_df.empty else 0.0
 
                 # OI changes
                 oi_change_5m = oi_change_pct(oi, lookback_minutes=5) if oi is not None and not oi.empty else None
@@ -662,6 +665,8 @@ def run_fast0_for_symbol(
                     "price": last_price,
                     "dist_to_peak_pct": dist_to_peak,
                     "context_score": context_score,
+                    "delta_ratio_30s": dr_30s,
+                    "delta_ratio_1m": dr_1m,
                     "cvd_delta_ratio_30s": cvd_30s,
                     "cvd_delta_ratio_1m": cvd_1m,
                     "oi_change_5m_pct": oi_change_5m,
@@ -737,39 +742,27 @@ def run_fast0_for_symbol(
                 payload["entry_ok"] = entry_ok
                 skip_reasons = "" if entry_ok else (entry_reason if not entry_ok_pass else "fast0_sample")
 
-                row = {
-                    "run_id": run_id,
-                    "event_id": event_id,
-                    "symbol": cfg.symbol,
-                    "strategy": STRATEGY,
-                    "mode": mode,
-                    "side": "SHORT",
-                    "wall_time_utc": now_utc,
-                    "time_utc": payload.get("time_utc", ""),
-                    "stage": 0,
-                    "entry_ok": 1 if entry_ok else 0,
-                    "skip_reasons": skip_reasons,
-                    "context_score": context_score if context_score is not None else "",
-                    "price": last_price,
-                    "dist_to_peak_pct": dist_to_peak,
-                    "cvd_delta_ratio_30s": payload.get("cvd_delta_ratio_30s", ""),
-                    "cvd_delta_ratio_1m": payload.get("cvd_delta_ratio_1m", ""),
-                    "oi_change_5m_pct": payload.get("oi_change_5m_pct", ""),
-                    "oi_change_1m_pct": payload.get("oi_change_1m_pct", ""),
-                    "oi_change_fast_pct": "",
-                    "funding_rate": payload.get("funding_rate", ""),
-                    "funding_rate_abs": payload.get("funding_rate_abs", ""),
-                    "liq_short_count_30s": liq_short_count_30s,
-                    "liq_short_usd_30s": liq_short_usd_30s,
-                    "liq_long_count_30s": liq_long_count_30s,
-                    "liq_long_usd_30s": liq_long_usd_30s,
-                    "liq_short_count_1m": liq_short_count_1m,
-                    "liq_short_usd_1m": liq_short_usd_1m,
-                    "liq_long_count_1m": liq_long_count_1m,
-                    "liq_long_usd_1m": liq_long_usd_1m,
-                    "outcome_label": "",
-                    "payload_json": json.dumps(payload, ensure_ascii=False),
-                }
+                row = normalize_event_feature_row(
+                    base={
+                        "run_id": run_id,
+                        "event_id": event_id,
+                        "symbol": cfg.symbol,
+                        "strategy": STRATEGY,
+                        "mode": mode,
+                        "source_mode": mode,
+                        "side": "SHORT",
+                        "wall_time_utc": now_utc,
+                        "time_utc": payload.get("time_utc", ""),
+                        "stage": 0,
+                        "entry_ok": 1 if entry_ok else 0,
+                        "skip_reasons": skip_reasons,
+                        "context_score": context_score if context_score is not None else "",
+                        "price": last_price,
+                        "dist_to_peak_pct": dist_to_peak,
+                        "outcome_label": "",
+                    },
+                    payload=payload,
+                )
 
                 write_event_row(
                     row,

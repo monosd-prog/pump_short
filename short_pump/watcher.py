@@ -42,6 +42,7 @@ from short_pump.telegram import TG_ARMED_ENABLE, TG_SEND_OUTCOME, is_tradeable_s
 from notifications.tg_format import build_short_pump_signal, format_armed_short, format_entry_ok, format_outcome, format_tg
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.runtime import wall_time_utc
+from common.feature_contract import normalize_event_feature_row
 
 logger = get_logger(__name__)
 
@@ -250,44 +251,36 @@ def _ds_event(
             return v
         return snap.get(key, 0)
 
-    row = {
-        "run_id": run_id,
-        "event_id": event_id,
-        "symbol": symbol,
-        "strategy": "short_pump",
-        "mode": "live",
-        "side": "SHORT",
-        "wall_time_utc": wall_time_utc(),
-        "time_utc": pl.get("time_utc", ""),
-        "stage": stage,
-        "entry_ok": int(bool(entry_ok)),
-        "skip_reasons": skip_reasons,
-        "context_score": context_score if context_score is not None else "",
-        "price": pl.get("price", ""),
-        "dist_to_peak_pct": float(pl.get("dist_to_peak_pct") or 0.0),
-        # Pre-entry delta ratios from short_pump.entry payload (analysis-only logging).
-        "delta_ratio_30s": pl.get("delta_ratio_30s", ""),
-        "delta_ratio_1m": pl.get("delta_ratio_1m", ""),
-        "cvd_delta_ratio_30s": pl.get("cvd_delta_ratio_30s", ""),
-        "cvd_delta_ratio_1m": pl.get("cvd_delta_ratio_1m", ""),
-        "oi_change_5m_pct": (extra or {}).get("oi_change_5m_pct", ""),
-        "oi_change_1m_pct": pl.get("oi_change_1m_pct", ""),
-        "oi_change_fast_pct": pl.get("oi_change_fast_pct", ""),
-        "funding_rate": pl.get("funding_rate", ""),
-        "funding_rate_abs": pl.get("funding_rate_abs", ""),
-        "liq_short_count_30s": _liq_val("liq_short_count_30s"),
-        "liq_short_usd_30s": _liq_val("liq_short_usd_30s"),
-        "liq_long_count_30s": _liq_val("liq_long_count_30s"),
-        "liq_long_usd_30s": _liq_val("liq_long_usd_30s"),
-        "liq_short_count_1m": _liq_val("liq_short_count_1m"),
-        "liq_short_usd_1m": _liq_val("liq_short_usd_1m"),
-        "liq_long_count_1m": _liq_val("liq_long_count_1m"),
-        "liq_long_usd_1m": _liq_val("liq_long_usd_1m"),
-        "outcome_label": (payload or {}).get("outcome_label", ""),
-        "payload_json": json.dumps(payload or {}, ensure_ascii=False),
-    }
-    if extra:
-        row.update(extra)
+    row = normalize_event_feature_row(
+        base={
+            "run_id": run_id,
+            "event_id": event_id,
+            "symbol": symbol,
+            "strategy": "short_pump",
+            "mode": "live",
+            "source_mode": "live",
+            "side": "SHORT",
+            "wall_time_utc": wall_time_utc(),
+            "time_utc": pl.get("time_utc", ""),
+            "stage": stage,
+            "entry_ok": int(bool(entry_ok)),
+            "skip_reasons": skip_reasons,
+            "context_score": context_score if context_score is not None else "",
+            "price": pl.get("price", ""),
+            "dist_to_peak_pct": float(pl.get("dist_to_peak_pct") or 0.0),
+            "liq_short_count_30s": _liq_val("liq_short_count_30s"),
+            "liq_short_usd_30s": _liq_val("liq_short_usd_30s"),
+            "liq_long_count_30s": _liq_val("liq_long_count_30s"),
+            "liq_long_usd_30s": _liq_val("liq_long_usd_30s"),
+            "liq_short_count_1m": _liq_val("liq_short_count_1m"),
+            "liq_short_usd_1m": _liq_val("liq_short_usd_1m"),
+            "liq_long_count_1m": _liq_val("liq_long_count_1m"),
+            "liq_long_usd_1m": _liq_val("liq_long_usd_1m"),
+            "outcome_label": (payload or {}).get("outcome_label", ""),
+        },
+        payload=pl,
+        extra=extra or None,
+    )
     # DIAG: values we are about to write to events CSV (why liq_* often 0)
     logger.info(
         "LIQ_STATS_BEFORE_CSV",
@@ -850,6 +843,20 @@ def run_watch_for_symbol(
                         decision_1m_ok, decision_1m_payload = decide_entry_1m(
                             cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                         )
+                        # Volume features from 1m candles (no extra API calls)
+                        try:
+                            from short_pump.fast0_sampler import _volume_1m_features as _v1m
+                            v1, vsma, vz = _v1m(candles_1m, lookback=20)
+                            decision_1m_payload["volume_1m"] = v1
+                            decision_1m_payload["volume_sma_20"] = vsma
+                            decision_1m_payload["volume_zscore_20"] = vz
+                        except Exception:
+                            pass
+                        try:
+                            if candles_5m is not None and not candles_5m.empty and "volume" in candles_5m.columns:
+                                decision_1m_payload["volume_5m"] = float(candles_5m["volume"].tail(1).sum())
+                        except Exception:
+                            pass
                         # Update context_score with CVD if available
                         context_score_with_cvd = decision_1m_payload.get("context_score", context_score)
                         ctx_parts = decision_1m_payload.get("context_parts", ctx_parts)
@@ -1071,6 +1078,21 @@ def run_watch_for_symbol(
                     ok_fast, payload_fast = decide_entry_fast(
                         cfg, trades_fast, oi_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                     )
+                    # Volume features from 1m candles when available (reuse last fetched candles_1m if present)
+                    try:
+                        if "candles_1m" in locals() and candles_1m is not None and not candles_1m.empty:
+                            from short_pump.fast0_sampler import _volume_1m_features as _v1m
+                            v1, vsma, vz = _v1m(candles_1m, lookback=20)
+                            payload_fast["volume_1m"] = v1
+                            payload_fast["volume_sma_20"] = vsma
+                            payload_fast["volume_zscore_20"] = vz
+                    except Exception:
+                        pass
+                    try:
+                        if candles_5m is not None and not candles_5m.empty and "volume" in candles_5m.columns:
+                            payload_fast["volume_5m"] = float(candles_5m["volume"].tail(1).sum())
+                    except Exception:
+                        pass
                     # Update context_score with CVD if available
                     context_score_with_cvd = payload_fast.get("context_score", context_score)
                     ctx_parts = payload_fast.get("context_parts", ctx_parts)
