@@ -130,10 +130,11 @@ def _health_score_submode(
     guard_state_str: Optional[str],
 ) -> int:
     """
-    Health score for a submode (risk_profile):
-    - incorporate EV_total and EV20 (EV20 has higher weight)
-    - include WR and N (penalize low sample size)
+    Health score for a submode (risk_profile).
+    EV20 has highest weight; low sample sizes are penalized and capped.
     """
+    if n_core <= 0:
+        return 50
     ev20_c = 20 if ev20 >= 0.2 else (12 if ev20 >= 0 else (4 if ev20 >= -0.2 else -12))
     ev_c = 10 if ev_total >= 0.2 else (6 if ev_total >= 0 else (0 if ev_total >= -0.2 else -8))
     wr_c = 20 if wr_pct >= 55 else (12 if wr_pct >= 50 else (4 if wr_pct >= 45 else -10))
@@ -144,7 +145,10 @@ def _health_score_submode(
             4 if guard_state_str == "RECOVERY" else (-20 if guard_state_str == "DISABLED" else 0)
         )
     )
-    return max(0, min(100, 50 + ev20_c + ev_c + wr_c + n_c + mdd_c + g_c))
+    base = max(0, min(100, 50 + ev20_c + ev_c + wr_c + n_c + mdd_c + g_c))
+    if n_core < 10:
+        base = min(base, 60)
+    return base
 
 
 def _health_emoji(health: int) -> str:
@@ -933,7 +937,12 @@ def build_executive_compact_report(
             mdd_r=mdd_s,
             guard_state_str=gst,
         )
-        lines.append(f"{label}: {health} / 100 {_health_emoji(health)} (N={n_s})")
+        suffix = ""
+        if n_s <= 0:
+            suffix = ", no data"
+        elif n_s < 10:
+            suffix = ", low sample"
+        lines.append(f"{label}: {health} / 100 {_health_emoji(health)} (N={n_s}{suffix})")
 
     # Secondary: aggregates (keep existing)
     for strat in ("SHORT_PUMP", "FAST0"):
