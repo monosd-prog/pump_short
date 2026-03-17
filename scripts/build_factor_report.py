@@ -68,6 +68,52 @@ def _safe_pnl(df: pd.DataFrame) -> pd.Series:
     return pd.to_numeric(df.get("pnl_pct", 0.0), errors="coerce").fillna(0.0)
 
 
+def _pick_time_col_for_ev(df: pd.DataFrame) -> str | None:
+    """
+    Pick the best available time column for time-ordering EV20.
+
+    Preference order:
+    - outcome_time_utc (best: explicit outcome timestamp)
+    - opened_ts (when outcomes were recorded)
+    - entry_time_utc (entry timestamp if present)
+    - opened_time_utc (fallback if present)
+
+    If none exist, EV20 will use the current row order.
+    """
+    for c in ("outcome_time_utc", "opened_ts", "entry_time_utc", "opened_time_utc"):
+        if c in df.columns:
+            return c
+    return None
+
+
+def _calc_ev20(df: pd.DataFrame) -> float:
+    """
+    EV20 = mean(pnl_pct) over the last 20 trades in time order.
+
+    - Uses outcome_time_utc when available, otherwise falls back to the best available time column
+      chosen by _pick_time_col_for_ev (see docstring there).
+    - If fewer than 20 trades are available, uses all available rows.
+    - pnl_pct is coerced to numeric; NaN/missing values are ignored (mean skips NaN).
+    """
+    if df is None or df.empty:
+        return 0.0
+
+    time_col = _pick_time_col_for_ev(df)
+    if time_col is None:
+        ordered = df
+    else:
+        tmp = df[[time_col]].copy()
+        tmp["_ev_ts"] = pd.to_datetime(tmp[time_col], errors="coerce", utc=True)
+        ordered = df.loc[tmp["_ev_ts"].sort_values(kind="mergesort").index]
+
+    last = ordered.tail(20)
+    pnl = pd.to_numeric(last.get("pnl_pct"), errors="coerce")
+    v = float(pnl.mean()) if len(last) else 0.0
+    if pd.isna(v):
+        return 0.0
+    return v
+
+
 def _group_stats(df: pd.DataFrame, by: str) -> pd.DataFrame:
     pnl = _safe_pnl(df)
     df = df.copy()
@@ -80,6 +126,8 @@ def _group_stats(df: pd.DataFrame, by: str) -> pd.DataFrame:
         median_pnl="median",
         sum_pnl="sum",
     ).reset_index()
+    ev20 = grouped.apply(_calc_ev20).reset_index(name="ev20")
+    stats = stats.merge(ev20, on=by, how="left")
     stats["winrate"] = stats["win_trades"] / stats["trades_count"].replace(0, pd.NA)
     return stats
 
@@ -103,12 +151,14 @@ def _print_overall(df: pd.DataFrame) -> None:
     winrate = (wins / total) if total else 0.0
     avg_pnl = float(pnl.mean()) if total else 0.0
     med_pnl = float(pnl.median()) if total else 0.0
+    ev20 = _calc_ev20(df) if total else 0.0
     sum_pnl = float(pnl.sum()) if total else 0.0
     print("=== OVERALL ===")
     print(f"total_trades: {total}")
     print(f"winrate:      {winrate:.2%}")
     print(f"avg_pnl:      {avg_pnl:.3f}%")
     print(f"median_pnl:   {med_pnl:.3f}%")
+    print(f"EV20:         {ev20:.3f}%")
     print(f"sum_pnl:      {sum_pnl:.3f}%")
     print("")
 
@@ -120,17 +170,20 @@ def _print_group_block(title: str, stats: pd.DataFrame, key_col: str, max_rows: 
         print("")
         return
     print(f"=== {title} ===")
-    cols = [key_col, "trades_count", "win_trades", "winrate", "avg_pnl", "median_pnl", "sum_pnl"]
+    cols = [key_col, "trades_count", "win_trades", "winrate", "avg_pnl", "median_pnl", "ev20", "sum_pnl"]
     head = stats.sort_values("trades_count", ascending=False).head(max_rows)
     for _, row in head[cols].iterrows():
         key = row[key_col]
         wr = row["winrate"]
         if pd.isna(wr):
             wr = 0.0
+        ev20 = row.get("ev20", 0.0)
+        if pd.isna(ev20):
+            ev20 = 0.0
         print(
             f"{key}: n={int(row['trades_count'])}, "
             f"WR={float(wr):.2%}, "
-            f"avg={row['avg_pnl']:.3f}%, med={row['median_pnl']:.3f}%, sum={row['sum_pnl']:.3f}%"
+            f"avg={row['avg_pnl']:.3f}%, med={row['median_pnl']:.3f}%, EV20={float(ev20):.3f}%, sum={row['sum_pnl']:.3f}%"
         )
     print("")
 
@@ -151,6 +204,7 @@ def _build_csv_rows(df: pd.DataFrame, mode: str) -> pd.DataFrame:
         "winrate": (wins / total) if total else 0.0,
         "avg_pnl": float(pnl.mean()) if total else 0.0,
         "median_pnl": float(pnl.median()) if total else 0.0,
+        "ev20": _calc_ev20(df) if total else 0.0,
         "sum_pnl": float(pnl.sum()) if total else 0.0,
     }
     rows.append(row_overall)
@@ -168,6 +222,7 @@ def _build_csv_rows(df: pd.DataFrame, mode: str) -> pd.DataFrame:
                 "winrate": float(r["winrate"]) if pd.notna(r["winrate"]) else 0.0,
                 "avg_pnl": float(r["avg_pnl"]),
                 "median_pnl": float(r["median_pnl"]),
+                "ev20": float(r["ev20"]) if pd.notna(r.get("ev20")) else 0.0,
                 "sum_pnl": float(r["sum_pnl"]),
             }
         )
@@ -186,6 +241,7 @@ def _build_csv_rows(df: pd.DataFrame, mode: str) -> pd.DataFrame:
                     "winrate": float(r["winrate"]) if pd.notna(r["winrate"]) else 0.0,
                     "avg_pnl": float(r["avg_pnl"]),
                     "median_pnl": float(r["median_pnl"]),
+                    "ev20": float(r["ev20"]) if pd.notna(r.get("ev20")) else 0.0,
                     "sum_pnl": float(r["sum_pnl"]),
                 }
             )
@@ -204,6 +260,7 @@ def _build_csv_rows(df: pd.DataFrame, mode: str) -> pd.DataFrame:
                     "winrate": float(r["winrate"]) if pd.notna(r["winrate"]) else 0.0,
                     "avg_pnl": float(r["avg_pnl"]),
                     "median_pnl": float(r["median_pnl"]),
+                    "ev20": float(r["ev20"]) if pd.notna(r.get("ev20")) else 0.0,
                     "sum_pnl": float(r["sum_pnl"]),
                 }
             )
@@ -262,10 +319,13 @@ def main() -> None:
             wr = r["winrate"]
             if pd.isna(wr):
                 wr = 0.0
+            ev20 = r.get("ev20", 0.0)
+            if pd.isna(ev20):
+                ev20 = 0.0
             print(
                 f"{r['hold_bucket']}: n={int(r['trades_count'])}, "
                 f"WR={float(wr):.2%}, "
-                f"avg={r['avg_pnl']:.3f}%, med={r['median_pnl']:.3f}%, sum={r['sum_pnl']:.3f}%"
+                f"avg={r['avg_pnl']:.3f}%, med={r['median_pnl']:.3f}%, EV20={float(ev20):.3f}%, sum={r['sum_pnl']:.3f}%"
             )
         print("")
 
