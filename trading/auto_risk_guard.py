@@ -243,13 +243,13 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
     cons = m.consistency if m.consistency is not None else None
     trades_neg = m.trades_since_negative_start
 
-    def is_watch_trigger() -> bool:
-        return (ev20 < 0) or (cons is not None and cons < 0.7)
-
     # Bootstrap: do not DISABLE purely on "no/low data".
     # While n_core < BOOTSTRAP_MIN_TRADES, modes are considered in warmup and can be ACTIVE/WATCH,
     # but must not go to DISABLED due to ev/ev20/cons alone.
     BOOTSTRAP_MIN_TRADES = 20
+
+    def is_watch_trigger() -> bool:
+        return (ev20 < 0) or (cons is not None and cons < 0.7)
 
     def is_disable_trigger() -> bool:
         if n < BOOTSTRAP_MIN_TRADES:
@@ -297,6 +297,19 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
         recovery_confirmations=current.recovery_confirmations,
         observations_since_disabled=current.observations_since_disabled,
     )
+
+    # Bootstrap recovery: if mode is in DISABLED/RECOVERY but still has < BOOTSTRAP_MIN_TRADES core trades,
+    # treat it as warmup and move back towards ACTIVE instead of keeping it disabled on zero/low data.
+    if n < BOOTSTRAP_MIN_TRADES and st in {STATE_DISABLED, STATE_RECOVERY}:
+        updated.current_state = STATE_ACTIVE
+        updated.reason = "BOOTSTRAP: insufficient history"
+        logger.info(
+            "AUTO_RISK_GUARD_BOOTSTRAP_RESET | mode=%s prev_state=%s n_core=%d",
+            current.mode_name,
+            st,
+            n,
+        )
+        return updated
 
     # ACTIVE -> WATCH / ACTIVE
     if st == STATE_ACTIVE:
