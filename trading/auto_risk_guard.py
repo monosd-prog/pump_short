@@ -246,7 +246,14 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
     def is_watch_trigger() -> bool:
         return (ev20 < 0) or (cons is not None and cons < 0.7)
 
+    # Bootstrap: do not DISABLE purely on "no/low data".
+    # While n_core < BOOTSTRAP_MIN_TRADES, modes are considered in warmup and can be ACTIVE/WATCH,
+    # but must not go to DISABLED due to ev/ev20/cons alone.
+    BOOTSTRAP_MIN_TRADES = 20
+
     def is_disable_trigger() -> bool:
+        if n < BOOTSTRAP_MIN_TRADES:
+            return False
         return (ev <= 0) or (cons is not None and cons < 0.4) or (
             ev20 < -0.10 and trades_neg >= 20
         )
