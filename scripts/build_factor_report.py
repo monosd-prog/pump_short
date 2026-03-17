@@ -124,9 +124,12 @@ def _print_group_block(title: str, stats: pd.DataFrame, key_col: str, max_rows: 
     head = stats.sort_values("trades_count", ascending=False).head(max_rows)
     for _, row in head[cols].iterrows():
         key = row[key_col]
+        wr = row["winrate"]
+        if pd.isna(wr):
+            wr = 0.0
         print(
             f"{key}: n={int(row['trades_count'])}, "
-            f"WR={row['winrate']:.2% if pd.notna(row['winrate']) else 0.0:.2%}, "
+            f"WR={float(wr):.2%}, "
             f"avg={row['avg_pnl']:.3f}%, med={row['median_pnl']:.3f}%, sum={row['sum_pnl']:.3f}%"
         )
     print("")
@@ -256,9 +259,12 @@ def main() -> None:
     if not hold_stats.empty:
         print("=== HOLD TIME BUCKETS ===")
         for _, r in hold_stats.iterrows():
+            wr = r["winrate"]
+            if pd.isna(wr):
+                wr = 0.0
             print(
                 f"{r['hold_bucket']}: n={int(r['trades_count'])}, "
-                f"WR={r['winrate']:.2% if pd.notna(r['winrate']) else 0.0:.2%}, "
+                f"WR={float(wr):.2%}, "
                 f"avg={r['avg_pnl']:.3f}%, med={r['median_pnl']:.3f}%, sum={r['sum_pnl']:.3f}%"
             )
         print("")
