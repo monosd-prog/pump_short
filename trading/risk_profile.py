@@ -136,10 +136,9 @@ def get_risk_profile(
             pass
 
         # New live submodes (ACTIVE-by-default in auto-risk-guard):
-        # - short_pump_deep: stage==3, dist in [7.5,10), ctx in [0.4,0.6), liqL30s==0
+        # - short_pump_deep: dist in [7.5,10), ctx in [0.4,0.6), liqL30s==0
         if (
-            stage_i == 3
-            and dist_val is not None
+            dist_val is not None
             and 7.5 <= dist_val < 10.0
             and ctx_val is not None
             and 0.4 <= ctx_val < 0.6

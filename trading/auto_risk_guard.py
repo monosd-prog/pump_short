@@ -184,15 +184,14 @@ def is_entry_allowed_for_signal(signal: Any, risk_profile_name: str) -> Tuple[bo
     entry = get_mode_state(mode_name)
     state = entry.current_state
 
-    # LIVE mode: DISABLED/RECOVERY must ALWAYS block — no reliance on env flags.
-    if (EXECUTION_MODE or "").strip().lower() == "live" and state in {STATE_DISABLED, STATE_RECOVERY}:
+    # LIVE mode: any non-ACTIVE state must block live entry.
+    if (EXECUTION_MODE or "").strip().lower() == "live" and state != STATE_ACTIVE:
         logger.info(
-            "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s profile=%s state=%s reason=%s",
-            getattr(signal, "strategy", ""),
-            getattr(signal, "symbol", ""),
+            "SKIP_TRADE_GUARD | mode=%s state=%s strategy=%s symbol=%s reason=not_ACTIVE",
             mode_name,
             state,
-            entry.reason or "guard_disabled",
+            getattr(signal, "strategy", ""),
+            getattr(signal, "symbol", ""),
         )
         return False, f"guard_state={state}"
 

@@ -1055,7 +1055,7 @@ def build_executive_compact_report(
             prog = _guard_progress_text(guard_state, guard_key)
             if prog:
                 if gst_sp == "WATCH":
-                    lines.append("        live-входы пока разрешены")
+                    lines.append("        live-входы запрещены (paper only)")
                 lines.append(f"        {prog}")
                 if gst_sp == "WATCH":
                     lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
@@ -1193,13 +1193,13 @@ def build_executive_compact_report(
             lines.append("")
             lines.append("        🔹 Guard")
             lines.append(f"        {_guard_emoji_label(gst, 0)}")
-            prog = _guard_progress_text(guard_state, guard_key)
-            if prog:
-                if gst == "WATCH":
-                    lines.append("        live-входы пока разрешены")
-                lines.append(f"        {prog}")
-                if gst == "WATCH":
-                    lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
+                prog = _guard_progress_text(guard_state, guard_key)
+                if prog:
+                    if gst == "WATCH":
+                        lines.append("        live-входы запрещены (paper only)")
+                    lines.append(f"        {prog}")
+                    if gst == "WATCH":
+                        lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
             lines.append("")
             lines.append("        🔹 Диагноз")
             lines.append("        bootstrap / нет сделок за период")
@@ -1229,17 +1229,17 @@ def build_executive_compact_report(
             diag = _diagnosis_v2(ev_sub, ev20_sub, n_sub, ec_sub, trades_neg, gst, guard_txt, DECISION_WINDOW_VERDICT)
             for d in diag:
                 lines.append(f"        {d}")
-            prog = _guard_progress_text(
-                guard_state, guard_key,
-                trades_since_negative_start=trades_neg,
-                decision_window=DECISION_WINDOW_VERDICT,
-            )
-            if prog:
-                if gst == "WATCH":
-                    lines.append("        live-входы пока разрешены")
-                lines.append(f"        {prog}")
-                if gst == "WATCH":
-                    lines.append(f"        {_guard_progress_watch_to_active(trades_neg, DECISION_WINDOW_VERDICT)}")
+                prog = _guard_progress_text(
+                    guard_state, guard_key,
+                    trades_since_negative_start=trades_neg,
+                    decision_window=DECISION_WINDOW_VERDICT,
+                )
+                if prog:
+                    if gst == "WATCH":
+                        lines.append("        live-входы запрещены (paper only)")
+                    lines.append(f"        {prog}")
+                    if gst == "WATCH":
+                        lines.append(f"        {_guard_progress_watch_to_active(trades_neg, DECISION_WINDOW_VERDICT)}")
         lines.append("")
     if live_fast0_count == 0:
         lines.append("    (нет live-подрежимов)")
