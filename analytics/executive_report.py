@@ -120,6 +120,33 @@ def _health_score(
     return max(0, min(100, 50 + ev_c + wr_c + mdd_c + g_c + exp_c))
 
 
+def _health_score_submode(
+    *,
+    ev_total: float,
+    ev20: float,
+    wr_pct: float,
+    n_core: int,
+    mdd_r: float,
+    guard_state_str: Optional[str],
+) -> int:
+    """
+    Health score for a submode (risk_profile):
+    - incorporate EV_total and EV20 (EV20 has higher weight)
+    - include WR and N (penalize low sample size)
+    """
+    ev20_c = 20 if ev20 >= 0.2 else (12 if ev20 >= 0 else (4 if ev20 >= -0.2 else -12))
+    ev_c = 10 if ev_total >= 0.2 else (6 if ev_total >= 0 else (0 if ev_total >= -0.2 else -8))
+    wr_c = 20 if wr_pct >= 55 else (12 if wr_pct >= 50 else (4 if wr_pct >= 45 else -10))
+    n_c = 10 if n_core >= 50 else (5 if n_core >= 20 else (0 if n_core >= 10 else -10))
+    mdd_c = 15 if mdd_r <= 5 else (8 if mdd_r <= 10 else (0 if mdd_r <= 15 else -8))
+    g_c = 15 if guard_state_str == "ACTIVE" else (
+        8 if guard_state_str == "WATCH" else (
+            4 if guard_state_str == "RECOVERY" else (-20 if guard_state_str == "DISABLED" else 0)
+        )
+    )
+    return max(0, min(100, 50 + ev20_c + ev_c + wr_c + n_c + mdd_c + g_c))
+
+
 def _health_emoji(health: int) -> str:
     """health >= 70 🟢 | 40–70 🟡 | < 40 🔴"""
     return "🟢" if health >= 70 else ("🟡" if health >= 40 else "🔴")
@@ -725,6 +752,7 @@ def build_executive_compact_report(
     mode_ev20: Dict[str, float] = {}
     mode_wr: Dict[str, float] = {}
     mode_mdd: Dict[str, float] = {}
+    mode_ev_total: Dict[str, float] = {}
     mode_guard: Dict[str, Optional[str]] = {}
 
     if df_active_core is not None and not df_active_core.empty:
@@ -736,17 +764,44 @@ def build_executive_compact_report(
         _, ev20_ac, _ = rolling_wr_ev_core(df_active_core, rolling_n)
         wr_ac = wr_core_from_tp_sl(tp_ac, sl_ac) * 100
         mdd_ac = _mdd(_pnl_series(df_active)) if df_active is not None else 0.0
+        mode_ev_total["short_pump_active_1R"] = float(ev_ac or 0.0)
         mode_ev20["SHORT_PUMP"] = ev20_ac
         mode_wr["SHORT_PUMP"] = wr_ac
         mode_mdd["SHORT_PUMP"] = mdd_ac
         mode_guard["SHORT_PUMP"] = _guard_state_str(guard_state, "short_pump_active_1R")
+
+        # Submode label entry for ACTIVE
+        mode_ev20["SHORT_PUMP ACTIVE"] = float(ev20_ac or 0.0)
+        mode_wr["SHORT_PUMP ACTIVE"] = float(wr_ac or 0.0)
+        mode_mdd["SHORT_PUMP ACTIVE"] = float(mdd_ac or 0.0)
+        mode_ev_total["SHORT_PUMP ACTIVE"] = float(ev_ac or 0.0)
+        mode_guard["SHORT_PUMP ACTIVE"] = _guard_state_str(guard_state, "short_pump_active_1R")
     # SHORT_PUMP MID/DEEP counts (prefer risk_profile)
     if df_short_pump is not None and not df_short_pump.empty and "outcome" in df_short_pump.columns:
         out_sp = df_short_pump["outcome"].apply(_normalize_outcome_raw)
         df_sp_core_pre = df_short_pump[out_sp.isin(["TP_hit", "SL_hit"])].copy()
-        for gk in ("short_pump_mid", "short_pump_deep"):
+        for gk, label in (("short_pump_mid", "SHORT_PUMP MID"), ("short_pump_deep", "SHORT_PUMP DEEP")):
             sub = df_sp_core_pre[_short_pump_mode_mask(df_sp_core_pre, mode_name=gk)]
             mode_n_core[gk] = int(len(sub))
+            mode_guard[label] = _guard_state_str(guard_state, gk)
+            if not sub.empty:
+                tp_s = int((sub["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+                sl_s = int((sub["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+                pnl_s = _core_pnl_series(sub)
+                ev_s = ev_core_from_tp_sl_pnl(tp_s, sl_s, pnl_s)
+                _, ev20_s, _ = rolling_wr_ev_core(sub, rolling_n)
+                wr_s = wr_core_from_tp_sl(tp_s, sl_s) * 100
+                sub_all = df_short_pump[_short_pump_mode_mask(df_short_pump, mode_name=gk)]
+                mdd_s = _mdd(_pnl_series(sub_all))
+                mode_ev_total[gk] = float(ev_s or 0.0)
+                mode_ev20[label] = float(ev20_s or 0.0)
+                mode_wr[label] = float(wr_s or 0.0)
+                mode_mdd[label] = float(mdd_s or 0.0)
+            else:
+                mode_ev_total[gk] = 0.0
+                mode_ev20[label] = 0.0
+                mode_wr[label] = 0.0
+                mode_mdd[label] = 0.0
 
     if df_f0 is not None and not df_f0.empty:
         outcome_f0_pre = df_f0["outcome"].apply(_normalize_outcome_raw)
@@ -764,14 +819,17 @@ def build_executive_compact_report(
                 tp_s = int((sub["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
                 sl_s = int((sub["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
                 pnl_s = _core_pnl_series(sub)
+                ev_s = ev_core_from_tp_sl_pnl(tp_s, sl_s, pnl_s)
                 _, ev20_s, _ = rolling_wr_ev_core(sub, rolling_n)
                 wr_s = wr_core_from_tp_sl(tp_s, sl_s) * 100
                 sub_all = df_f0[mask_fn(df_f0)]
                 mdd_s = _mdd(_pnl_series(sub_all))
+                mode_ev_total[gk] = float(ev_s or 0.0)
                 mode_ev20[label] = ev20_s
                 mode_wr[label] = wr_s
                 mode_mdd[label] = mdd_s
             else:
+                mode_ev_total[gk] = 0.0
                 mode_ev20[label] = 0.0
                 mode_wr[label] = 0.0
                 mode_mdd[label] = 0.0
@@ -831,26 +889,69 @@ def build_executive_compact_report(
     lines.append(f"EXPERIMENT: {exper_c}")
     lines.append("")
     lines.append("🚨 EDGE ALERTS")
-    edge_seen: set[str] = set()
-    for label in ("SHORT_PUMP", "FAST0", "FAST0 BASE", "FAST0 1.5R", "FAST0 2R"):
-        if label in mode_ev20 and label not in edge_seen:
+    # Primary: submodes (risk_profile)
+    for label in (
+        "SHORT_PUMP MID",
+        "SHORT_PUMP DEEP",
+        "SHORT_PUMP ACTIVE",
+        "FAST0 SELECTIVE",
+        "FAST0 BASE",
+        "FAST0 1.5R",
+        "FAST0 2R",
+    ):
+        if label in mode_ev20:
             ev20_val = mode_ev20[label]
-            lines.append(f"{label} EV20: {ev20_val:+.2f}R {_ev20_signal_emoji(ev20_val)}")
-            edge_seen.add(label)
+            lines.append(f"{label}: EV20 {ev20_val:+.2f}R {_ev20_signal_emoji(ev20_val)}")
+    # Secondary: aggregates
+    for label in ("SHORT_PUMP", "FAST0"):
+        if label in mode_ev20:
+            ev20_val = mode_ev20[label]
+            lines.append(f"{label} (agg): EV20 {ev20_val:+.2f}R {_ev20_signal_emoji(ev20_val)}")
     lines.append("")
     lines.append("🏥 STRATEGY HEALTH")
+    # Primary: submodes
+    for label, gk in (
+        ("SHORT_PUMP MID", "short_pump_mid"),
+        ("SHORT_PUMP DEEP", "short_pump_deep"),
+        ("SHORT_PUMP ACTIVE", "short_pump_active_1R"),
+        ("FAST0 SELECTIVE", "fast0_selective"),
+        ("FAST0 BASE", "fast0_base_1R"),
+        ("FAST0 1.5R", "fast0_1p5R"),
+        ("FAST0 2R", "fast0_2R"),
+    ):
+        n_s = int(mode_n_core.get(gk, 0))
+        ev20_s = float(mode_ev20.get(label, 0.0))
+        wr_s = float(mode_wr.get(label, 0.0))
+        mdd_s = float(abs(mode_mdd.get(label, 0.0)))
+        ev_s = float(mode_ev_total.get(gk, mode_ev_total.get(label, 0.0)))
+        gst = mode_guard.get(label) or _guard_state_str(guard_state, gk)
+        health = _health_score_submode(
+            ev_total=ev_s,
+            ev20=ev20_s,
+            wr_pct=wr_s,
+            n_core=n_s,
+            mdd_r=mdd_s,
+            guard_state_str=gst,
+        )
+        lines.append(f"{label}: {health} / 100 {_health_emoji(health)} (N={n_s})")
+
+    # Secondary: aggregates (keep existing)
     for strat in ("SHORT_PUMP", "FAST0"):
         if strat in mode_ev20 and strat in mode_wr and strat in mode_mdd:
             if strat == "SHORT_PUMP":
                 n_s = mode_n_core.get("short_pump_active_1R", 0)
             else:
-                n_s = max(mode_n_core.get("fast0_base_1R", 0), mode_n_core.get("fast0_1p5R", 0), mode_n_core.get("fast0_2R", 0))
+                n_s = max(
+                    mode_n_core.get("fast0_base_1R", 0),
+                    mode_n_core.get("fast0_1p5R", 0),
+                    mode_n_core.get("fast0_2R", 0),
+                )
             is_exp = n_s < EXP_THRESHOLD
             health = _health_score(
                 mode_ev20[strat], mode_wr[strat], abs(mode_mdd[strat]),
                 mode_guard.get(strat), is_exp,
             )
-            lines.append(f"{strat}: {health} / 100 {_health_emoji(health)}")
+            lines.append(f"{strat} (agg): {health} / 100 {_health_emoji(health)}")
     lines.append("")
     lines.append("1️⃣ СТРАТЕГИИ")
     lines.append("")
@@ -950,6 +1051,9 @@ def build_executive_compact_report(
                 if gst_sp == "WATCH":
                     lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
             lines.append("")
+            lines.append("        🔹 Диагноз")
+            lines.append("        bootstrap / нет данных за период")
+            lines.append("")
             continue
         tp_sub = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
         sl_sub = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
@@ -1046,82 +1150,88 @@ def build_executive_compact_report(
     lines.append("2.2 FAST0")
     lines.append("")
     live_fast0_count = 0
-    if df_f0 is not None and not df_f0.empty:
-        outcome_f0 = df_f0["outcome"].apply(_normalize_outcome_raw)
-        df_f0_all = df_f0.copy()
-        df_f0_core = df_f0[outcome_f0.isin(["TP_hit", "SL_hit"])].copy()
-        fast0_modes = [
-            ("FAST0 SELECTIVE", "fast0_selective", _fast0_mode_mask_selective, _filter_lines_fast0_selective),
-            ("FAST0 BASE (liq=0)", "fast0_base_1R", _fast0_mode_mask_base_1r, _filter_lines_fast0_base),
-            ("FAST0 1.5R", "fast0_1p5R", _fast0_mode_mask_1p5r, _filter_lines_fast0_1p5r),
-            ("FAST0 2R", "fast0_2R", _fast0_mode_mask_2r, _filter_lines_fast0_2r),
-        ]
-        for sub_label, guard_key, mask_fn, filter_fn in fast0_modes:
-            gst = _guard_state_str(guard_state, guard_key)
-            if not gst or gst.upper() == "DISABLED":
-                continue
-            live_fast0_count += 1
-            sub_core = df_f0_core[mask_fn(df_f0_core)]
-            sub_all = df_f0_all[mask_fn(df_f0_all)]
-            n_sub = len(sub_core)
-            lines.append(f"    2.2.{live_fast0_count} {sub_label}")
+    df_f0_all = df_f0.copy() if df_f0 is not None and not df_f0.empty else pd.DataFrame()
+    if not df_f0_all.empty and "outcome" in df_f0_all.columns:
+        outcome_f0 = df_f0_all["outcome"].apply(_normalize_outcome_raw)
+        df_f0_core = df_f0_all[outcome_f0.isin(["TP_hit", "SL_hit"])].copy()
+    else:
+        df_f0_core = pd.DataFrame()
+
+    fast0_modes = [
+        ("FAST0 SELECTIVE", "fast0_selective", _fast0_mode_mask_selective, _filter_lines_fast0_selective),
+        ("FAST0 BASE (liq=0)", "fast0_base_1R", _fast0_mode_mask_base_1r, _filter_lines_fast0_base),
+        ("FAST0 1.5R", "fast0_1p5R", _fast0_mode_mask_1p5r, _filter_lines_fast0_1p5r),
+        ("FAST0 2R", "fast0_2R", _fast0_mode_mask_2r, _filter_lines_fast0_2r),
+    ]
+    for sub_label, guard_key, mask_fn, filter_fn in fast0_modes:
+        gst = _guard_state_str(guard_state, guard_key)
+        if not gst or gst.upper() == "DISABLED":
+            continue
+        live_fast0_count += 1
+        sub_core = df_f0_core[mask_fn(df_f0_core)] if not df_f0_core.empty else pd.DataFrame()
+        sub_all = df_f0_all[mask_fn(df_f0_all)] if not df_f0_all.empty else pd.DataFrame()
+        n_sub = len(sub_core)
+        lines.append(f"    2.2.{live_fast0_count} {sub_label}")
+        lines.append("")
+        lines.append("        🔹 Фильтр")
+        for ln in filter_fn():
+            lines.append(f"        {ln}")
+        lines.append("")
+        if n_sub == 0:
+            lines.append("        🔹 Метрики")
+            lines.append("        WR: —   EV: —   EV20: —")
+            lines.append("        N: 0 | timeout: 0")
             lines.append("")
-            lines.append("        🔹 Фильтр")
-            for ln in filter_fn():
-                lines.append(f"        {ln}")
+            lines.append("        🔹 Guard")
+            lines.append(f"        {_guard_emoji_label(gst, 0)}")
+            prog = _guard_progress_text(guard_state, guard_key)
+            if prog:
+                if gst == "WATCH":
+                    lines.append("        live-входы пока разрешены")
+                lines.append(f"        {prog}")
+                if gst == "WATCH":
+                    lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
             lines.append("")
-            if n_sub == 0:
-                lines.append("        🔹 Метрики")
-                lines.append("        WR: N/A   EV: N/A   EV20: N/A")
-                lines.append("        N: 0 | timeout: 0")
-                lines.append("")
-                lines.append("        🔹 Guard")
-                lines.append(f"        {_guard_emoji_label(gst, 0)}")
-                prog = _guard_progress_text(guard_state, guard_key)
-                if prog:
-                    if gst == "WATCH":
-                        lines.append("        live-входы пока разрешены")
-                    lines.append(f"        {prog}")
-                    if gst == "WATCH":
-                        lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
-            else:
-                tp_s = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
-                sl_s = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
-                pnl_s = _core_pnl_series(sub_core)
-                ev_sub = ev_core_from_tp_sl_pnl(tp_s, sl_s, pnl_s)
-                _, ev20_sub, _ = rolling_wr_ev_core(sub_core, rolling_n)
-                wr_sub = wr_core_from_tp_sl(tp_s, sl_s) * 100
-                ec_sub = _edge_consistency_frac(pnl_s, rolling_n) if n_sub >= 20 else None
-                trades_neg = _trades_since_ev_negative(pnl_s, rolling_n) if n_sub >= 20 else 0
-                timeout_sub = _timeout_count(sub_all)
-                guard_txt = _guard_status_text(
-                    guard_state, guard_key,
-                    trades_since_negative_start=trades_neg,
-                    decision_window=DECISION_WINDOW_VERDICT,
-                )
-                lines.append("        🔹 Метрики")
-                lines.append(f"        WR: {wr_sub:.0f}%   EV: {ev_sub:+.2f}R   EV20: {ev20_sub:+.2f}R")
-                lines.append(f"        N: {n_sub} | timeout: {timeout_sub}")
-                lines.append("")
-                lines.append("        🔹 Guard")
-                lines.append(f"        {_guard_emoji_label(gst, n_sub)}")
-                lines.append("")
-                lines.append("        🔹 Диагноз")
-                diag = _diagnosis_v2(ev_sub, ev20_sub, n_sub, ec_sub, trades_neg, gst, guard_txt, DECISION_WINDOW_VERDICT)
-                for d in diag:
-                    lines.append(f"        {d}")
-                prog = _guard_progress_text(
-                    guard_state, guard_key,
-                    trades_since_negative_start=trades_neg,
-                    decision_window=DECISION_WINDOW_VERDICT,
-                )
-                if prog:
-                    if gst == "WATCH":
-                        lines.append("        live-входы пока разрешены")
-                    lines.append(f"        {prog}")
-                    if gst == "WATCH":
-                        lines.append(f"        {_guard_progress_watch_to_active(trades_neg, DECISION_WINDOW_VERDICT)}")
+            lines.append("        🔹 Диагноз")
+            lines.append("        bootstrap / нет сделок за период")
+        else:
+            tp_s = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+            sl_s = int((sub_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+            pnl_s = _core_pnl_series(sub_core)
+            ev_sub = ev_core_from_tp_sl_pnl(tp_s, sl_s, pnl_s)
+            _, ev20_sub, _ = rolling_wr_ev_core(sub_core, rolling_n)
+            wr_sub = wr_core_from_tp_sl(tp_s, sl_s) * 100
+            ec_sub = _edge_consistency_frac(pnl_s, rolling_n) if n_sub >= 20 else None
+            trades_neg = _trades_since_ev_negative(pnl_s, rolling_n) if n_sub >= 20 else 0
+            timeout_sub = _timeout_count(sub_all)
+            guard_txt = _guard_status_text(
+                guard_state, guard_key,
+                trades_since_negative_start=trades_neg,
+                decision_window=DECISION_WINDOW_VERDICT,
+            )
+            lines.append("        🔹 Метрики")
+            lines.append(f"        WR: {wr_sub:.0f}%   EV: {ev_sub:+.2f}R   EV20: {ev20_sub:+.2f}R")
+            lines.append(f"        N: {n_sub} | timeout: {timeout_sub}")
             lines.append("")
+            lines.append("        🔹 Guard")
+            lines.append(f"        {_guard_emoji_label(gst, n_sub)}")
+            lines.append("")
+            lines.append("        🔹 Диагноз")
+            diag = _diagnosis_v2(ev_sub, ev20_sub, n_sub, ec_sub, trades_neg, gst, guard_txt, DECISION_WINDOW_VERDICT)
+            for d in diag:
+                lines.append(f"        {d}")
+            prog = _guard_progress_text(
+                guard_state, guard_key,
+                trades_since_negative_start=trades_neg,
+                decision_window=DECISION_WINDOW_VERDICT,
+            )
+            if prog:
+                if gst == "WATCH":
+                    lines.append("        live-входы пока разрешены")
+                lines.append(f"        {prog}")
+                if gst == "WATCH":
+                    lines.append(f"        {_guard_progress_watch_to_active(trades_neg, DECISION_WINDOW_VERDICT)}")
+        lines.append("")
     if live_fast0_count == 0:
         lines.append("    (нет live-подрежимов)")
     lines.append("")

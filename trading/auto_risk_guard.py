@@ -247,6 +247,12 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
     # While n_core < BOOTSTRAP_MIN_TRADES, modes are considered in warmup and can be ACTIVE/WATCH,
     # but must not go to DISABLED due to ev/ev20/cons alone.
     BOOTSTRAP_MIN_TRADES = 20
+    BOOTSTRAP_WATCH_MIN_TRADES = 10
+    BOOTSTRAP_MODES = {
+        "short_pump_mid",
+        "short_pump_deep",
+        "fast0_selective",
+    }
 
     def is_watch_trigger() -> bool:
         return (ev20 < 0) or (cons is not None and cons < 0.7)
@@ -298,16 +304,49 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
         observations_since_disabled=current.observations_since_disabled,
     )
 
-    # Bootstrap recovery: if mode is in DISABLED/RECOVERY but still has < BOOTSTRAP_MIN_TRADES core trades,
-    # treat it as warmup and move back towards ACTIVE instead of keeping it disabled on zero/low data.
-    if n < BOOTSTRAP_MIN_TRADES and st in {STATE_DISABLED, STATE_RECOVERY}:
+    # --- Bootstrap state machine for new/low-history modes ---
+    # Target behavior:
+    # - n_core < 10  -> WATCH (not ACTIVE, not DISABLED)
+    # - n_core >= 10 -> DISABLED if EV<=0 or EV20<0 else ACTIVE
+    # Applies ONLY to explicitly listed bootstrap modes (do not affect legacy modes / recovery logic).
+    if current.mode_name in BOOTSTRAP_MODES:
+        if n < BOOTSTRAP_WATCH_MIN_TRADES:
+            updated.current_state = STATE_WATCH
+            updated.reason = "BOOTSTRAP: insufficient history"
+            updated.disabled_at = None
+            updated.recovery_started_at = None
+            updated.recovery_confirmations = 0
+            logger.info(
+                "AUTO_RISK_GUARD_BOOTSTRAP_WATCH | mode=%s prev_state=%s n_core=%d",
+                current.mode_name,
+                st,
+                n,
+            )
+            return updated
+        # n_core >= 10: decision by EV / EV20
+        if ev <= 0 or ev20 < 0:
+            updated.current_state = STATE_DISABLED
+            updated.disabled_at = _now_iso()
+            updated.reason = "BOOTSTRAP: disabled by EV/EV20"
+            logger.info(
+                "AUTO_RISK_GUARD_BOOTSTRAP_DISABLED | mode=%s prev_state=%s n_core=%d ev=%.4f ev20=%.4f",
+                current.mode_name,
+                st,
+                n,
+                ev,
+                ev20,
+            )
+            return updated
         updated.current_state = STATE_ACTIVE
-        updated.reason = "BOOTSTRAP: insufficient history"
+        updated.disabled_at = None
+        updated.reason = "BOOTSTRAP: active by EV/EV20"
         logger.info(
-            "AUTO_RISK_GUARD_BOOTSTRAP_RESET | mode=%s prev_state=%s n_core=%d",
+            "AUTO_RISK_GUARD_BOOTSTRAP_ACTIVE | mode=%s prev_state=%s n_core=%d ev=%.4f ev20=%.4f",
             current.mode_name,
             st,
             n,
+            ev,
+            ev20,
         )
         return updated
 
