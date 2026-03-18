@@ -73,25 +73,67 @@ def _sanitize_dist_to_peak(val: object) -> float:
     return v
 
 
+TG_OUTCOME_TG_SEND_RETRY_MAX = int(os.getenv("TG_OUTCOME_TG_SEND_RETRY_MAX", "3").replace(",", "."))
+TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC = float(os.getenv("TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC", "2").replace(",", "."))
+
+
+def _send_telegram_with_retry(
+    *,
+    logger,
+    send_fn,
+    delivery_key: str,
+    symbol: str,
+    run_id: str,
+    stage: int,
+    step: str,
+) -> bool:
+    """
+    Delivery contract helper:
+    - retries Telegram send failures (exceptions),
+    - does NOT mark outcome_tg_sent (caller decides after success).
+    """
+    max_attempts = max(1, TG_OUTCOME_TG_SEND_RETRY_MAX)
+    base_backoff = max(0.0, TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC)
+    for attempt in range(1, max_attempts + 1):
+        try:
+            send_fn()
+            return True
+        except Exception:
+            log_exception(
+                logger,
+                "OUTCOME_TG_SEND_ATTEMPT_FAILED",
+                symbol=symbol,
+                run_id=run_id,
+                stage=stage,
+                step=step,
+                extra={"delivery_key": delivery_key, "attempt": attempt, "max_attempts": max_attempts},
+            )
+            if attempt < max_attempts:
+                # Exponential backoff prevents tight retry loops (TG flood guardrail).
+                time.sleep(base_backoff * (2 ** (attempt - 1)))
+    return False
+
+
+def _mark_outcome_tg_sent_by_key(*, delivery_key: str, symbol: str, run_id: str) -> None:
+    from trading.state import add_outcome_tg_sent, load_state, save_state
+
+    state = load_state()
+    add_outcome_tg_sent(state, delivery_key)
+    save_state(state)
+
+
 def _watcher_should_skip_outcome_live(
     run_id: str,
     event_id: str,
     symbol: str,
 ) -> tuple[bool, str]:
     """
-    Watcher must NOT send outcome TG when outcome will come from runner (live path).
-    Returns (should_skip, reason).
-    Skip when: EXECUTION_MODE=live OR AUTO_TRADING_ENABLE (positions opened by runner,
-    outcomes from outcome_worker/close_on_timeout).
+    Delivery idempotency gate for outcome Telegram.
+
+    The watcher is allowed to send OUTCOME TG unless it has already evidence
+    that the outcome for the delivery key was successfully delivered
+    (see `state.outcome_tg_sent`).
     """
-    try:
-        from trading.config import EXECUTION_MODE, AUTO_TRADING_ENABLE
-        if (EXECUTION_MODE or "").strip().lower() == "live":
-            return True, "live_mode"
-        if AUTO_TRADING_ENABLE:
-            return True, "auto_trading_outcome_via_runner"
-    except Exception:
-        pass
     try:
         from trading.state import load_state, outcome_tg_sent, make_position_id
         state = load_state()
@@ -211,33 +253,93 @@ def _run_short_pump_guard_blocked_outcome_watcher(
                 schema_version=3,
                 path_mode="paper",
             )
+        # Outcome delivery contract (TG): only mark outcome_tg_sent after successful TG send.
+        delivery_key = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
         try:
-            from short_pump.telegram import send_telegram as _send_tg
-            rp = str(position.get("risk_profile") or "short_pump_active_1R")
-            _send_tg(
-                "",
-                strategy=STRATEGY,
-                side="SHORT",
-                mode="PAPER",
-                event_id=str(event_id),
-                context_score=summary.get("context_score"),
-                entry_ok=True,
-                formatted=True,
-                meta={
-                    "kind": "GUARD_BLOCKED_PAPER",
-                    "exec_mode": "paper",
-                    "risk_profile": rp,
-                    "symbol": symbol,
-                    "entry_price": entry_price,
-                    "tp_price": tp_price,
-                    "sl_price": sl_price,
-                    "exit_price": summary.get("exit_price"),
-                    "pnl_pct": summary.get("pnl_pct"),
-                    "dist_to_peak_pct": entry_snapshot.get("dist_to_peak_pct"),
-                    "liq_long_usd_30s": entry_snapshot.get("liq_long_usd_30s"),
-                    "context_score": entry_snapshot.get("context_score"),
-                },
-            )
+            from trading.state import load_state, outcome_tg_sent
+            state = load_state()
+            if outcome_tg_sent(state, delivery_key):
+                log_info(
+                    logger,
+                    "OUTCOME_TG_SEND_SKIP_ALREADY_FINALIZED",
+                    symbol=symbol,
+                    run_id=run_id,
+                    stage=None,
+                    step="OUTCOME",
+                    extra={"delivery_key": delivery_key},
+                )
+            else:
+                from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID, send_telegram as _send_tg
+
+                rp = str(position.get("risk_profile") or "short_pump_active_1R")
+                tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
+
+                def _send_fn() -> None:
+                    _send_tg(
+                        "",
+                        strategy=STRATEGY,
+                        side="SHORT",
+                        mode="PAPER",
+                        event_id=str(event_id),
+                        context_score=summary.get("context_score"),
+                        entry_ok=True,
+                        formatted=True,
+                        meta={
+                            "kind": "GUARD_BLOCKED_PAPER",
+                            "exec_mode": "paper",
+                            "risk_profile": rp,
+                            "symbol": symbol,
+                            "entry_price": entry_price,
+                            "tp_price": tp_price,
+                            "sl_price": sl_price,
+                            "exit_price": summary.get("exit_price"),
+                            "pnl_pct": summary.get("pnl_pct"),
+                            "dist_to_peak_pct": entry_snapshot.get("dist_to_peak_pct"),
+                            "liq_long_usd_30s": entry_snapshot.get("liq_long_usd_30s"),
+                            "context_score": entry_snapshot.get("context_score"),
+                        },
+                    )
+
+                ok = _send_telegram_with_retry(
+                    logger=logger,
+                    send_fn=_send_fn,
+                    delivery_key=delivery_key,
+                    symbol=symbol,
+                    run_id=run_id,
+                    stage=None,
+                    step="OUTCOME_TG",
+                )
+                if ok and tg_ready:
+                    _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=symbol, run_id=run_id)
+                    log_info(
+                        logger,
+                        "OUTCOME_TG_DELIVERED_AND_MARKED",
+                        symbol=symbol,
+                        run_id=run_id,
+                        stage=None,
+                        step="OUTCOME_TG",
+                        extra={"delivery_key": delivery_key, "delivery_mode": "paper_guard_blocked"},
+                    )
+                elif ok and not tg_ready:
+                    log_info(
+                        logger,
+                        "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
+                        symbol=symbol,
+                        run_id=run_id,
+                        stage=None,
+                        step="OUTCOME_TG",
+                        extra={"delivery_key": delivery_key},
+                    )
+                elif not ok:
+                    log_info(
+                        logger,
+                        "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
+                        symbol=symbol,
+                        run_id=run_id,
+                        stage=None,
+                        step="OUTCOME_TG",
+                        extra={"delivery_key": delivery_key},
+                    )
         except Exception:
             log_exception(logger, "GUARD_BLOCKED_PAPER_TG_ERROR", symbol=symbol, run_id=run_id, step="OUTCOME")
         from trading.paper_outcome import close_from_outcome
@@ -1897,87 +1999,158 @@ def run_watch_for_symbol(
                         log_exception(logger, "CSV_WRITE failed for summary", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_summary})
 
                     if TG_SEND_OUTCOME:
+                        delivery_event_id = str(event_id or "")
+                        from trading.state import make_position_id
+                        delivery_key = make_position_id(STRATEGY, run_id or "", delivery_event_id, cfg.symbol)
+
+                        from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID
+                        tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
+
                         try:
-                            _skip_tg, _tg_reason = _watcher_should_skip_outcome_live(run_id, str(event_id), cfg.symbol)
+                            _skip_tg, _tg_reason = _watcher_should_skip_outcome_live(run_id, delivery_event_id, cfg.symbol)
                             if _skip_tg:
                                 log_info(
                                     logger,
-                                    "WATCHER_OUTCOME_TG_BLOCKED_LIVE" if _tg_reason == "live_mode" else "WATCHER_OUTCOME_ALREADY_FINALIZED",
+                                    "OUTCOME_TG_SEND_SKIP_ALREADY_FINALIZED",
                                     symbol=cfg.symbol,
                                     run_id=run_id,
                                     stage=st.stage,
-                                    step="OUTCOME",
-                                    extra={"event_id": str(event_id), "reason": _tg_reason},
+                                    step="OUTCOME_TG",
+                                    extra={"delivery_key": delivery_key, "reason": _tg_reason},
                                 )
                             else:
-                                event_id = entry_payload.get("event_id") or run_id
+                                tg_event_id = entry_payload.get("event_id") or run_id
                                 context_score_msg = entry_payload.get("context_score", context_score)
                                 _rp, _rm, _ = ("", 0, 0)
                                 _nt, _lev, _mm = (0, 4, "isolated")
                                 try:
                                     from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+
                                     _rp, _rm, _ = get_risk_profile(
                                         "short_pump",
                                         stage=entry_payload.get("stage"),
                                         dist_to_peak_pct=entry_payload.get("dist_to_peak_pct"),
-                                        event_id=str(event_id),
+                                        event_id=str(tg_event_id),
                                         symbol=cfg.symbol,
                                     )
                                     if _rp:
                                         _nt, _lev, _mm = get_notional_and_leverage(_rm)
                                 except Exception:
                                     pass
-                                send_telegram(
-                                    format_outcome(
-                                        strategy="short_pump",
-                                        side="SHORT",
-                                        symbol=cfg.symbol,
-                                        run_id=run_id,
-                                        event_id=str(event_id),
-                                        outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
-                                        entry_price=summary.get("entry_price") or entry_snapshot.get("entry_price"),
-                                        tp_price=entry_snapshot.get("tp_price"),
-                                        sl_price=entry_snapshot.get("sl_price"),
-                                        tp_pct=entry_snapshot.get("tp_pct"),
-                                        sl_pct=entry_snapshot.get("sl_pct"),
-                                        pnl_pct=summary.get("pnl_pct"),
-                                        hold_seconds=summary.get("hold_seconds"),
-                                        mae_pct=summary.get("mae_pct"),
-                                        mfe_pct=summary.get("mfe_pct"),
-                                        debug_payload=summary,
-                                        risk_profile=_rp or None,
-                                        notional_usd=_nt if _nt > 0 else None,
-                                        leverage=_lev,
-                                        margin_mode=_mm,
-                                    ),
+
+                                tg_text = format_outcome(
                                     strategy="short_pump",
                                     side="SHORT",
-                                    mode="FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
-                                    event_id=str(event_id),
-                                    context_score=float(context_score_msg) if context_score_msg is not None else None,
-                                    entry_ok=True,
-                                    skip_reasons=None,
-                                    formatted=True,
-                                    meta={
-                                        "kind": "OUTCOME",
-                                        "exec_mode": (cfg.mode or "").strip().lower() or "paper",
-                                        "risk_profile": _rp or "",
-                                        "symbol": cfg.symbol,
-                                        "entry_price": summary.get("entry_price") or entry_snapshot.get("entry_price"),
-                                        "tp_price": entry_snapshot.get("tp_price"),
-                                        "sl_price": entry_snapshot.get("sl_price"),
-                                        "exit_price": summary.get("exit_price"),
-                                        "pnl_pct": summary.get("pnl_pct"),
-                                        "notional_usd": _nt if _nt > 0 else None,
-                                        "leverage": _lev,
-                                        "margin_mode": _mm,
-                                        "dist_to_peak_pct": entry_payload.get("dist_to_peak_pct"),
-                                        "liq_long_usd_30s": entry_payload.get("liq_long_usd_30s"),
-                                        "context_score": context_score_msg,
-                                    },
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    event_id=str(tg_event_id),
+                                    outcome=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
+                                    entry_price=summary.get("entry_price") or entry_snapshot.get("entry_price"),
+                                    tp_price=entry_snapshot.get("tp_price"),
+                                    sl_price=entry_snapshot.get("sl_price"),
+                                    tp_pct=entry_snapshot.get("tp_pct"),
+                                    sl_pct=entry_snapshot.get("sl_pct"),
+                                    pnl_pct=summary.get("pnl_pct"),
+                                    hold_seconds=summary.get("hold_seconds"),
+                                    mae_pct=summary.get("mae_pct"),
+                                    mfe_pct=summary.get("mfe_pct"),
+                                    debug_payload=summary,
+                                    risk_profile=_rp or None,
+                                    notional_usd=_nt if _nt > 0 else None,
+                                    leverage=_lev,
+                                    margin_mode=_mm,
                                 )
-                        except Exception as e:
-                            log_exception(logger, "TELEGRAM_SEND failed for OUTCOME", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TELEGRAM_SEND")
+
+                                def _send_fn() -> None:
+                                    send_telegram(
+                                        tg_text,
+                                        strategy="short_pump",
+                                        side="SHORT",
+                                        mode="FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
+                                        event_id=str(tg_event_id),
+                                        context_score=float(context_score_msg) if context_score_msg is not None else None,
+                                        entry_ok=True,
+                                        skip_reasons=None,
+                                        formatted=True,
+                                        meta={
+                                            "kind": "OUTCOME",
+                                            "exec_mode": (cfg.mode or "").strip().lower() or "paper",
+                                            "risk_profile": _rp or "",
+                                            "symbol": cfg.symbol,
+                                            "entry_price": summary.get("entry_price") or entry_snapshot.get("entry_price"),
+                                            "tp_price": entry_snapshot.get("tp_price"),
+                                            "sl_price": entry_snapshot.get("sl_price"),
+                                            "exit_price": summary.get("exit_price"),
+                                            "pnl_pct": summary.get("pnl_pct"),
+                                            "notional_usd": _nt if _nt > 0 else None,
+                                            "leverage": _lev,
+                                            "margin_mode": _mm,
+                                            "dist_to_peak_pct": entry_payload.get("dist_to_peak_pct"),
+                                            "liq_long_usd_30s": entry_payload.get("liq_long_usd_30s"),
+                                            "context_score": context_score_msg,
+                                        },
+                                    )
+
+                                log_info(
+                                    logger,
+                                    "OUTCOME_TG_SEND_START",
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    stage=st.stage,
+                                    step="OUTCOME_TG",
+                                    extra={"delivery_key": delivery_key, "delivery_reason": "tg_not_already_finalized"},
+                                )
+
+                                ok = _send_telegram_with_retry(
+                                    logger=logger,
+                                    send_fn=_send_fn,
+                                    delivery_key=delivery_key,
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    stage=st.stage,
+                                    step="OUTCOME_TG",
+                                )
+
+                                if ok and tg_ready:
+                                    _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=cfg.symbol, run_id=run_id)
+                                    log_info(
+                                        logger,
+                                        "OUTCOME_TG_DELIVERED_AND_MARKED",
+                                        symbol=cfg.symbol,
+                                        run_id=run_id,
+                                        stage=st.stage,
+                                        step="OUTCOME_TG",
+                                        extra={"delivery_key": delivery_key, "tg_delivery_mode": "outcome_watch"},
+                                    )
+                                elif ok and not tg_ready:
+                                    log_info(
+                                        logger,
+                                        "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
+                                        symbol=cfg.symbol,
+                                        run_id=run_id,
+                                        stage=st.stage,
+                                        step="OUTCOME_TG",
+                                        extra={"delivery_key": delivery_key},
+                                    )
+                                else:
+                                    log_info(
+                                        logger,
+                                        "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
+                                        symbol=cfg.symbol,
+                                        run_id=run_id,
+                                        stage=st.stage,
+                                        step="OUTCOME_TG",
+                                        extra={"delivery_key": delivery_key},
+                                    )
+                        except Exception:
+                            log_exception(
+                                logger,
+                                "TELEGRAM_SEND failed for OUTCOME",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="TELEGRAM_SEND",
+                            )
 
                     # Paper: close position on OUTCOME (TP_hit/SL_hit)
                     try:

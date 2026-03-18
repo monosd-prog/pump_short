@@ -16,7 +16,6 @@ from typing import Any, Dict, Optional
 
 from trading.config import CLOSES_PATH, POSITION_TTL_SECONDS, TIMEOUT_EXIT_MODE
 from trading.state import (
-    add_outcome_tg_sent,
     load_state,
     make_position_id,
     record_close,
@@ -286,7 +285,6 @@ def close_from_outcome(
             "mae_r": (f"{float(mae_r):.4f}" if mae_r != "" else ""),
         }
     )
-    add_outcome_tg_sent(state, str(pos.get("trade_id") or pid))
     return True
 
 
@@ -368,7 +366,6 @@ def close_from_live_outcome(
             "outcome_source": "bybit",
         }
     )
-    add_outcome_tg_sent(state, str(pos.get("trade_id") or pid))
     return True
 
 

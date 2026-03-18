@@ -64,8 +64,41 @@ FAST0_MAX_WATCHERS = int(os.getenv("FAST0_MAX_WATCHERS", "20"))
 LIVE_OUTCOME_RETRY_MAX_SEC = int(os.getenv("LIVE_OUTCOME_RETRY_MAX_SEC", "120").replace(",", "."))
 LIVE_OUTCOME_RETRY_INTERVAL_SEC = int(os.getenv("LIVE_OUTCOME_RETRY_INTERVAL_SEC", "10").replace(",", "."))
 
+TG_OUTCOME_TG_SEND_RETRY_MAX = int(os.getenv("TG_OUTCOME_TG_SEND_RETRY_MAX", "3").replace(",", "."))
+TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC = float(os.getenv("TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC", "2").replace(",", "."))
+
 _active_fast0_watchers = 0
 _fast0_watchers_lock = threading.Lock()
+
+
+def _send_telegram_with_retry(*, logger, send_fn, delivery_key: str, symbol: str, run_id: str, stage: int | None, step: str) -> bool:
+    max_attempts = max(1, TG_OUTCOME_TG_SEND_RETRY_MAX)
+    base_backoff = max(0.0, TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC)
+    for attempt in range(1, max_attempts + 1):
+        try:
+            send_fn()
+            return True
+        except Exception:
+            log_exception(
+                logger,
+                "OUTCOME_TG_SEND_ATTEMPT_FAILED",
+                symbol=symbol,
+                run_id=run_id,
+                stage=stage,
+                step=step,
+                extra={"delivery_key": delivery_key, "attempt": attempt, "max_attempts": max_attempts},
+            )
+            if attempt < max_attempts:
+                time.sleep(base_backoff * (2 ** (attempt - 1)))
+    return False
+
+
+def _mark_outcome_tg_sent_by_key(*, delivery_key: str, symbol: str, run_id: str) -> None:
+    from trading.state import add_outcome_tg_sent, load_state, save_state
+
+    state = load_state()
+    add_outcome_tg_sent(state, delivery_key)
+    save_state(state)
 
 
 def _volume_from_candles(candles: pd.DataFrame, last_n: int) -> float:
@@ -284,41 +317,122 @@ def _run_fast0_outcome_watcher(
                                     from trading.risk_profile import get_risk_profile, get_notional_and_leverage
                                     _rp, _rm, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=liq_long_usd_30s or 0)
                                     _nt, _lev, _mm = get_notional_and_leverage(_rm)
-                                    msg = format_fast0_outcome_message(
-                                        symbol=symbol, run_id=run_id, event_id=event_id,
-                                        res=res_val, entry_price=entry_price, tp_price=tp_price, sl_price=sl_price,
-                                        exit_price=exit_price_val, pnl_pct=pnl_val, hold_seconds=0,
-                                        dist_to_peak_pct=dist_val, context_score=ctx_val,
-                                        risk_profile=_rp or None, notional_usd=_nt if _nt > 0 else None,
-                                        leverage=_lev, margin_mode=_mm,
-                                    )
-                                    send_telegram(
-                                        msg,
-                                        strategy=STRATEGY,
-                                        side="SHORT",
-                                        mode="FAST0",
-                                        event_id=event_id,
-                                        context_score=ctx_val,
-                                        entry_ok=True,
-                                        formatted=True,
-                                        meta={
-                                            "kind": "OUTCOME",
-                                            "exec_mode": "paper",
-                                            "risk_profile": _rp or "",
-                                            "symbol": symbol,
-                                            "entry_price": entry_price,
-                                            "tp_price": tp_price,
-                                            "sl_price": sl_price,
-                                            "exit_price": exit_price_val,
-                                            "pnl_pct": pnl_val,
-                                            "notional_usd": _nt if _nt > 0 else None,
-                                            "leverage": _lev,
-                                            "margin_mode": _mm,
-                                            "dist_to_peak_pct": dist_val,
-                                            "liq_long_usd_30s": liq_long_usd_30s,
-                                            "context_score": ctx_val,
-                                        },
-                                    )
+                                    from trading.state import load_state, outcome_tg_sent, make_position_id
+                                    from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID
+
+                                    delivery_key = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
+                                    state = load_state()
+                                    if outcome_tg_sent(state, delivery_key):
+                                        log_info(
+                                            logger,
+                                            "OUTCOME_TG_SEND_SKIP_ALREADY_FINALIZED",
+                                            symbol=symbol,
+                                            run_id=run_id,
+                                            stage=None,
+                                            step="FAST0_OUTCOME_TG",
+                                            extra={"delivery_key": delivery_key},
+                                        )
+                                    else:
+                                        tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
+                                        msg = format_fast0_outcome_message(
+                                            symbol=symbol,
+                                            run_id=run_id,
+                                            event_id=event_id,
+                                            res=res_val,
+                                            entry_price=entry_price,
+                                            tp_price=tp_price,
+                                            sl_price=sl_price,
+                                            exit_price=exit_price_val,
+                                            pnl_pct=pnl_val,
+                                            hold_seconds=0,
+                                            dist_to_peak_pct=dist_val,
+                                            context_score=ctx_val,
+                                            risk_profile=_rp or None,
+                                            notional_usd=_nt if _nt > 0 else None,
+                                            leverage=_lev,
+                                            margin_mode=_mm,
+                                        )
+
+                                        def _send_fn() -> None:
+                                            send_telegram(
+                                                msg,
+                                                strategy=STRATEGY,
+                                                side="SHORT",
+                                                mode="FAST0",
+                                                event_id=event_id,
+                                                context_score=ctx_val,
+                                                entry_ok=True,
+                                                formatted=True,
+                                                meta={
+                                                    "kind": "OUTCOME",
+                                                    "exec_mode": "paper",
+                                                    "risk_profile": _rp or "",
+                                                    "symbol": symbol,
+                                                    "entry_price": entry_price,
+                                                    "tp_price": tp_price,
+                                                    "sl_price": sl_price,
+                                                    "exit_price": exit_price_val,
+                                                    "pnl_pct": pnl_val,
+                                                    "notional_usd": _nt if _nt > 0 else None,
+                                                    "leverage": _lev,
+                                                    "margin_mode": _mm,
+                                                    "dist_to_peak_pct": dist_val,
+                                                    "liq_long_usd_30s": liq_long_usd_30s,
+                                                    "context_score": ctx_val,
+                                                },
+                                            )
+
+                                        log_info(
+                                            logger,
+                                            "OUTCOME_TG_SEND_START",
+                                            symbol=symbol,
+                                            run_id=run_id,
+                                            stage=None,
+                                            step="FAST0_OUTCOME_TG",
+                                            extra={"delivery_key": delivery_key, "delivery_reason": "tg_not_already_finalized"},
+                                        )
+
+                                        ok = _send_telegram_with_retry(
+                                            logger=logger,
+                                            send_fn=_send_fn,
+                                            delivery_key=delivery_key,
+                                            symbol=symbol,
+                                            run_id=run_id,
+                                            stage=None,
+                                            step="FAST0_OUTCOME_TG",
+                                        )
+
+                                        if ok and tg_ready:
+                                            _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=symbol, run_id=run_id)
+                                            log_info(
+                                                logger,
+                                                "OUTCOME_TG_DELIVERED_AND_MARKED",
+                                                symbol=symbol,
+                                                run_id=run_id,
+                                                stage=None,
+                                                step="FAST0_OUTCOME_TG",
+                                                extra={"delivery_key": delivery_key, "delivery_mode": "fast0_outcome_bybit_paper"},
+                                            )
+                                        elif ok and not tg_ready:
+                                            log_info(
+                                                logger,
+                                                "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
+                                                symbol=symbol,
+                                                run_id=run_id,
+                                                stage=None,
+                                                step="FAST0_OUTCOME_TG",
+                                                extra={"delivery_key": delivery_key},
+                                            )
+                                        else:
+                                            log_info(
+                                                logger,
+                                                "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
+                                                symbol=symbol,
+                                                run_id=run_id,
+                                                stage=None,
+                                                step="FAST0_OUTCOME_TG",
+                                                extra={"delivery_key": delivery_key},
+                                            )
                                 except Exception:
                                     log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
                         return
@@ -480,51 +594,122 @@ def _run_fast0_outcome_watcher(
                             from trading.risk_profile import get_risk_profile, get_notional_and_leverage
                             _rp, _rm, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=liq_val)
                             _nt, _lev, _mm = get_notional_and_leverage(_rm)
-                            msg = format_fast0_outcome_message(
-                                symbol=symbol,
-                                run_id=run_id,
-                                event_id=event_id,
-                                res=res_val,
-                                entry_price=entry_price,
-                                tp_price=tp_price,
-                                sl_price=sl_price,
-                                exit_price=exit_price_val,
-                                pnl_pct=pnl_val,
-                                hold_seconds=hold_val,
-                                dist_to_peak_pct=dist_val if dist_val else None,
-                                context_score=ctx_val if ctx_val else None,
-                                risk_profile=_rp or None,
-                                notional_usd=_nt if _nt > 0 else None,
-                                leverage=_lev,
-                                margin_mode=_mm,
-                            )
-                            send_telegram(
-                                msg,
-                                strategy=STRATEGY,
-                                side="SHORT",
-                                mode="FAST0",
-                                event_id=event_id,
-                                context_score=ctx_val if ctx_val else None,
-                                entry_ok=True,
-                                formatted=True,
-                                meta={
-                                    "kind": "OUTCOME",
-                                    "exec_mode": (mode or "").strip().lower() or "paper",
-                                    "risk_profile": _rp or "",
-                                    "symbol": symbol,
-                                    "entry_price": entry_price,
-                                    "tp_price": tp_price,
-                                    "sl_price": sl_price,
-                                    "exit_price": exit_price_val,
-                                    "pnl_pct": pnl_val,
-                                    "notional_usd": _nt if _nt > 0 else None,
-                                    "leverage": _lev,
-                                    "margin_mode": _mm,
-                                    "dist_to_peak_pct": dist_val if dist_val else None,
-                                    "liq_long_usd_30s": liq_val,
-                                    "context_score": ctx_val if ctx_val else None,
-                                },
-                            )
+                            from trading.state import load_state, outcome_tg_sent, make_position_id
+                            from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID
+
+                            delivery_key = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
+                            state = load_state()
+                            if outcome_tg_sent(state, delivery_key):
+                                log_info(
+                                    logger,
+                                    "OUTCOME_TG_SEND_SKIP_ALREADY_FINALIZED",
+                                    symbol=symbol,
+                                    run_id=run_id,
+                                    stage=None,
+                                    step="FAST0_OUTCOME_TG",
+                                    extra={"delivery_key": delivery_key},
+                                )
+                            else:
+                                tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
+                                msg = format_fast0_outcome_message(
+                                    symbol=symbol,
+                                    run_id=run_id,
+                                    event_id=event_id,
+                                    res=res_val,
+                                    entry_price=entry_price,
+                                    tp_price=tp_price,
+                                    sl_price=sl_price,
+                                    exit_price=exit_price_val,
+                                    pnl_pct=pnl_val,
+                                    hold_seconds=hold_val,
+                                    dist_to_peak_pct=dist_val if dist_val else None,
+                                    context_score=ctx_val if ctx_val else None,
+                                    risk_profile=_rp or None,
+                                    notional_usd=_nt if _nt > 0 else None,
+                                    leverage=_lev,
+                                    margin_mode=_mm,
+                                )
+
+                                def _send_fn() -> None:
+                                    send_telegram(
+                                        msg,
+                                        strategy=STRATEGY,
+                                        side="SHORT",
+                                        mode="FAST0",
+                                        event_id=event_id,
+                                        context_score=ctx_val if ctx_val else None,
+                                        entry_ok=True,
+                                        formatted=True,
+                                        meta={
+                                            "kind": "OUTCOME",
+                                            "exec_mode": (mode or "").strip().lower() or "paper",
+                                            "risk_profile": _rp or "",
+                                            "symbol": symbol,
+                                            "entry_price": entry_price,
+                                            "tp_price": tp_price,
+                                            "sl_price": sl_price,
+                                            "exit_price": exit_price_val,
+                                            "pnl_pct": pnl_val,
+                                            "notional_usd": _nt if _nt > 0 else None,
+                                            "leverage": _lev,
+                                            "margin_mode": _mm,
+                                            "dist_to_peak_pct": dist_val if dist_val else None,
+                                            "liq_long_usd_30s": liq_val,
+                                            "context_score": ctx_val if ctx_val else None,
+                                        },
+                                    )
+
+                                log_info(
+                                    logger,
+                                    "OUTCOME_TG_SEND_START",
+                                    symbol=symbol,
+                                    run_id=run_id,
+                                    stage=None,
+                                    step="FAST0_OUTCOME_TG",
+                                    extra={"delivery_key": delivery_key, "delivery_reason": "tg_not_already_finalized"},
+                                )
+
+                                ok = _send_telegram_with_retry(
+                                    logger=logger,
+                                    send_fn=_send_fn,
+                                    delivery_key=delivery_key,
+                                    symbol=symbol,
+                                    run_id=run_id,
+                                    stage=None,
+                                    step="FAST0_OUTCOME_TG",
+                                )
+
+                                if ok and tg_ready:
+                                    _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=symbol, run_id=run_id)
+                                    log_info(
+                                        logger,
+                                        "OUTCOME_TG_DELIVERED_AND_MARKED",
+                                        symbol=symbol,
+                                        run_id=run_id,
+                                        stage=None,
+                                        step="FAST0_OUTCOME_TG",
+                                        extra={"delivery_key": delivery_key, "delivery_mode": "fast0_outcome_candles"},
+                                    )
+                                elif ok and not tg_ready:
+                                    log_info(
+                                        logger,
+                                        "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
+                                        symbol=symbol,
+                                        run_id=run_id,
+                                        stage=None,
+                                        step="FAST0_OUTCOME_TG",
+                                        extra={"delivery_key": delivery_key},
+                                    )
+                                else:
+                                    log_info(
+                                        logger,
+                                        "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
+                                        symbol=symbol,
+                                        run_id=run_id,
+                                        stage=None,
+                                        step="FAST0_OUTCOME_TG",
+                                        extra={"delivery_key": delivery_key},
+                                    )
                         except Exception:
                             log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
             # Paper: close position on OUTCOME (TP_hit/SL_hit). Also for guard-blocked (position.mode=paper).
