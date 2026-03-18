@@ -54,6 +54,7 @@ FEATURES = [
     "volume_1m",
     "volume_zscore_20",
     "volume_ratio_1m_20",
+    "volume_ratio_5m_20",
     # new velocity/shape
     "price_change_30s_pct",
     "price_change_1m_pct",
@@ -62,6 +63,10 @@ FEATURES = [
     "green_candles_5",
     "max_candle_body_pct_5",
     "wick_body_ratio_last",
+    # time-life
+    "time_since_peak_sec",
+    "time_since_signal_sec",
+    "pump_age_sec",
 ]
 
 
@@ -156,6 +161,12 @@ def main() -> None:
     ap.add_argument("--out-model", type=str, default=str(Path("models") / "lgbm_entry_filter.txt"))
     ap.add_argument("--out-meta", type=str, default=str(Path("models") / "lgbm_entry_filter_meta.json"))
     ap.add_argument("--out-report", type=str, default=str(Path("reports") / "lgbm_entry_filter_report.txt"))
+    ap.add_argument(
+        "--max-nan-frac",
+        type=float,
+        default=0.7,
+        help="Max allowed NaN fraction per row across selected features (MVP: 0.7).",
+    )
     args = ap.parse_args()
 
     base_dir = Path(args.data_dir)
@@ -180,28 +191,54 @@ def main() -> None:
     if df.empty:
         raise SystemExit("No data loaded.")
 
+    print(f"[ML_TRAIN] rows_joined={int(len(df))}")
+
     # Filter TP/SL only
     outc = df.get("outcome", pd.Series([], dtype=str)).astype(str).str.strip()
     mask = outc.isin(["TP_hit", "SL_hit"])
     df = df.loc[mask].copy()
     df["target"] = (outc.loc[mask] == "TP_hit").astype(int).values
 
+    rows_tpsl = int(len(df))
+    print(f"[ML_TRAIN] rows_tpsl={rows_tpsl} (TP_hit/SL_hit only)")
+
     # Keep only numeric features
     feat_present = [f for f in FEATURES if f in df.columns]
+    print(f"[ML_TRAIN] features_present ({len(feat_present)}): {feat_present}")
     X_raw = df[feat_present].copy()
     X, med = _impute_median(X_raw, feat_present)
 
-    # Drop rows with too many NaN originally (before impute): allow up to 30% missing
+    if not feat_present:
+        raise SystemExit("No requested features are present in the joined dataset. Aborting.")
+
+    # Drop rows with too many NaN originally (before impute): allow up to max_nan_frac missing
     nan_frac = X_raw.apply(lambda r: pd.to_numeric(r, errors="coerce").isna().mean(), axis=1)
-    df = df.loc[nan_frac <= 0.3].copy()
+    df = df.loc[nan_frac <= float(args.max_nan_frac)].copy()
     X = X.loc[df.index].copy()
     y = df["target"].astype(int).values
+
+    print(f"[ML_TRAIN] rows_after_nan_filter={int(len(df))} (max-nan-frac={float(args.max_nan_frac)})")
+    if int(len(df)) == 0:
+        raise SystemExit(
+            "Train dataset is empty after NaN filtering. "
+            "Try increasing --max-nan-frac (e.g. 0.7) or check feature availability in datasets."
+        )
 
     # Time split (by outcome_time_utc)
     ts_col = "outcome_time_utc" if "outcome_time_utc" in df.columns else ("wall_time_utc" if "wall_time_utc" in df.columns else None)
     if ts_col is None:
         raise SystemExit("No time column for time split (need outcome_time_utc or wall_time_utc).")
     train_df, valid_df = _time_split(df.assign(**{**{c: X[c] for c in X.columns}}), ts_col=ts_col, valid_frac=float(args.valid_frac))
+
+    n_train = int(len(train_df))
+    n_valid = int(len(valid_df))
+    print(f"[ML_TRAIN] n_train={n_train} n_valid={n_valid} valid-frac={float(args.valid_frac)}")
+    if n_train == 0 or n_valid == 0:
+        raise SystemExit(
+            f"Empty train or valid set after time split. n_train={n_train} n_valid={n_valid}. "
+            "Try increasing --days or adjusting --valid-frac."
+        )
+
     X_train = train_df[feat_present].values
     y_train = train_df["target"].astype(int).values
     X_valid = valid_df[feat_present].values
