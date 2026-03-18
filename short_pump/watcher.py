@@ -1594,7 +1594,7 @@ def run_watch_for_symbol(
                         formatted=True,
                         meta={
                             "kind": "ENTRY_OK",
-                            "exec_mode": (cfg.mode or "").strip().lower() or "paper",
+                            "exec_mode": (os.getenv("EXECUTION_MODE") or "paper").strip().lower() or "paper",
                             "risk_profile": _rp_entry or "",
                             "symbol": cfg.symbol,
                             "entry_price": entry_price,
