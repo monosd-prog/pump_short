@@ -34,7 +34,7 @@ import pandas as pd
 import lightgbm as lgb
 
 from analytics.load import load_events_v2, load_outcomes, load_trades_v3
-from analytics.factor_report import _join_outcomes_trades_events  # reuse join logic
+from analytics.factor_report import _join_outcomes_trades_events, _fill_from_payload_json  # reuse join logic
 
 
 STRATEGIES_DEFAULT = ("short_pump", "short_pump_fast0")
@@ -190,6 +190,10 @@ def main() -> None:
     df = pd.concat(rows_all, ignore_index=True) if rows_all else pd.DataFrame()
     if df.empty:
         raise SystemExit("No data loaded.")
+
+    # Some datasets were written with older event schemas (missing a subset of factor columns).
+    # For ML we can safely backfill factor values from payload_json when CSV columns are empty.
+    df = _fill_from_payload_json(df)
 
     print(f"[ML_TRAIN] rows_joined={int(len(df))}")
 

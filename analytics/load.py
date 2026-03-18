@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import csv
 from typing import Iterable
 
 import pandas as pd
 
 from analytics.utils import dprint, DEBUG_ENABLED
+from common.dataset_schema import EVENT_FIELDS_V2, EVENT_FIELDS_V3
 
 
 DEBUG_LOAD = True
@@ -480,6 +482,46 @@ def _read_csv(path: Path) -> pd.DataFrame:
     try:
         if path.name in ("outcomes_v2.csv", "outcomes_v3.csv"):
             df = _read_csv_outcomes_v2_v3(path)
+        elif path.name in ("events_v2.csv", "events_v3.csv"):
+            expected = EVENT_FIELDS_V3 if path.name == "events_v3.csv" else EVENT_FIELDS_V2
+            with open(path, "r", newline="", encoding="utf-8", errors="replace") as f:
+                reader = csv.reader(f)
+                header = next(reader, [])
+                if header == list(expected) and len(header) == len(expected):
+                    # Header is already aligned with current schema.
+                    df = pd.read_csv(path, low_memory=False)
+                else:
+                    expected_len = len(expected)
+                    header_len = len(header)
+                    # Map legacy header columns into the expected field order.
+                    legacy_to_expected_idx = {
+                        col: expected.index(col) for col in header if col in expected
+                    }
+                    out_rows = []
+                    for row in reader:
+                        if not row:
+                            continue
+                        if len(row) == expected_len:
+                            # Row written using current DictWriter fieldnames => expected ordering.
+                            out_rows.append(row)
+                            continue
+                        if len(row) == header_len:
+                            row_out = [None] * expected_len
+                            for i, val in enumerate(row):
+                                col = header[i] if i < header_len else None
+                                if col is None:
+                                    continue
+                                idx = legacy_to_expected_idx.get(col)
+                                if idx is not None:
+                                    row_out[idx] = val
+                            out_rows.append(row_out)
+                            continue
+                        # Best-effort: pad/truncate to expected_len by position.
+                        row_out = [None] * expected_len
+                        for i, val in enumerate(row[:expected_len]):
+                            row_out[i] = val
+                        out_rows.append(row_out)
+                    df = pd.DataFrame(out_rows, columns=list(expected))
         else:
             df = pd.read_csv(path, low_memory=False)
     except (pd.errors.EmptyDataError, Exception) as e:
