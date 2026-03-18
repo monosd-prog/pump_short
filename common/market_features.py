@@ -5,6 +5,231 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 import pandas as pd
 
 
+def _safe_float(val: Any) -> Optional[float]:
+    try:
+        if val is None:
+            return None
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pct_change(cur: Optional[float], past: Optional[float]) -> Optional[float]:
+    if cur is None or past is None:
+        return None
+    if past == 0:
+        return None
+    return float((cur - past) / past * 100.0)
+
+
+def _close_at_or_before(candles: Optional[pd.DataFrame], ts: pd.Timestamp) -> Optional[float]:
+    if candles is None or candles.empty:
+        return None
+    if "ts" not in candles.columns or "close" not in candles.columns:
+        return None
+    try:
+        x = candles[candles["ts"] <= ts]
+        if x is None or x.empty:
+            return None
+        return _safe_float(x.iloc[-1]["close"])
+    except Exception:
+        return None
+
+
+def _peak_ts_utc_from_5m(candles_5m: Optional[pd.DataFrame], lookback: int = 20) -> Optional[pd.Timestamp]:
+    """
+    Best-effort: infer peak timestamp as the ts of max(high) in last `lookback` 5m candles.
+    Uses already fetched 5m klines; no network calls.
+    """
+    if candles_5m is None or candles_5m.empty:
+        return None
+    if "ts" not in candles_5m.columns or "high" not in candles_5m.columns:
+        return None
+    try:
+        tail = candles_5m.tail(max(1, int(lookback)))
+        if tail.empty:
+            return None
+        idx = tail["high"].astype(float).idxmax()
+        ts_val = candles_5m.loc[idx, "ts"]
+        return pd.Timestamp(ts_val) if ts_val is not None else None
+    except Exception:
+        return None
+
+
+def price_velocity_features(
+    candles_1m: Optional[pd.DataFrame],
+    *,
+    now_ts_utc: pd.Timestamp,
+) -> Dict[str, Optional[float]]:
+    """
+    Candle-only velocity/acceleration features from 1m klines.
+    Returns percent changes and a stable acceleration ratio.
+    """
+    if candles_1m is None or candles_1m.empty:
+        return {
+            "price_change_30s_pct": None,
+            "price_change_1m_pct": None,
+            "price_change_3m_pct": None,
+            "accel_30s_vs_3m": None,
+        }
+    cur = _safe_float(candles_1m.iloc[-1].get("close")) if "close" in candles_1m.columns else None
+    past_30s = _close_at_or_before(candles_1m, now_ts_utc - pd.Timedelta(seconds=30))
+    past_1m = _close_at_or_before(candles_1m, now_ts_utc - pd.Timedelta(seconds=60))
+    past_3m = _close_at_or_before(candles_1m, now_ts_utc - pd.Timedelta(seconds=180))
+
+    ch30 = _pct_change(cur, past_30s)
+    ch1m = _pct_change(cur, past_1m)
+    ch3m = _pct_change(cur, past_3m)
+
+    accel = None
+    if ch30 is not None and ch3m is not None:
+        eps = 0.2  # pct points, stabilizes denominator for near-zero 3m moves
+        denom = max(abs(float(ch3m)), eps)
+        accel = float(ch30) / denom
+
+    return {
+        "price_change_30s_pct": ch30,
+        "price_change_1m_pct": ch1m,
+        "price_change_3m_pct": ch3m,
+        "accel_30s_vs_3m": accel,
+    }
+
+
+def pump_shape_features_5m(candles_5m: Optional[pd.DataFrame], *, lookback: int = 5) -> Dict[str, Optional[float]]:
+    """
+    Candle-only shape/structure features from 5m klines.
+    """
+    out: Dict[str, Optional[float]] = {
+        "green_candles_5": None,
+        "max_candle_body_pct_5": None,
+        "avg_candle_body_pct_5": None,
+        "upper_wick_ratio_last": None,
+        "lower_wick_ratio_last": None,
+        "wick_body_ratio_last": None,
+    }
+    if candles_5m is None or candles_5m.empty:
+        return out
+    required = {"open", "high", "low", "close"}
+    if not required.issubset(set(candles_5m.columns)):
+        return out
+    try:
+        tail = candles_5m.tail(max(1, int(lookback))).copy()
+        if tail.empty:
+            return out
+        o = tail["open"].astype(float)
+        c = tail["close"].astype(float)
+        h = tail["high"].astype(float)
+        l = tail["low"].astype(float)
+
+        greens = int((c > o).sum())
+        body = (c - o).abs()
+        body_pct = (body / o.replace(0, pd.NA)) * 100.0
+        try:
+            max_body = float(body_pct.max(skipna=True))
+            avg_body = float(body_pct.mean(skipna=True))
+        except Exception:
+            max_body, avg_body = None, None
+
+        # last candle wick ratios
+        o_last = float(o.iloc[-1])
+        c_last = float(c.iloc[-1])
+        h_last = float(h.iloc[-1])
+        l_last = float(l.iloc[-1])
+        body_last = abs(c_last - o_last)
+        range_last = max(h_last - l_last, 0.0)
+        upper_wick = max(0.0, h_last - max(o_last, c_last))
+        lower_wick = max(0.0, min(o_last, c_last) - l_last)
+
+        eps_body = 1e-9
+        wick_body_ratio = float((upper_wick + lower_wick) / max(body_last, eps_body))
+        upper_ratio = float(upper_wick / range_last) if range_last > 0 else None
+        lower_ratio = float(lower_wick / range_last) if range_last > 0 else None
+
+        out.update(
+            {
+                "green_candles_5": float(greens),
+                "max_candle_body_pct_5": max_body,
+                "avg_candle_body_pct_5": avg_body,
+                "upper_wick_ratio_last": upper_ratio,
+                "lower_wick_ratio_last": lower_ratio,
+                "wick_body_ratio_last": wick_body_ratio,
+            }
+        )
+    except Exception:
+        return out
+    return out
+
+
+def relative_volume_features(
+    *,
+    volume_1m: Optional[float],
+    volume_5m: Optional[float],
+    volume_sma_20_1m: Optional[float],
+    candles_5m: Optional[pd.DataFrame],
+    lookback_5m: int = 20,
+) -> Dict[str, Optional[float]]:
+    """
+    Relative volume anomalies. Uses existing 1m SMA and computes 5m SMA from 5m candles.
+    """
+    out: Dict[str, Optional[float]] = {
+        "volume_ratio_1m_20": None,
+        "volume_ratio_5m_20": None,
+    }
+    eps = 1e-9
+    if volume_1m is not None and volume_sma_20_1m is not None and float(volume_sma_20_1m) > 0:
+        out["volume_ratio_1m_20"] = float(volume_1m) / max(float(volume_sma_20_1m), eps)
+
+    if candles_5m is not None and not candles_5m.empty and "volume" in candles_5m.columns:
+        try:
+            vol5_series = candles_5m["volume"].astype(float)
+            n = min(int(lookback_5m), len(vol5_series))
+            if n >= 2:
+                sma5 = float(vol5_series.tail(n).mean())
+            elif n == 1:
+                sma5 = float(vol5_series.iloc[-1])
+            else:
+                sma5 = None
+            if volume_5m is not None and sma5 is not None and sma5 > 0:
+                out["volume_ratio_5m_20"] = float(volume_5m) / max(float(sma5), eps)
+        except Exception:
+            pass
+    return out
+
+
+def time_life_features(
+    *,
+    now_ts_utc: pd.Timestamp,
+    candles_5m: Optional[pd.DataFrame],
+    signal_ts_utc: Optional[pd.Timestamp] = None,
+    pump_ts_utc: Optional[pd.Timestamp] = None,
+) -> Dict[str, Optional[float]]:
+    """
+    Time-life features. Works with what we can infer from already fetched candles.
+    """
+    peak_ts = _peak_ts_utc_from_5m(candles_5m, lookback=20)
+    out: Dict[str, Optional[float]] = {
+        "time_since_peak_sec": None,
+        "time_since_signal_sec": None,
+        "pump_age_sec": None,
+    }
+    try:
+        if peak_ts is not None:
+            out["time_since_peak_sec"] = float((now_ts_utc - peak_ts).total_seconds())
+    except Exception:
+        pass
+    try:
+        if signal_ts_utc is not None:
+            out["time_since_signal_sec"] = float((now_ts_utc - signal_ts_utc).total_seconds())
+    except Exception:
+        pass
+    try:
+        if pump_ts_utc is not None:
+            out["pump_age_sec"] = float((now_ts_utc - pump_ts_utc).total_seconds())
+    except Exception:
+        pass
+    return out
+
+
 def delta_ratio(trades: pd.DataFrame, since_ts: pd.Timestamp) -> float:
     if trades is None or trades.empty:
         return 0.0
@@ -213,6 +438,17 @@ def market_features_snapshot(
     v1, vsma, vz = volume_1m_features(candles_1m, lookback=20)
     v5 = volume_5m(candles_5m)
 
+    vel = price_velocity_features(candles_1m, now_ts_utc=now_ts_utc)
+    shape = pump_shape_features_5m(candles_5m, lookback=5)
+    rel_vol = relative_volume_features(
+        volume_1m=v1,
+        volume_5m=v5,
+        volume_sma_20_1m=vsma,
+        candles_5m=candles_5m,
+        lookback_5m=20,
+    )
+    tlife = time_life_features(now_ts_utc=now_ts_utc, candles_5m=candles_5m)
+
     return {
         "delta_ratio_30s": dr30,
         "delta_ratio_1m": dr1m,
@@ -227,5 +463,9 @@ def market_features_snapshot(
         "volume_5m": v5,
         "volume_sma_20": vsma,
         "volume_zscore_20": vz,
+        **vel,
+        **shape,
+        **rel_vol,
+        **tlife,
     }
 

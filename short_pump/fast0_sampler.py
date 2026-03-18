@@ -848,6 +848,27 @@ def run_fast0_for_symbol(
                                         "context_score": context_score,
                                     },
                                 )
+                                # ML score logging only (no filtering)
+                                try:
+                                    from ml.entry_filter import maybe_log_ml_score_enabled, predict_entry_score
+
+                                    if maybe_log_ml_score_enabled():
+                                        score = float(predict_entry_score(payload))
+                                        log_info(
+                                            logger,
+                                            "ML_SCORE",
+                                            symbol=cfg.symbol,
+                                            run_id=run_id,
+                                            step="FAST0",
+                                            extra={
+                                                "event_id": str(event_id),
+                                                "strategy": STRATEGY,
+                                                "risk_profile": _rp_entry or "",
+                                                "ml_score": score,
+                                            },
+                                        )
+                                except Exception:
+                                    pass
                             except Exception:
                                 log_exception(logger, "FAST0_TG_SEND_ERROR", symbol=cfg.symbol, run_id=run_id, step="FAST0")
                     # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)

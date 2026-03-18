@@ -45,6 +45,25 @@ EVENT_FIELDS_V2 = [
     "volume_5m",
     "volume_sma_20",
     "volume_zscore_20",
+    # Velocity / acceleration (candle-only)
+    "price_change_30s_pct",
+    "price_change_1m_pct",
+    "price_change_3m_pct",
+    "accel_30s_vs_3m",
+    # Shape / structure (candle-only)
+    "green_candles_5",
+    "max_candle_body_pct_5",
+    "avg_candle_body_pct_5",
+    "upper_wick_ratio_last",
+    "lower_wick_ratio_last",
+    "wick_body_ratio_last",
+    # Relative volume anomaly
+    "volume_ratio_1m_20",
+    "volume_ratio_5m_20",
+    # Time-life (best-effort)
+    "time_since_peak_sec",
+    "time_since_signal_sec",
+    "pump_age_sec",
     "spread_bps",
     "orderbook_imbalance_10",
     # Outcome label can be logged on outcome events (canonical contract)

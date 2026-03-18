@@ -52,6 +52,25 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     "volume_5m",
     "volume_sma_20",
     "volume_zscore_20",
+    # velocity / acceleration (candle-only)
+    "price_change_30s_pct",
+    "price_change_1m_pct",
+    "price_change_3m_pct",
+    "accel_30s_vs_3m",
+    # pump shape / structure (candle-only)
+    "green_candles_5",
+    "max_candle_body_pct_5",
+    "avg_candle_body_pct_5",
+    "upper_wick_ratio_last",
+    "lower_wick_ratio_last",
+    "wick_body_ratio_last",
+    # relative volume anomaly
+    "volume_ratio_1m_20",
+    "volume_ratio_5m_20",
+    # time-life (best-effort candle-only + optional timestamps)
+    "time_since_peak_sec",
+    "time_since_signal_sec",
+    "pump_age_sec",
     # microstructure
     "spread_bps",
     "orderbook_imbalance_10",

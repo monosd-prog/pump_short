@@ -1605,6 +1605,28 @@ def run_watch_for_symbol(
                             "context_score": context_score_msg,
                         },
                     )
+                    # ML score logging only (no filtering)
+                    try:
+                        from ml.entry_filter import maybe_log_ml_score_enabled, predict_entry_score
+
+                        if maybe_log_ml_score_enabled():
+                            score = float(predict_entry_score(entry_payload))
+                            log_info(
+                                logger,
+                                "ML_SCORE",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="ENTRY_DECISION",
+                                extra={
+                                    "event_id": str(event_id),
+                                    "strategy": "short_pump",
+                                    "risk_profile": _rp_entry or "",
+                                    "ml_score": score,
+                                },
+                            )
+                    except Exception:
+                        pass
                     # Option A: mirror ENTRY_OK Signal to trading queue (behind feature flag)
                     try:
                         from trading.config import AUTO_TRADING_ENABLE
