@@ -75,9 +75,10 @@ def format_tg(signal: Signal) -> str:
     emoji = "🟥" if side_up == "SHORT" else "🟩"
     lines: list[str] = []
 
-    if signal.strategy == "short_pump_fast0":
+    if signal.strategy in ("short_pump_fast0", "short_pump_fast0_filtered"):
+        fast0_label = "FAST0 FILTERED" if signal.strategy == "short_pump_fast0_filtered" else "FAST0 TRADEABLE"
         header = (
-            f"⚡ FAST0 TRADEABLE | {signal.symbol} | "
+            f"⚡ {fast0_label} | {signal.symbol} | "
             f"dist={_fmt_pct(signal.dist_to_peak_pct)} | "
             f"cs={_fmt_num(signal.context_score)} | "
             f"liqL30s={_fmt_num(signal.liq_long_usd_30s, 0)} "

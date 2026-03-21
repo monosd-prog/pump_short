@@ -15,6 +15,7 @@ CORE_DECISION_WINDOW = 20  # мин. новых core сделок до реше�
 
 from .fast0_blocks import FAST0_OP_DIST_MAX, FAST0_OP_LIQ_5K, FAST0_OP_LIQ_25K, FAST0_OP_LIQ_100K
 from .short_pump_blocks import filter_active_trades
+from short_pump.rollout import SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX
 from .stats import (
     LIGHTGBM_COMFORT,
     LIGHTGBM_MIN,
@@ -517,6 +518,24 @@ def _filter_lines_short_pump_active(tg_dist_min: float) -> list[str]:
     return ["stage = 4", f"dist ≥ {d}%", "liq = 0"]
 
 
+def _filter_lines_short_pump_filtered(max_dist: float) -> list[str]:
+    d = f"{max_dist}" if max_dist == int(max_dist) else f"{max_dist}"
+    return [
+        "strategy = short_pump_filtered",
+        f"dist ≤ {d}%",
+        "same standard 1R sizing",
+    ]
+
+
+def _filter_lines_fast0_filtered(max_dist: float) -> list[str]:
+    d = f"{max_dist}" if max_dist == int(max_dist) else f"{max_dist}"
+    return [
+        "strategy = short_pump_fast0_filtered",
+        f"dist ≤ {d}%",
+        "same fast0 sizing / liq buckets",
+    ]
+
+
 def _filter_lines_short_pump_mid() -> list[str]:
     return [
         "strategy = short_pump",
@@ -645,18 +664,21 @@ def _paper_fast0_validation_lines(df_fast0_paper: Optional[pd.DataFrame]) -> lis
 
 def build_executive_compact_report(
     df_short_pump: Optional[pd.DataFrame],
+    df_short_pump_filtered: Optional[pd.DataFrame],
     df_fast0: Optional[pd.DataFrame],
     date_range: Tuple[str, str],
     rolling_n: int = 20,
     tg_dist_min: float = 3.5,
     guard_state: Optional[Dict[str, Any]] = None,
     df_fast0_paper: Optional[pd.DataFrame] = None,
+    df_fast0_filtered_paper: Optional[pd.DataFrame] = None,
     df_short_pump_paper: Optional[pd.DataFrame] = None,
+    df_short_pump_filtered_paper: Optional[pd.DataFrame] = None,
 ) -> str:
     """
-    Строит компактный управленческий отчёт (5 блоков) для TG.
+    Строит компактный управленческий отчёт (6 блоков) для TG.
     df_short_pump, df_fast0 — уже обогащённые (stage, dist_to_peak_pct, liq) outcomes (live).
-    df_fast0_paper, df_short_pump_paper — outcomes mode=paper для блока «PAPER ПОДРЕЖИМЫ».
+    df_fast0_paper, df_fast0_filtered_paper, df_short_pump_paper — outcomes mode=paper для блока «PAPER ПОДРЕЖИМЫ».
     """
     lines: list[str] = []
     start, end = date_range
@@ -664,9 +686,12 @@ def build_executive_compact_report(
 
     # --- подготовка данных ---
     df_sp = df_short_pump
+    df_spf = df_short_pump_filtered
     df_f0 = df_fast0
     if df_sp is not None:
         df_sp = df_sp.copy()
+    if df_spf is not None:
+        df_spf = df_spf.copy()
     if df_f0 is not None:
         df_f0 = df_f0.copy()
 
@@ -679,6 +704,13 @@ def build_executive_compact_report(
             df_active = None
         if df_active_core is not None and df_active_core.empty:
             df_active_core = None
+
+    df_spf_core: Optional[pd.DataFrame] = None
+    if df_spf is not None and not df_spf.empty and "outcome" in df_spf.columns:
+        out_spf = df_spf["outcome"].apply(_normalize_outcome_raw)
+        df_spf_core = df_spf[out_spf.isin(["TP_hit", "SL_hit"])].copy()
+        if df_spf_core.empty:
+            df_spf_core = None
 
     # FAST0 operational
     df_f0_op: Optional[pd.DataFrame] = None
@@ -779,6 +811,20 @@ def build_executive_compact_report(
         mode_mdd["SHORT_PUMP ACTIVE"] = float(mdd_ac or 0.0)
         mode_ev_total["SHORT_PUMP ACTIVE"] = float(ev_ac or 0.0)
         mode_guard["SHORT_PUMP ACTIVE"] = _guard_state_str(guard_state, "short_pump_active_1R")
+    if df_spf_core is not None and not df_spf_core.empty:
+        mode_n_core["short_pump_filtered_1R"] = len(df_spf_core)
+        tp_spf = int((df_spf_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+        sl_spf = int((df_spf_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+        pnl_spf = _core_pnl_series(df_spf_core)
+        ev_spf = ev_core_from_tp_sl_pnl(tp_spf, sl_spf, pnl_spf)
+        _, ev20_spf, _ = rolling_wr_ev_core(df_spf_core, rolling_n)
+        wr_spf = wr_core_from_tp_sl(tp_spf, sl_spf) * 100
+        mdd_spf = _mdd(_pnl_series(df_spf)) if df_spf is not None else 0.0
+        mode_ev_total["short_pump_filtered_1R"] = float(ev_spf or 0.0)
+        mode_ev20["SHORT_PUMP FILTERED"] = float(ev20_spf or 0.0)
+        mode_wr["SHORT_PUMP FILTERED"] = float(wr_spf or 0.0)
+        mode_mdd["SHORT_PUMP FILTERED"] = float(mdd_spf or 0.0)
+        mode_guard["SHORT_PUMP FILTERED"] = _guard_state_str(guard_state, "short_pump_filtered_1R")
     # SHORT_PUMP MID/DEEP counts (prefer risk_profile)
     if df_short_pump is not None and not df_short_pump.empty and "outcome" in df_short_pump.columns:
         out_sp = df_short_pump["outcome"].apply(_normalize_outcome_raw)
@@ -867,6 +913,7 @@ def build_executive_compact_report(
     active_c, watch_c, disabled_c, exper_c = 0, 0, 0, 0
     for gkey in (
         "short_pump_active_1R",
+        "short_pump_filtered_1R",
         "short_pump_mid",
         "short_pump_deep",
         "fast0_base_1R",
@@ -897,6 +944,7 @@ def build_executive_compact_report(
         "SHORT_PUMP MID",
         "SHORT_PUMP DEEP",
         "SHORT_PUMP ACTIVE",
+        "SHORT_PUMP FILTERED",
         "FAST0 SELECTIVE",
         "FAST0 BASE",
         "FAST0 1.5R",
@@ -917,6 +965,7 @@ def build_executive_compact_report(
         ("SHORT_PUMP MID", "short_pump_mid"),
         ("SHORT_PUMP DEEP", "short_pump_deep"),
         ("SHORT_PUMP ACTIVE", "short_pump_active_1R"),
+        ("SHORT_PUMP FILTERED", "short_pump_filtered_1R"),
         ("FAST0 SELECTIVE", "fast0_selective"),
         ("FAST0 BASE", "fast0_base_1R"),
         ("FAST0 1.5R", "fast0_1p5R"),
@@ -983,7 +1032,26 @@ def build_executive_compact_report(
         lines.append("    нет данных")
     lines.append("")
 
-    # 1.2 FAST0
+    # 1.2 SHORT_PUMP FILTERED
+    if df_spf_core is not None and not df_spf_core.empty:
+        tp_spf = int((df_spf_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+        sl_spf = int((df_spf_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+        pnl_spf = _core_pnl_series(df_spf_core)
+        ev_spf = ev_core_from_tp_sl_pnl(tp_spf, sl_spf, pnl_spf)
+        _, ev20_spf, _ = rolling_wr_ev_core(df_spf_core, rolling_n)
+        n_spf = len(df_spf_core)
+        wr_spf = wr_core_from_tp_sl(tp_spf, sl_spf) * 100
+        pnl_spf_sum = float(pnl_spf.sum())
+        mdd_spf = _mdd(_pnl_series(df_spf)) if df_spf is not None else 0.0
+        lines.append("1.2 SHORT_PUMP FILTERED")
+        lines.append(f"    WR: {wr_spf:.1f}%   EV: {ev_spf:+.2f}R   EV20: {ev20_spf:+.2f}R")
+        lines.append(f"    N: {n_spf}      PnL: {pnl_spf_sum:+.1f}R  MDD: {mdd_spf:.1f}R")
+    else:
+        lines.append("1.2 SHORT_PUMP FILTERED")
+        lines.append("    нет данных")
+    lines.append("")
+
+    # 1.3 FAST0
     if df_f0_op_core is not None and not df_f0_op_core.empty:
         tp_fc = int((df_f0_op_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
         sl_fc = int((df_f0_op_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
@@ -998,7 +1066,7 @@ def build_executive_compact_report(
         lines.append(f"    WR: {wr_fc:.1f}%   EV: {ev_fc:+.2f}R   EV20: {ev20_fc:+.2f}R")
         lines.append(f"    N: {n_fc}       PnL: {pnl_fc_sum:+.1f}R   MDD: {mdd_fc:.1f}R")
     else:
-        lines.append("1.2 FAST0")
+        lines.append("1.3 FAST0")
         lines.append("    нет данных")
     lines.append("")
     lines.append("⚡ 2️⃣ LIVE ПОДРЕЖИМЫ СТРАТЕГИЙ")
@@ -1018,6 +1086,7 @@ def build_executive_compact_report(
         ("SHORT_PUMP MID", "short_pump_mid", _filter_lines_short_pump_mid, df_sp_all, df_sp_core),
         ("SHORT_PUMP DEEP", "short_pump_deep", _filter_lines_short_pump_deep, df_sp_all, df_sp_core),
         ("ACTIVE (stage4 + dist≥" + (f"{int(tg_dist_min)}" if tg_dist_min == int(tg_dist_min) else f"{tg_dist_min}") + "%)", "short_pump_active_1R", lambda: _filter_lines_short_pump_active(tg_dist_min), df_active, df_active_core),
+        ("SHORT_PUMP FILTERED", "short_pump_filtered_1R", lambda: _filter_lines_short_pump_filtered(SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX), df_spf, df_spf_core),
     ]
 
     live_sp_count = 0
@@ -1286,6 +1355,29 @@ def build_executive_compact_report(
                     _filter_lines_short_pump_active(tg_dist_min),
                     wr_ac, float(ev_ac or 0), float(ev20_ac or 0), n_ac, timeout_sp,
                 ))
+        gst_spf = _guard_state_str(guard_state, "short_pump_filtered_1R")
+        df_spf_for_paper = (df_short_pump_filtered_paper if df_short_pump_filtered_paper is not None and not df_short_pump_filtered_paper.empty else df_spf) if guard_state else None
+        if gst_spf == "DISABLED" and df_spf_for_paper is not None and not df_spf_for_paper.empty:
+            outcome_spf = df_spf_for_paper["outcome"].apply(_normalize_outcome_raw)
+            paper_core_spf = outcome_spf.isin(PAPER_CORE_OUTCOMES)
+            df_spf_paper_core = df_spf_for_paper[paper_core_spf].copy()
+            n_spf = int(paper_core_spf.sum()) if not outcome_spf.empty else 0
+            timeout_spf = int((outcome_spf == "TIMEOUT").sum()) if not outcome_spf.empty else 0
+            if not df_spf_paper_core.empty:
+                tp_spf = int((df_spf_paper_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+                sl_spf = int((df_spf_paper_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+                pnl_spf = _core_pnl_series(df_spf_paper_core)
+                wr_spf = wr_core_from_tp_sl(tp_spf, sl_spf) * 100
+                ev_spf = ev_core_from_tp_sl_pnl(tp_spf, sl_spf, pnl_spf)
+                _, ev20_spf, _ = rolling_wr_ev_core(df_spf_paper_core, rolling_n)
+            else:
+                wr_spf, ev_spf, ev20_spf = 0.0, 0.0, 0.0
+            disabled_modes.append((
+                "SHORT_PUMP FILTERED",
+                "short_pump_filtered_1R",
+                _filter_lines_short_pump_filtered(SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX),
+                wr_spf, ev_spf, ev20_spf, n_spf, timeout_spf,
+            ))
     # FAST0 modes when DISABLED — use df_fast0_paper (mode=paper) when provided
     df_f0_for_paper = (df_fast0_paper if df_fast0_paper is not None and not df_fast0_paper.empty else df_f0) if guard_state else None
     if guard_state and df_f0_for_paper is not None and not df_f0_for_paper.empty:
@@ -1315,6 +1407,27 @@ def build_executive_compact_report(
                 else:
                     wr_s, ev_s, ev20_s = 0.0, 0.0, 0.0
                 disabled_modes.append((label, guard_key, filter_fn(), wr_s, ev_s, ev20_s, n_s, timeout_d))
+    if df_fast0_filtered_paper is not None and not df_fast0_filtered_paper.empty:
+        outcome_f0f = df_fast0_filtered_paper["outcome"].apply(_normalize_outcome_raw)
+        paper_core_f0f = outcome_f0f.isin(PAPER_CORE_OUTCOMES)
+        df_f0f_paper_core = df_fast0_filtered_paper[paper_core_f0f].copy()
+        n_f0f = int(paper_core_f0f.sum()) if not outcome_f0f.empty else 0
+        timeout_f0f = int((outcome_f0f == "TIMEOUT").sum()) if not outcome_f0f.empty else 0
+        if not df_f0f_paper_core.empty:
+            tp_f0f = int((df_f0f_paper_core["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+            sl_f0f = int((df_f0f_paper_core["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+            pnl_f0f = _core_pnl_series(df_f0f_paper_core)
+            wr_f0f = wr_core_from_tp_sl(tp_f0f, sl_f0f) * 100
+            ev_f0f = ev_core_from_tp_sl_pnl(tp_f0f, sl_f0f, pnl_f0f)
+            _, ev20_f0f, _ = rolling_wr_ev_core(df_f0f_paper_core, rolling_n)
+        else:
+            wr_f0f, ev_f0f, ev20_f0f = 0.0, 0.0, 0.0
+        disabled_modes.append((
+            "FAST0 FILTERED",
+            "short_pump_fast0_filtered_1R",
+            _filter_lines_fast0_filtered(1.0),
+            wr_f0f, ev_f0f, ev20_f0f, n_f0f, timeout_f0f,
+        ))
     for idx, (label, guard_key, filter_lines, wr_s, ev_s, ev20_s, n_s, timeout_d) in enumerate(disabled_modes, 1):
         lines.append(f"    3.{idx} {label}")
         lines.append("")
@@ -1344,6 +1457,8 @@ def build_executive_compact_report(
     parts = []
     if df_sp is not None and not df_sp.empty:
         parts.append(df_sp)
+    if df_spf is not None and not df_spf.empty:
+        parts.append(df_spf)
     if df_f0 is not None and not df_f0.empty:
         parts.append(df_f0)
     df_all_outcomes = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
@@ -1362,23 +1477,30 @@ def build_executive_compact_report(
     lines.append("")
     n_fast0_core = len(df_f0_op_core) if (df_f0_op_core is not None and not df_f0_op_core.empty) else 0
     n_sp_core = len(df_active_core) if (df_active_core is not None and not df_active_core.empty) else 0
+    n_spf_core = len(df_spf_core) if (df_spf_core is not None and not df_spf_core.empty) else 0
     remaining_fast0 = max(0, LIGHTGBM_MIN - n_fast0_core)
     remaining_sp = max(0, LIGHTGBM_MIN - n_sp_core)
+    remaining_spf = max(0, LIGHTGBM_MIN - n_spf_core)
     core_per_day_fast0 = (n_fast0_core / days) if days else 0.0
     core_per_day_sp = (n_sp_core / days) if days else 0.0
+    core_per_day_spf = (n_spf_core / days) if days else 0.0
     eta_fast0_days = int(remaining_fast0 / core_per_day_fast0) if (remaining_fast0 > 0 and core_per_day_fast0 > 0) else 0
     eta_sp_days = int(remaining_sp / core_per_day_sp) if (remaining_sp > 0 and core_per_day_sp > 0) else 0
+    eta_spf_days = int(remaining_spf / core_per_day_spf) if (remaining_spf > 0 and core_per_day_spf > 0) else 0
 
     lines.append(f"    FAST0 core: {n_fast0_core}")
     lines.append(f"    SHORT_PUMP core: {n_sp_core}")
+    lines.append(f"    SHORT_PUMP_FILTERED core: {n_spf_core}")
     lines.append("")
     lines.append(f"    минимум ML: {LIGHTGBM_MIN}")
     lines.append(f"    комфорт: {LIGHTGBM_COMFORT}")
     lines.append("")
     eta_f0 = f"~{eta_fast0_days}д" if remaining_fast0 > 0 and eta_fast0_days > 0 else "готово"
     eta_sp = f"~{eta_sp_days}д" if remaining_sp > 0 and eta_sp_days > 0 else "готово"
+    eta_spf = f"~{eta_spf_days}д" if remaining_spf > 0 and eta_spf_days > 0 else "готово"
     lines.append(f"    FAST0 → осталось {remaining_fast0} ({eta_f0})")
     lines.append(f"    SHORT_PUMP → осталось {remaining_sp} ({eta_sp})")
+    lines.append(f"    SHORT_PUMP_FILTERED → осталось {remaining_spf} ({eta_spf})")
     lines.append("")
     lines.append("ℹ️ 6️⃣ ЛЕГЕНДА")
     lines.append("")

@@ -115,10 +115,29 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
                 "OUTCOME_PENDING | position_id=%s symbol=%s run_id=%s age_sec=%.0f err=%s",
                 position_id, symbol, run_id, age_sec, type(e).__name__,
             )
+            logger.info(
+                "OUTCOME_DEBUG | strategy=%s symbol=%s position_id=%s found_on_exchange=False pnl_source=timeout reason=%s",
+                strategy,
+                symbol,
+                position_id,
+                type(e).__name__,
+            )
             continue
 
         if outcome:
             res = outcome.get("status", "")
+            pnl_source = str(outcome.get("pnl_source") or "exchange")
+            found_on_exchange = bool(outcome.get("found_on_exchange", pnl_source != "timeout"))
+            reason = str(outcome.get("resolution_path") or outcome.get("reason") or res or "resolved")
+            logger.info(
+                "OUTCOME_DEBUG | strategy=%s symbol=%s position_id=%s found_on_exchange=%s pnl_source=%s reason=%s",
+                strategy,
+                symbol,
+                position_id,
+                found_on_exchange,
+                pnl_source,
+                reason,
+            )
             if res in ("TP_hit", "SL_hit", "EARLY_EXIT"):
                 exit_price = float(outcome.get("exit_price", 0) or 0)
                 pnl_pct = float(outcome.get("pnl_pct", 0) or 0)
@@ -150,4 +169,10 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
             logger.info(
                 "OUTCOME_PENDING | position_id=%s symbol=%s run_id=%s age_sec=%.0f",
                 position_id, symbol, run_id, age_sec,
+            )
+            logger.info(
+                "OUTCOME_DEBUG | strategy=%s symbol=%s position_id=%s found_on_exchange=False pnl_source=timeout reason=no_match",
+                strategy,
+                symbol,
+                position_id,
             )

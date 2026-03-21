@@ -86,6 +86,9 @@ def _match_closed_record(
         "pnl_pct": pnl_pct,
         "closed_pnl": closed_pnl,
         "order_id": rec.get("orderId", ""),
+        "found_on_exchange": True,
+        "pnl_source": "exchange",
+        "resolution_path": "closed_pnl",
     }
 
 
@@ -266,7 +269,16 @@ def _resolve_via_fallback(
                     "LIVE_OUTCOME_ORDER_HISTORY_FOUND | symbol=%s status=%s exit=%.4f source=order_history",
                     symbol, status, avg_exit,
                 )
-                return {"status": status, "exit_price": avg_exit, "exit_ts": exit_ts, "pnl_pct": pnl_pct, "closed_pnl": 0.0}
+                return {
+                    "status": status,
+                    "exit_price": avg_exit,
+                    "exit_ts": exit_ts,
+                    "pnl_pct": pnl_pct,
+                    "closed_pnl": 0.0,
+                    "found_on_exchange": True,
+                    "pnl_source": "exchange",
+                    "resolution_path": "order_history",
+                }
         except Exception as e:
             logger.debug("LIVE_OUTCOME_FALLBACK | order_history error symbol=%s: %s", symbol, e)
 
@@ -305,7 +317,16 @@ def _resolve_via_fallback(
                         "LIVE_OUTCOME_EXECUTIONS_FOUND | symbol=%s status=%s exit=%.4f n_fills=%d source=execution_list",
                         symbol, status, avg_exit, len(closing),
                     )
-                    return {"status": status, "exit_price": avg_exit, "exit_ts": exit_ts, "pnl_pct": pnl_pct, "closed_pnl": 0.0}
+                    return {
+                        "status": status,
+                        "exit_price": avg_exit,
+                        "exit_ts": exit_ts,
+                        "pnl_pct": pnl_pct,
+                        "closed_pnl": 0.0,
+                        "found_on_exchange": True,
+                        "pnl_source": "exchange",
+                        "resolution_path": "executions",
+                    }
         except Exception as e:
             logger.debug("LIVE_OUTCOME_FALLBACK | execution_list error symbol=%s: %s", symbol, e)
     return None
@@ -320,6 +341,7 @@ def resolve_live_outcome_final_reconcile(
     tp: float,
     sl: float,
     *,
+    require_position_gone: bool = True,
     raise_on_network_error: bool = False,
 ) -> Optional[dict[str, Any]]:
     """
@@ -337,9 +359,11 @@ def resolve_live_outcome_final_reconcile(
             position_open = pos is not None and float(pos.get("size") or 0) > 0
         except Exception:
             pass
-    if position_open:
+    if require_position_gone and position_open:
         logger.debug("LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s position_still_open skip", symbol)
         return None
+    if position_open and not require_position_gone:
+        logger.info("LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s forcing_history_check despite position_open", symbol)
 
     logger.info("LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s position_gone attempting_resolve", symbol)
     want_side = "Sell" if (side or "").strip().upper() in ("SHORT", "SELL") else "Buy"
@@ -368,6 +392,9 @@ def resolve_live_outcome_final_reconcile(
     for rec in records:
         result = _match_closed_record(rec, want_side, entry, tp, sl, opened_ms, entry_tol, symbol=symbol)
         if result:
+            result.setdefault("found_on_exchange", True)
+            result.setdefault("pnl_source", "exchange")
+            result.setdefault("resolution_path", "final_reconcile")
             logger.info(
                 "LIVE_OUTCOME_FINAL_RECONCILE | symbol=%s CLOSED_PNL_FOUND status=%s",
                 symbol, result["status"],
@@ -501,6 +528,29 @@ def resolve_live_outcome(
                 )
                 return fb
         time.sleep(poll_sec)
+
+    final = resolve_live_outcome_final_reconcile(
+        broker,
+        symbol,
+        side,
+        opened_ts,
+        entry_f,
+        tp_f,
+        sl_f,
+        require_position_gone=False,
+        raise_on_network_error=raise_on_network_error,
+    )
+    if final:
+        final.setdefault("found_on_exchange", True)
+        final.setdefault("pnl_source", "exchange")
+        final.setdefault("resolution_path", "final_reconcile")
+        logger.info(
+            "LIVE_OUTCOME_RESOLVED | symbol=%s status=%s exit=%.4f by=final_reconcile",
+            symbol,
+            final["status"],
+            final.get("exit_price", 0),
+        )
+        return final
 
     logger.info(
         "LIVE_OUTCOME_PENDING | symbol=%s side=%s entry=%.4f iter=%d no_match (position_open=%s)",

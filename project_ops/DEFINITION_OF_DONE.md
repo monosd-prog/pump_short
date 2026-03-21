@@ -97,6 +97,17 @@
 
 ---
 
+### 9. Release Execution (Commit / Push / Deploy / Restart)
+
+- [ ] commit created
+- [ ] push completed
+- [ ] restart scope identified
+- [ ] deploy/restart executed if required
+- [ ] post-restart smoke/check completed
+- [ ] release evidence saved in task
+
+---
+
 ### Итоговое правило
 
 - **Если хотя бы один критичный пункт из этого списка не выполнен и не покрыт осознанным решением в `DECISIONS.md`, задача не может быть переведена в состояние Done.**

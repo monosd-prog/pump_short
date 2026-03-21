@@ -16,9 +16,11 @@ from typing import Any, Dict, Optional
 
 from trading.config import CLOSES_PATH, POSITION_TTL_SECONDS, TIMEOUT_EXIT_MODE
 from trading.state import (
+    add_outcome_finalized,
     load_state,
     make_position_id,
     record_close,
+    outcome_finalized,
     save_state,
 )
 
@@ -197,6 +199,9 @@ def close_from_outcome(
     if not isinstance(pos, dict):
         logger.info("CLOSE_SKIP | reason=no_open_position strategy=%s pid=%s", strategy, pid)
         return False
+    if outcome_finalized(state, pid):
+        logger.info("CLOSE_SKIP | reason=already_finalized strategy=%s pid=%s", strategy, pid)
+        return False
 
     entry = float(pos.get("entry", 0) or 0)
     tp = float(pos.get("tp", 0) or 0)
@@ -236,6 +241,15 @@ def close_from_outcome(
         pnl_r=float(pnl_r),
         pnl_usd=float(pnl_usd),
         ts_utc=ts_utc or _now_iso(),
+    )
+    add_outcome_finalized(state, pid)
+    logger.info(
+        "OUTCOME_DEBUG | strategy=%s symbol=%s position_id=%s found_on_exchange=False pnl_source=%s reason=%s",
+        strategy,
+        symbol,
+        pid,
+        "timeout" if res_norm == "TIMEOUT" else "klines",
+        res_norm or "outcome",
     )
     save_state(state)
 
@@ -309,6 +323,9 @@ def close_from_live_outcome(
     pos = (state.get("open_positions") or {}).get(strategy, {}).get(pid)
     if not isinstance(pos, dict):
         return False
+    if outcome_finalized(state, pid):
+        logger.info("CLOSE_SKIP | reason=already_finalized strategy=%s pid=%s", strategy, pid)
+        return False
 
     entry = float(pos.get("entry", 0) or 0)
     sl = float(pos.get("sl", 0) or 0)
@@ -337,6 +354,14 @@ def close_from_live_outcome(
         pnl_r=float(pnl_r),
         pnl_usd=float(pnl_usd),
         ts_utc=ts_utc or _now_iso(),
+    )
+    add_outcome_finalized(state, pid)
+    logger.info(
+        "OUTCOME_DEBUG | strategy=%s symbol=%s position_id=%s found_on_exchange=True pnl_source=exchange reason=%s",
+        strategy,
+        symbol,
+        pid,
+        str(res or "live_outcome"),
     )
     _append_close_row(
         {
@@ -423,6 +448,102 @@ def close_on_timeout(state: dict[str, Any], now_utc: str, *, broker: Any = None)
                 outcome_meta={"mfe_pct": 0.0, "mae_pct": 0.0},
             )
             if ok:
+                # Outcome Delivery Contract: paper TIMEOUT TTL close must deliver TG outcome
+                # via the single shared helper (no local delivery policy duplication).
+                from notifications.tg_format import format_outcome
+                from short_pump.telegram import TG_SEND_OUTCOME
+                from trading.outcome_delivery import deliver_outcome_tg
+
+                tg_strategy = strategy
+                tg_run_id = str(pos.get("run_id") or "")
+                tg_event_id = str(pos.get("event_id") or "")
+                tg_symbol = str(pos.get("symbol") or "")
+                side_up = (side or "SHORT").strip().upper()
+
+                tp = float(pos.get("tp", 0) or 0)
+                # Keep tp_pct/sl_pct consistent with short_pump watcher conventions (distance-from-entry, positive).
+                if entry > 0 and tp > 0:
+                    if side_up in ("SHORT", "SELL"):
+                        tp_pct = max(0.0, (entry - tp) / entry * 100.0)
+                    else:
+                        tp_pct = max(0.0, (tp - entry) / entry * 100.0)
+                else:
+                    tp_pct = 0.0
+                if entry > 0 and sl > 0:
+                    if side_up in ("SHORT", "SELL"):
+                        sl_pct = max(0.0, (sl - entry) / entry * 100.0)
+                    else:
+                        sl_pct = max(0.0, (entry - sl) / entry * 100.0)
+                else:
+                    sl_pct = 0.0
+
+                hold_seconds = max(0, int(age)) if age is not None else None
+                risk_profile = str(pos.get("risk_profile") or "")
+                notional_usd = pos.get("notional_usd")
+                leverage = pos.get("leverage")
+                margin_mode = pos.get("margin_mode")
+
+                tg_text = format_outcome(
+                    strategy=tg_strategy,
+                    side=side_up,
+                    symbol=tg_symbol,
+                    run_id=tg_run_id,
+                    event_id=tg_event_id,
+                    outcome="TIMEOUT",
+                    entry_price=entry,
+                    tp_price=tp,
+                    sl_price=sl,
+                    tp_pct=tp_pct,
+                    sl_pct=sl_pct,
+                    pnl_pct=pnl_pct,
+                    hold_seconds=hold_seconds,
+                    mae_pct=0.0,
+                    mfe_pct=0.0,
+                    debug_payload=None,
+                    risk_profile=risk_profile or None,
+                    notional_usd=float(notional_usd) if notional_usd is not None else None,
+                    leverage=int(leverage) if leverage is not None else None,
+                    margin_mode=str(margin_mode) if margin_mode else None,
+                )
+
+                deliver_outcome_tg(
+                    logger=logger,
+                    delivery_strategy=tg_strategy,
+                    run_id=tg_run_id,
+                    event_id=tg_event_id,
+                    symbol=tg_symbol,
+                    res="TIMEOUT",
+                    send_text=tg_text,
+                    tg_send_enabled=bool(TG_SEND_OUTCOME),
+                    delivery_reason="paper_timeout_ttl_close",
+                    delivery_mode="paper_timeout_ttl",
+                    stage=None,
+                    step="TIMEOUT_TG",
+                    send_telegram_kwargs={
+                        "strategy": tg_strategy,
+                        "side": side_up,
+                        "mode": "PAPER",
+                        "event_id": tg_event_id,
+                        "context_score": None,
+                        "entry_ok": True,
+                        "skip_reasons": None,
+                        "formatted": True,
+                        "meta": {
+                            "kind": "OUTCOME",
+                            "exec_mode": "paper",
+                            "risk_profile": risk_profile,
+                            "symbol": tg_symbol,
+                            "entry_price": entry,
+                            "tp_price": tp,
+                            "sl_price": sl,
+                            "exit_price": exit_price,
+                            "pnl_pct": pnl_pct,
+                            "notional_usd": float(notional_usd) if notional_usd is not None else None,
+                            "leverage": int(leverage) if leverage is not None else None,
+                            "margin_mode": str(margin_mode) if margin_mode else None,
+                        },
+                    },
+                )
                 changed = True
     return changed
 

@@ -27,6 +27,11 @@ from short_pump.context5m import (
 )
 from short_pump.entry import decide_entry_fast, decide_entry_1m
 from short_pump.features import normalize_funding, oi_change_pct
+from short_pump.rollout import (
+    SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX,
+    is_tradeable_short_pump_filtered,
+    resolve_short_pump_route,
+)
 from short_pump.io_csv import append_csv
 from short_pump.liquidations import (
     get_liq_debug_state,
@@ -137,7 +142,7 @@ def _watcher_should_skip_outcome_live(
     try:
         from trading.state import load_state, outcome_tg_sent, make_position_id
         state = load_state()
-        for strat in ("short_pump", "short_pump_fast0"):
+        for strat in ("short_pump", "short_pump_filtered", "short_pump_fast0"):
             key = make_position_id(strat, run_id or "", str(event_id or ""), symbol)
             if outcome_tg_sent(state, key):
                 return True, "already_finalized"
@@ -149,6 +154,7 @@ def _watcher_should_skip_outcome_live(
 def _run_short_pump_guard_blocked_outcome_watcher(
     *,
     cfg: Config,
+    strategy: str,
     run_id: str,
     event_id: str,
     trade_id: str,
@@ -168,7 +174,6 @@ def _run_short_pump_guard_blocked_outcome_watcher(
     """
     from trading.state import load_state, make_position_id
 
-    STRATEGY = "short_pump"
     wait_sec = 0
     max_wait = 60
     poll_interval = 5
@@ -177,8 +182,8 @@ def _run_short_pump_guard_blocked_outcome_watcher(
         try:
             state = load_state()
             open_positions = state.get("open_positions") or {}
-            strat_pos = open_positions.get(STRATEGY) or {}
-            pid = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
+            strat_pos = open_positions.get(strategy) or {}
+            pid = make_position_id(strategy, run_id or "", str(event_id or ""), symbol)
             position = strat_pos.get(pid) if isinstance(strat_pos, dict) else None
             if not position:
                 for _k, p in (strat_pos.items() if isinstance(strat_pos, dict) else []):
@@ -207,7 +212,7 @@ def _run_short_pump_guard_blocked_outcome_watcher(
         symbol=symbol,
         run_id=run_id,
         step="OUTCOME",
-        extra={"event_id": event_id, "reason": "short_pump paper position, running candle outcome"},
+        extra={"event_id": event_id, "reason": f"{strategy} paper position, running candle outcome"},
     )
     try:
         summary = track_outcome_short(
@@ -231,7 +236,7 @@ def _run_short_pump_guard_blocked_outcome_watcher(
             event_id=event_id,
             run_id=run_id,
             symbol=symbol,
-            strategy=STRATEGY,
+            strategy=strategy,
             mode="paper",
             side="SHORT",
             outcome_time_utc=outcome_time_utc,
@@ -244,107 +249,69 @@ def _run_short_pump_guard_blocked_outcome_watcher(
         if orow:
             orow["outcome_source"] = "watcher_guard_blocked"
             orow["trade_type"] = "PAPER"
-            orow["risk_profile"] = position.get("risk_profile") or "short_pump_active_1R"
+            orow["risk_profile"] = position.get("risk_profile") or (
+                "short_pump_filtered_1R" if strategy == "short_pump_filtered" else "short_pump_active_1R"
+            )
             write_outcome_row(
                 orow,
-                strategy=STRATEGY,
+                strategy=strategy,
                 mode="paper",
                 wall_time_utc=outcome_time_utc,
                 schema_version=3,
                 path_mode="paper",
             )
-        # Outcome delivery contract (TG): only mark outcome_tg_sent after successful TG send.
-        delivery_key = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
+        # Outcome Delivery Contract (TG): delegate retry+dedupe+mark to a single helper.
         try:
-            from trading.state import load_state, outcome_tg_sent
-            state = load_state()
-            if outcome_tg_sent(state, delivery_key):
-                log_info(
-                    logger,
-                    "OUTCOME_TG_SEND_SKIP_ALREADY_FINALIZED",
-                    symbol=symbol,
-                    run_id=run_id,
-                    stage=None,
-                    step="OUTCOME",
-                    extra={"delivery_key": delivery_key},
-                )
-            else:
-                from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID, send_telegram as _send_tg
+            from trading.outcome_delivery import deliver_outcome_tg
 
-                rp = str(position.get("risk_profile") or "short_pump_active_1R")
-                tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
-
-                def _send_fn() -> None:
-                    _send_tg(
-                        "",
-                        strategy=STRATEGY,
-                        side="SHORT",
-                        mode="PAPER",
-                        event_id=str(event_id),
-                        context_score=summary.get("context_score"),
-                        entry_ok=True,
-                        formatted=True,
-                        meta={
-                            "kind": "GUARD_BLOCKED_PAPER",
-                            "exec_mode": "paper",
-                            "risk_profile": rp,
-                            "symbol": symbol,
-                            "entry_price": entry_price,
-                            "tp_price": tp_price,
-                            "sl_price": sl_price,
-                            "exit_price": summary.get("exit_price"),
-                            "pnl_pct": summary.get("pnl_pct"),
-                            "dist_to_peak_pct": entry_snapshot.get("dist_to_peak_pct"),
-                            "liq_long_usd_30s": entry_snapshot.get("liq_long_usd_30s"),
-                            "context_score": entry_snapshot.get("context_score"),
-                        },
-                    )
-
-                ok = _send_telegram_with_retry(
-                    logger=logger,
-                    send_fn=_send_fn,
-                    delivery_key=delivery_key,
-                    symbol=symbol,
-                    run_id=run_id,
-                    stage=None,
-                    step="OUTCOME_TG",
-                )
-                if ok and tg_ready:
-                    _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=symbol, run_id=run_id)
-                    log_info(
-                        logger,
-                        "OUTCOME_TG_DELIVERED_AND_MARKED",
-                        symbol=symbol,
-                        run_id=run_id,
-                        stage=None,
-                        step="OUTCOME_TG",
-                        extra={"delivery_key": delivery_key, "delivery_mode": "paper_guard_blocked"},
-                    )
-                elif ok and not tg_ready:
-                    log_info(
-                        logger,
-                        "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
-                        symbol=symbol,
-                        run_id=run_id,
-                        stage=None,
-                        step="OUTCOME_TG",
-                        extra={"delivery_key": delivery_key},
-                    )
-                elif not ok:
-                    log_info(
-                        logger,
-                        "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
-                        symbol=symbol,
-                        run_id=run_id,
-                        stage=None,
-                        step="OUTCOME_TG",
-                        extra={"delivery_key": delivery_key},
-                    )
+            rp = str(
+                position.get("risk_profile")
+                or ("short_pump_filtered_1R" if strategy == "short_pump_filtered" else "short_pump_active_1R")
+            )
+            deliver_outcome_tg(
+                logger=logger,
+                delivery_strategy=strategy,
+                run_id=run_id or "",
+                event_id=str(event_id or ""),
+                symbol=symbol,
+                res="GUARD_BLOCKED_PAPER",
+                send_text="",
+                delivery_reason="paper_guard_blocked",
+                delivery_mode="paper_guard_blocked",
+                stage=None,
+                step="OUTCOME_TG",
+                # Keep current behavior: only env token/chat_id presence gates actual TG send.
+                tg_send_enabled=True,
+                send_telegram_kwargs={
+                    "strategy": strategy,
+                    "side": "SHORT",
+                    "mode": "PAPER",
+                    "event_id": str(event_id),
+                    "context_score": summary.get("context_score"),
+                    "entry_ok": True,
+                    "skip_reasons": None,
+                    "formatted": True,
+                    "meta": {
+                        "kind": "GUARD_BLOCKED_PAPER",
+                        "exec_mode": "paper",
+                        "risk_profile": rp,
+                        "symbol": symbol,
+                        "entry_price": entry_price,
+                        "tp_price": tp_price,
+                        "sl_price": sl_price,
+                        "exit_price": summary.get("exit_price"),
+                        "pnl_pct": summary.get("pnl_pct"),
+                        "dist_to_peak_pct": entry_snapshot.get("dist_to_peak_pct"),
+                        "liq_long_usd_30s": entry_snapshot.get("liq_long_usd_30s"),
+                        "context_score": entry_snapshot.get("context_score"),
+                    },
+                },
+            )
         except Exception:
             log_exception(logger, "GUARD_BLOCKED_PAPER_TG_ERROR", symbol=symbol, run_id=run_id, step="OUTCOME")
         from trading.paper_outcome import close_from_outcome
         close_from_outcome(
-                strategy=STRATEGY,
+                strategy=strategy,
                 symbol=symbol,
                 run_id=run_id,
                 event_id=str(event_id),
@@ -364,6 +331,7 @@ def _run_short_pump_guard_blocked_outcome_watcher(
 
 def _ds_event(
     *,
+    strategy: str,
     run_id: str,
     symbol: str,
     event_id: str,
@@ -388,7 +356,7 @@ def _ds_event(
             "run_id": run_id,
             "event_id": event_id,
             "symbol": symbol,
-            "strategy": "short_pump",
+            "strategy": strategy,
             "mode": "live",
             "source_mode": "live",
             "side": "SHORT",
@@ -431,13 +399,14 @@ def _ds_event(
         },
     )
     try:
-        write_event_row(row, strategy="short_pump", mode="live", wall_time_utc=row["wall_time_utc"], schema_version=3)
+        write_event_row(row, strategy=strategy, mode="live", wall_time_utc=row["wall_time_utc"], schema_version=3)
     except Exception as e:
         log_exception(logger, "SHORT_DATASET_WRITE_ERROR | event", symbol=symbol, run_id=run_id, step="DATASET", extra={"event_id": event_id, "error": str(e)})
 
 
 def _ds_trade(
     *,
+    strategy: str,
     run_id: str,
     symbol: str,
     trade_id: str,
@@ -453,7 +422,7 @@ def _ds_trade(
         "event_id": event_id,
         "run_id": run_id,
         "symbol": symbol,
-        "strategy": "short_pump",
+        "strategy": strategy,
         "mode": "live",
         "side": "SHORT",
         "entry_time_utc": entry_time_utc,
@@ -463,13 +432,14 @@ def _ds_trade(
         "trade_type": trade_type,
     }
     try:
-        write_trade_row(row, strategy="short_pump", mode="live", wall_time_utc=entry_time_utc, schema_version=3)
+        write_trade_row(row, strategy=strategy, mode="live", wall_time_utc=entry_time_utc, schema_version=3)
     except Exception as e:
         log_exception(logger, "SHORT_DATASET_WRITE_ERROR | trade", symbol=symbol, run_id=run_id, step="DATASET", extra={"trade_id": trade_id, "error": str(e)})
 
 
 def _ds_outcome(
     *,
+    strategy: str,
     run_id: str,
     symbol: str,
     trade_id: str,
@@ -484,7 +454,7 @@ def _ds_outcome(
         "event_id": event_id,
         "run_id": run_id,
         "symbol": symbol,
-        "strategy": "short_pump",
+        "strategy": strategy,
         "mode": "live",
         "side": "SHORT",
         "outcome_time_utc": outcome_time_utc,
@@ -494,7 +464,7 @@ def _ds_outcome(
         "outcome_source": "watcher",
     }
     try:
-        write_outcome_row(row, strategy="short_pump", mode="live", wall_time_utc=outcome_time_utc, schema_version=3)
+        write_outcome_row(row, strategy=strategy, mode="live", wall_time_utc=outcome_time_utc, schema_version=3)
     except Exception as e:
         log_exception(logger, "SHORT_DATASET_WRITE_ERROR | outcome", symbol=symbol, run_id=run_id, step="DATASET", extra={"trade_id": trade_id, "error": str(e)})
 
@@ -565,6 +535,7 @@ def run_watch_for_symbol(
         log_info(logger, "TEST_FORCE_ARMED", symbol=cfg.symbol, run_id=run_id, step="WATCH_START")
     watch_time_utc = wall_time_utc()
     _ds_event(
+        strategy="short_pump",
         run_id=run_id,
         symbol=cfg.symbol,
         event_id=f"{run_id}_watch_start",
@@ -923,6 +894,7 @@ def run_watch_for_symbol(
                     )
                     log_info(logger, "ARMED", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="ARMED", extra={"context_score": context_score, "dist_to_peak_pct": dbg5.get('dist_to_peak_pct')})
                     _ds_event(
+                        strategy="short_pump",
                         run_id=run_id,
                         symbol=cfg.symbol,
                         event_id=f"{run_id}_armed",
@@ -1579,9 +1551,43 @@ def run_watch_for_symbol(
                 )
                 event_id = entry_payload.get("event_id") or f"{run_id}_entry_{entry_source}"
                 from trading.state import make_position_id
-                trade_id = make_position_id("short_pump", run_id or "", str(event_id or ""), cfg.symbol)
                 if not entry_payload.get("dist_to_peak_pct"):
                     entry_payload["dist_to_peak_pct"] = _dist_to_peak_pct(dbg5.get("peak_price"), entry_price)
+                route_meta = resolve_short_pump_route(entry_payload.get("dist_to_peak_pct"))
+                route_strategy = route_meta["route_strategy"]
+                trade_id = make_position_id(route_strategy, run_id or "", str(event_id or ""), cfg.symbol)
+                entry_payload.update(
+                    {
+                        "would_pass_dist_filter": route_meta["would_pass_dist_filter"],
+                        "filter_reason": route_meta["filter_reason"],
+                        "strategy_candidate": route_meta["strategy_candidate"],
+                        "route_strategy": route_strategy,
+                    }
+                )
+                entry_snapshot.update(
+                    {
+                        "would_pass_dist_filter": route_meta["would_pass_dist_filter"],
+                        "filter_reason": route_meta["filter_reason"],
+                        "strategy_candidate": route_meta["strategy_candidate"],
+                        "route_strategy": route_strategy,
+                    }
+                )
+                log_info(
+                    logger,
+                    "ROUTE_DECISION",
+                    symbol=cfg.symbol,
+                    run_id=run_id,
+                    stage=st.stage,
+                    step="ENTRY_DECISION",
+                    extra={
+                        "event_id": str(event_id),
+                        "dist_to_peak_pct": entry_payload.get("dist_to_peak_pct"),
+                        "route_strategy": route_strategy,
+                        "strategy_candidate": route_meta["strategy_candidate"],
+                        "would_pass_dist_filter": route_meta["would_pass_dist_filter"],
+                        "filter_reason": route_meta["filter_reason"],
+                    },
+                )
                 log_info(
                     logger,
                     "EVENT_DIST_TO_PEAK",
@@ -1594,9 +1600,14 @@ def run_watch_for_symbol(
                         "price": entry_price,
                         "peak": dbg5.get("peak_price"),
                         "dist_to_peak_pct": entry_payload.get("dist_to_peak_pct"),
+                        "would_pass_dist_filter": route_meta["would_pass_dist_filter"],
+                        "filter_reason": route_meta["filter_reason"],
+                        "strategy_candidate": route_meta["strategy_candidate"],
+                        "route_strategy": route_strategy,
                     },
                 )
                 _ds_event(
+                    strategy=route_strategy,
                     run_id=run_id,
                     symbol=cfg.symbol,
                     event_id=str(event_id),
@@ -1607,10 +1618,19 @@ def run_watch_for_symbol(
                     payload=entry_payload,
                     extra=None,
                 )
-                tradeable = is_tradeable_short_pump(st.stage, entry_payload.get("dist_to_peak_pct"))
+                tradeable = (
+                    is_tradeable_short_pump_filtered(st.stage, entry_payload.get("dist_to_peak_pct"))
+                    if route_strategy == "short_pump_filtered"
+                    else is_tradeable_short_pump(st.stage, entry_payload.get("dist_to_peak_pct"))
+                )
                 entry_payload["tradeable"] = tradeable
                 dist_to_peak = entry_payload.get("dist_to_peak_pct")
                 if not tradeable:
+                    gate_reason = (
+                        f"stage!=4 or dist>{SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX}"
+                        if route_strategy == "short_pump_filtered"
+                        else "stage!=4 or dist<TG_ENTRY_DIST_MIN"
+                    )
                     log_info(
                         logger,
                         "PAPER_REJECTED_SHORT_PUMP_GATE",
@@ -1619,18 +1639,19 @@ def run_watch_for_symbol(
                         stage=st.stage,
                         step="ENTRY_DECISION",
                         extra={
-                            "stage": st.stage,
                             "dist_to_peak_pct": dist_to_peak,
                             "run_id": run_id,
                             "symbol": cfg.symbol,
                             "event_id": str(event_id),
-                            "reason": "stage!=4 or dist<TG_ENTRY_DIST_MIN",
+                            "reason": gate_reason,
+                            "route_strategy": route_strategy,
                         },
                     )
                     _cleanup_symbol()
                     return {"run_id": run_id, "symbol": cfg.symbol, "end_reason": "SKIPPED_NOT_TRADEABLE"}
 
                 _ds_trade(
+                    strategy=route_strategy,
                     run_id=run_id,
                     symbol=cfg.symbol,
                     trade_id=str(trade_id),
@@ -1649,7 +1670,7 @@ def run_watch_for_symbol(
                     try:
                         from trading.risk_profile import get_risk_profile as _get_risk_profile_sp
                         _rp_entry, _, _ = _get_risk_profile_sp(
-                            "short_pump",
+                            route_strategy,
                             stage=st.stage,
                             dist_to_peak_pct=dist_to_peak,
                             liq_long_usd_30s=entry_payload.get("liq_long_usd_30s"),
@@ -1660,7 +1681,7 @@ def run_watch_for_symbol(
                     except Exception:
                         _rp_entry = ""
                     sig = build_short_pump_signal(
-                        strategy="short_pump",
+                        strategy=route_strategy,
                         side="SHORT",
                         symbol=cfg.symbol,
                         run_id=run_id,
@@ -1686,7 +1707,7 @@ def run_watch_for_symbol(
                     )
                     send_telegram(
                         format_tg(sig),
-                        strategy="short_pump",
+                        strategy=route_strategy,
                         side="SHORT",
                         mode=mode,
                         event_id=str(event_id),
@@ -1703,6 +1724,10 @@ def run_watch_for_symbol(
                             "tp_price": tp_price,
                             "sl_price": sl_price,
                             "dist_to_peak_pct": dist_to_peak,
+                            "would_pass_dist_filter": route_meta["would_pass_dist_filter"],
+                            "filter_reason": route_meta["filter_reason"],
+                            "strategy_candidate": route_meta["strategy_candidate"],
+                            "route_strategy": route_strategy,
                             "liq_long_usd_30s": entry_payload.get("liq_long_usd_30s"),
                             "context_score": context_score_msg,
                         },
@@ -1722,7 +1747,7 @@ def run_watch_for_symbol(
                                 step="ENTRY_DECISION",
                                 extra={
                                     "event_id": str(event_id),
-                                    "strategy": "short_pump",
+                                    "strategy": route_strategy,
                                     "risk_profile": _rp_entry or "",
                                     "ml_score": score,
                                 },
@@ -1756,6 +1781,7 @@ def run_watch_for_symbol(
                             target=_run_short_pump_guard_blocked_outcome_watcher,
                             kwargs={
                                 "cfg": cfg,
+                                "strategy": route_strategy,
                                 "run_id": run_id,
                                 "event_id": str(event_id),
                                 "trade_id": str(trade_id),
@@ -1769,7 +1795,7 @@ def run_watch_for_symbol(
                                 "entry_snapshot": entry_snapshot,
                                 "entry_payload": entry_payload,
                             },
-                            name=f"short_pump_guard_blocked_{cfg.symbol}_{trade_id[:20]}",
+                            name=f"{route_strategy}_guard_blocked_{cfg.symbol}_{trade_id[:20]}",
                             daemon=True,
                         )
                         t.start()
@@ -1787,6 +1813,7 @@ def run_watch_for_symbol(
                             target=_run_short_pump_guard_blocked_outcome_watcher,
                             kwargs={
                                 "cfg": cfg,
+                                "strategy": route_strategy,
                                 "run_id": run_id,
                                 "event_id": str(event_id),
                                 "trade_id": str(trade_id),
@@ -1800,7 +1827,7 @@ def run_watch_for_symbol(
                                 "entry_snapshot": entry_snapshot,
                                 "entry_payload": entry_payload,
                             },
-                            name=f"short_pump_guard_blocked_{cfg.symbol}_{trade_id[:20]}",
+                            name=f"{route_strategy}_guard_blocked_{cfg.symbol}_{trade_id[:20]}",
                             daemon=True,
                         )
                         t.start()
@@ -1913,6 +1940,7 @@ def run_watch_for_symbol(
                             },
                         )
                         _ds_event(
+                            strategy=route_strategy,
                             run_id=run_id,
                             symbol=cfg.symbol,
                             event_id=outcome_event_id,
@@ -1948,7 +1976,7 @@ def run_watch_for_symbol(
                         event_id=str(event_id),
                         run_id=run_id,
                         symbol=cfg.symbol,
-                        strategy="short_pump",
+                        strategy=route_strategy,
                         mode="live",
                         side="SHORT",
                         outcome_time_utc=outcome_time_utc,
@@ -1988,7 +2016,7 @@ def run_watch_for_symbol(
                             )
                         write_outcome_row(
                             outcome_row,
-                            strategy="short_pump",
+                            strategy=route_strategy,
                             mode="live",
                             wall_time_utc=outcome_time_utc,
                             schema_version=3,
@@ -1999,14 +2027,16 @@ def run_watch_for_symbol(
                         log_exception(logger, "CSV_WRITE failed for summary", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_summary})
 
                     if TG_SEND_OUTCOME:
-                        delivery_event_id = str(event_id or "")
                         from trading.state import make_position_id
-                        delivery_key = make_position_id(STRATEGY, run_id or "", delivery_event_id, cfg.symbol)
-
-                        from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID
-                        tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
 
                         try:
+                            # Align dedupe delivery_key with the same event_id used by paper close
+                            # and by the TG text (tg_event_id below). This prevents repeated TIMEOUT
+                            # deliveries when outer `event_id` differs from entry_payload.event_id.
+                            tg_event_id = entry_payload.get("event_id") or run_id
+                            delivery_event_id = str(tg_event_id or "")
+                            delivery_key = make_position_id(route_strategy, run_id or "", delivery_event_id, cfg.symbol)
+
                             _skip_tg, _tg_reason = _watcher_should_skip_outcome_live(run_id, delivery_event_id, cfg.symbol)
                             if _skip_tg:
                                 log_info(
@@ -2019,6 +2049,8 @@ def run_watch_for_symbol(
                                     extra={"delivery_key": delivery_key, "reason": _tg_reason},
                                 )
                             else:
+                                from trading.outcome_delivery import deliver_outcome_tg
+
                                 tg_event_id = entry_payload.get("event_id") or run_id
                                 context_score_msg = entry_payload.get("context_score", context_score)
                                 _rp, _rm, _ = ("", 0, 0)
@@ -2027,7 +2059,7 @@ def run_watch_for_symbol(
                                     from trading.risk_profile import get_risk_profile, get_notional_and_leverage
 
                                     _rp, _rm, _ = get_risk_profile(
-                                        "short_pump",
+                                        route_strategy,
                                         stage=entry_payload.get("stage"),
                                         dist_to_peak_pct=entry_payload.get("dist_to_peak_pct"),
                                         event_id=str(tg_event_id),
@@ -2039,7 +2071,7 @@ def run_watch_for_symbol(
                                     pass
 
                                 tg_text = format_outcome(
-                                    strategy="short_pump",
+                                    strategy=route_strategy,
                                     side="SHORT",
                                     symbol=cfg.symbol,
                                     run_id=run_id,
@@ -2060,19 +2092,29 @@ def run_watch_for_symbol(
                                     leverage=_lev,
                                     margin_mode=_mm,
                                 )
-
-                                def _send_fn() -> None:
-                                    send_telegram(
-                                        tg_text,
-                                        strategy="short_pump",
-                                        side="SHORT",
-                                        mode="FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
-                                        event_id=str(tg_event_id),
-                                        context_score=float(context_score_msg) if context_score_msg is not None else None,
-                                        entry_ok=True,
-                                        skip_reasons=None,
-                                        formatted=True,
-                                        meta={
+                                deliver_outcome_tg(
+                                    logger=logger,
+                                    delivery_strategy=route_strategy,
+                                    run_id=run_id or "",
+                                    event_id=delivery_event_id,
+                                    symbol=cfg.symbol,
+                                    res=summary.get("end_reason") or summary.get("outcome") or "UNKNOWN",
+                                    send_text=tg_text,
+                                    tg_send_enabled=True,
+                                    delivery_reason="tg_not_already_finalized",
+                                    delivery_mode="outcome_watch",
+                                    stage=st.stage,
+                                    step="OUTCOME_TG",
+                                    send_telegram_kwargs={
+                                        "strategy": route_strategy,
+                                        "side": "SHORT",
+                                        "mode": "FAST" if entry_payload.get("entry_source") == "fast" else "ARMED",
+                                        "event_id": str(tg_event_id),
+                                        "context_score": float(context_score_msg) if context_score_msg is not None else None,
+                                        "entry_ok": True,
+                                        "skip_reasons": None,
+                                        "formatted": True,
+                                        "meta": {
                                             "kind": "OUTCOME",
                                             "exec_mode": (cfg.mode or "").strip().lower() or "paper",
                                             "risk_profile": _rp or "",
@@ -2089,59 +2131,8 @@ def run_watch_for_symbol(
                                             "liq_long_usd_30s": entry_payload.get("liq_long_usd_30s"),
                                             "context_score": context_score_msg,
                                         },
-                                    )
-
-                                log_info(
-                                    logger,
-                                    "OUTCOME_TG_SEND_START",
-                                    symbol=cfg.symbol,
-                                    run_id=run_id,
-                                    stage=st.stage,
-                                    step="OUTCOME_TG",
-                                    extra={"delivery_key": delivery_key, "delivery_reason": "tg_not_already_finalized"},
+                                    },
                                 )
-
-                                ok = _send_telegram_with_retry(
-                                    logger=logger,
-                                    send_fn=_send_fn,
-                                    delivery_key=delivery_key,
-                                    symbol=cfg.symbol,
-                                    run_id=run_id,
-                                    stage=st.stage,
-                                    step="OUTCOME_TG",
-                                )
-
-                                if ok and tg_ready:
-                                    _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=cfg.symbol, run_id=run_id)
-                                    log_info(
-                                        logger,
-                                        "OUTCOME_TG_DELIVERED_AND_MARKED",
-                                        symbol=cfg.symbol,
-                                        run_id=run_id,
-                                        stage=st.stage,
-                                        step="OUTCOME_TG",
-                                        extra={"delivery_key": delivery_key, "tg_delivery_mode": "outcome_watch"},
-                                    )
-                                elif ok and not tg_ready:
-                                    log_info(
-                                        logger,
-                                        "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
-                                        symbol=cfg.symbol,
-                                        run_id=run_id,
-                                        stage=st.stage,
-                                        step="OUTCOME_TG",
-                                        extra={"delivery_key": delivery_key},
-                                    )
-                                else:
-                                    log_info(
-                                        logger,
-                                        "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
-                                        symbol=cfg.symbol,
-                                        run_id=run_id,
-                                        stage=st.stage,
-                                        step="OUTCOME_TG",
-                                        extra={"delivery_key": delivery_key},
-                                    )
                         except Exception:
                             log_exception(
                                 logger,
@@ -2161,7 +2152,7 @@ def run_watch_for_symbol(
                             end_reason = summary.get("end_reason") or summary.get("outcome") or ""
                             outcome_time_utc_val = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
                             close_from_outcome(
-                                strategy="short_pump",
+                                strategy=route_strategy,
                                 symbol=cfg.symbol,
                                 run_id=run_id,
                                 event_id=str(event_id_outcome),

@@ -42,10 +42,13 @@ from short_pump.telegram import FAST0_TG_OUTCOME_ENABLE, FAST0_TG_OUTCOME_MIN_DI
 logger = get_logger(__name__)
 
 STRATEGY = "short_pump_fast0"
+STRATEGY_FILTERED = "short_pump_fast0_filtered"
 ENABLE_ORDERBOOK = os.getenv("ENABLE_ORDERBOOK", "0").strip().lower() in ("1", "true", "yes", "y", "on")
 FAST0_WINDOW_SEC = int(os.getenv("FAST0_WINDOW_SEC", "180"))
 FAST0_POLL_SECONDS = int(os.getenv("FAST0_POLL_SECONDS", "10"))
 FAST0_TG_ENTRY_ENABLE = os.getenv("FAST0_TG_ENTRY_ENABLE", "0").strip().lower() in ("1", "true", "yes", "y", "on")
+FAST0_FILTERED_ENABLE = os.getenv("SHORT_PUMP_FAST0_FILTERED_ENABLE", "0").strip().lower() in ("1", "true", "yes", "y", "on")
+FAST0_FILTERED_DIST_MAX = float(os.getenv("SHORT_PUMP_FAST0_FILTERED_DIST_MAX", "1.0").replace(",", "."))
 FAST0_ENTRY_CONTEXT_MIN = float(os.getenv("FAST0_ENTRY_CONTEXT_MIN", "0.60").replace(",", "."))
 FAST0_ENTRY_DIST_MIN = float(os.getenv("FAST0_ENTRY_DIST_MIN", "0.50").replace(",", "."))
 FAST0_ENTRY_CVD30S_MAX = float(os.getenv("FAST0_ENTRY_CVD30S_MAX", "-0.10").replace(",", "."))
@@ -69,6 +72,16 @@ TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC = float(os.getenv("TG_OUTCOME_TG_SEND_RETRY
 
 _active_fast0_watchers = 0
 _fast0_watchers_lock = threading.Lock()
+
+
+def _resolve_fast0_strategy(dist_to_peak: float | None) -> str:
+    try:
+        dist_val = float(dist_to_peak) if dist_to_peak is not None else None
+    except (TypeError, ValueError):
+        dist_val = None
+    if FAST0_FILTERED_ENABLE and dist_val is not None and dist_val <= FAST0_FILTERED_DIST_MAX:
+        return STRATEGY_FILTERED
+    return STRATEGY
 
 
 def _send_telegram_with_retry(*, logger, send_fn, delivery_key: str, symbol: str, run_id: str, stage: int | None, step: str) -> bool:
@@ -169,8 +182,10 @@ def _run_fast0_outcome_watcher(
     dist_to_peak_pct: Optional[float] = None,
     context_score: Optional[float] = None,
     liq_long_usd_30s: Optional[float] = None,
+    strategy: str = STRATEGY,
 ) -> None:
     """Daemon thread: track TP/SL, write outcome row. For LIVE: prefer Bybit resolver; fallback to candles."""
+    strategy_name = (strategy or STRATEGY).strip() or STRATEGY
     global _active_fast0_watchers
     with _fast0_watchers_lock:
         if _active_fast0_watchers >= FAST0_MAX_WATCHERS:
@@ -206,8 +221,8 @@ def _run_fast0_outcome_watcher(
                     from trading.state import make_position_id
                     state = load_state()
                     open_positions = state.get("open_positions") or {}
-                    strat_pos = open_positions.get(STRATEGY) or {}
-                    pid = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
+                    strat_pos = open_positions.get(strategy_name) or {}
+                    pid = make_position_id(strategy_name, run_id or "", str(event_id or ""), symbol)
                     position = strat_pos.get(pid) if isinstance(strat_pos, dict) else None
                     if position and position.get("order_id") and position.get("position_idx") is not None:
                         break
@@ -298,7 +313,7 @@ def _run_fast0_outcome_watcher(
                         try:
                             from trading.paper_outcome import close_from_live_outcome
                             close_from_live_outcome(
-                                strategy=STRATEGY,
+                                strategy=strategy_name,
                                 symbol=symbol,
                                 run_id=run_id,
                                 event_id=event_id,
@@ -315,124 +330,71 @@ def _run_fast0_outcome_watcher(
                             if dist_val >= FAST0_TG_OUTCOME_MIN_DIST and (liq_long_usd_30s or 0) > 0:
                                 try:
                                     from trading.risk_profile import get_risk_profile, get_notional_and_leverage
-                                    _rp, _rm, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=liq_long_usd_30s or 0)
+                                    _rp, _rm, _ = get_risk_profile(strategy_name, liq_long_usd_30s=liq_long_usd_30s or 0)
                                     _nt, _lev, _mm = get_notional_and_leverage(_rm)
-                                    from trading.state import load_state, outcome_tg_sent, make_position_id
-                                    from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID
 
-                                    delivery_key = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
-                                    state = load_state()
-                                    if outcome_tg_sent(state, delivery_key):
-                                        log_info(
-                                            logger,
-                                            "OUTCOME_TG_SEND_SKIP_ALREADY_FINALIZED",
-                                            symbol=symbol,
-                                            run_id=run_id,
-                                            stage=None,
-                                            step="FAST0_OUTCOME_TG",
-                                            extra={"delivery_key": delivery_key},
-                                        )
-                                    else:
-                                        tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
-                                        msg = format_fast0_outcome_message(
-                                            symbol=symbol,
-                                            run_id=run_id,
-                                            event_id=event_id,
-                                            res=res_val,
-                                            entry_price=entry_price,
-                                            tp_price=tp_price,
-                                            sl_price=sl_price,
-                                            exit_price=exit_price_val,
-                                            pnl_pct=pnl_val,
-                                            hold_seconds=0,
-                                            dist_to_peak_pct=dist_val,
-                                            context_score=ctx_val,
-                                            risk_profile=_rp or None,
-                                            notional_usd=_nt if _nt > 0 else None,
-                                            leverage=_lev,
-                                            margin_mode=_mm,
-                                        )
+                                    from trading.outcome_delivery import deliver_outcome_tg
+                                    msg = format_fast0_outcome_message(
+                                        symbol=symbol,
+                                        run_id=run_id,
+                                        event_id=event_id,
+                                        strategy=strategy_name,
+                                        res=res_val,
+                                        entry_price=entry_price,
+                                        tp_price=tp_price,
+                                        sl_price=sl_price,
+                                        exit_price=exit_price_val,
+                                        pnl_pct=pnl_val,
+                                        hold_seconds=0,
+                                        dist_to_peak_pct=dist_val,
+                                        context_score=ctx_val,
+                                        risk_profile=_rp or None,
+                                        notional_usd=_nt if _nt > 0 else None,
+                                        leverage=_lev,
+                                        margin_mode=_mm,
+                                    )
 
-                                        def _send_fn() -> None:
-                                            send_telegram(
-                                                msg,
-                                                strategy=STRATEGY,
-                                                side="SHORT",
-                                                mode="FAST0",
-                                                event_id=event_id,
-                                                context_score=ctx_val,
-                                                entry_ok=True,
-                                                formatted=True,
-                                                meta={
-                                                    "kind": "OUTCOME",
-                                                    "exec_mode": "paper",
-                                                    "risk_profile": _rp or "",
-                                                    "symbol": symbol,
-                                                    "entry_price": entry_price,
-                                                    "tp_price": tp_price,
-                                                    "sl_price": sl_price,
-                                                    "exit_price": exit_price_val,
-                                                    "pnl_pct": pnl_val,
-                                                    "notional_usd": _nt if _nt > 0 else None,
-                                                    "leverage": _lev,
-                                                    "margin_mode": _mm,
-                                                    "dist_to_peak_pct": dist_val,
-                                                    "liq_long_usd_30s": liq_long_usd_30s,
-                                                    "context_score": ctx_val,
-                                                },
-                                            )
-
-                                        log_info(
-                                            logger,
-                                            "OUTCOME_TG_SEND_START",
-                                            symbol=symbol,
-                                            run_id=run_id,
-                                            stage=None,
-                                            step="FAST0_OUTCOME_TG",
-                                            extra={"delivery_key": delivery_key, "delivery_reason": "tg_not_already_finalized"},
-                                        )
-
-                                        ok = _send_telegram_with_retry(
-                                            logger=logger,
-                                            send_fn=_send_fn,
-                                            delivery_key=delivery_key,
-                                            symbol=symbol,
-                                            run_id=run_id,
-                                            stage=None,
-                                            step="FAST0_OUTCOME_TG",
-                                        )
-
-                                        if ok and tg_ready:
-                                            _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=symbol, run_id=run_id)
-                                            log_info(
-                                                logger,
-                                                "OUTCOME_TG_DELIVERED_AND_MARKED",
-                                                symbol=symbol,
-                                                run_id=run_id,
-                                                stage=None,
-                                                step="FAST0_OUTCOME_TG",
-                                                extra={"delivery_key": delivery_key, "delivery_mode": "fast0_outcome_bybit_paper"},
-                                            )
-                                        elif ok and not tg_ready:
-                                            log_info(
-                                                logger,
-                                                "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
-                                                symbol=symbol,
-                                                run_id=run_id,
-                                                stage=None,
-                                                step="FAST0_OUTCOME_TG",
-                                                extra={"delivery_key": delivery_key},
-                                            )
-                                        else:
-                                            log_info(
-                                                logger,
-                                                "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
-                                                symbol=symbol,
-                                                run_id=run_id,
-                                                stage=None,
-                                                step="FAST0_OUTCOME_TG",
-                                                extra={"delivery_key": delivery_key},
-                                            )
+                                    deliver_outcome_tg(
+                                        logger=logger,
+                                        delivery_strategy=strategy_name,
+                                        run_id=run_id or "",
+                                        event_id=str(event_id or ""),
+                                        symbol=symbol,
+                                        res=res_val,
+                                        send_text=msg,
+                                        tg_send_enabled=True,
+                                        delivery_reason="tg_not_already_finalized",
+                                        delivery_mode="fast0_outcome_bybit_paper",
+                                        stage=None,
+                                        step="FAST0_OUTCOME_TG",
+                                        send_telegram_kwargs={
+                                            "strategy": strategy_name,
+                                            "side": "SHORT",
+                                            "mode": "FAST0",
+                                            "event_id": str(event_id),
+                                            "context_score": ctx_val,
+                                            "entry_ok": True,
+                                            "skip_reasons": None,
+                                            "formatted": True,
+                                            "meta": {
+                                                "kind": "OUTCOME",
+                                                "exec_mode": "paper",
+                                                "risk_profile": _rp or "",
+                                                "symbol": symbol,
+                                                "entry_price": entry_price,
+                                                "tp_price": tp_price,
+                                                "sl_price": sl_price,
+                                                "exit_price": exit_price_val,
+                                                "pnl_pct": pnl_val,
+                                                "notional_usd": _nt if _nt > 0 else None,
+                                                "leverage": _lev,
+                                                "margin_mode": _mm,
+                                                "dist_to_peak_pct": dist_val,
+                                                "liq_long_usd_30s": liq_long_usd_30s,
+                                                "context_score": ctx_val,
+                                            },
+                                        },
+                                    )
                                 except Exception:
                                     log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
                         return
@@ -483,13 +445,13 @@ def _run_fast0_outcome_watcher(
             entry_price=entry_price,
             tp_price=tp_price,
             sl_price=sl_price,
-            entry_source="fast0",
-            entry_type="fast0",
+            entry_source=strategy_name,
+            entry_type=strategy_name,
             run_id=run_id,
             symbol=symbol,
             category=cfg.category,
             fetch_klines_1m=get_klines_1m,
-            strategy_name=STRATEGY,
+            strategy_name=strategy_name,
         )
         end_reason = summary.get("end_reason") or summary.get("outcome") or "TIMEOUT"
         if end_reason in ("TP_hit", "SL_hit", "CONFLICT") and summary.get("hit_time_utc"):
@@ -509,7 +471,7 @@ def _run_fast0_outcome_watcher(
             try:
                 from trading.risk_profile import get_risk_profile
                 _rp, _, _ = get_risk_profile(
-                    "short_pump_fast0",
+                    strategy_name,
                     liq_long_usd_30s=liq_long_usd_30s if liq_long_usd_30s is not None else 0,
                     dist_to_peak_pct=dist_to_peak_pct,
                 )
@@ -525,18 +487,18 @@ def _run_fast0_outcome_watcher(
             event_id=event_id,
             run_id=run_id,
             symbol=symbol,
-            strategy=STRATEGY,
+            strategy=strategy_name,
             mode=mode,
             side="SHORT",
             outcome_time_utc=outcome_time_utc,
         )
         if orow:
-            orow["outcome_source"] = "fast0"
+            orow["outcome_source"] = strategy_name
             if (mode or "").strip().lower() == "paper":
                 orow["trade_type"] = "PAPER"
             write_outcome_row(
                 orow,
-                strategy=STRATEGY,
+                strategy=strategy_name,
                 mode=mode,
                 wall_time_utc=outcome_time_utc,
                 schema_version=3,
@@ -592,124 +554,71 @@ def _run_fast0_outcome_watcher(
                     elif liq_val > 0 and dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
                         try:
                             from trading.risk_profile import get_risk_profile, get_notional_and_leverage
-                            _rp, _rm, _ = get_risk_profile("short_pump_fast0", liq_long_usd_30s=liq_val)
+                            _rp, _rm, _ = get_risk_profile(strategy_name, liq_long_usd_30s=liq_val)
                             _nt, _lev, _mm = get_notional_and_leverage(_rm)
-                            from trading.state import load_state, outcome_tg_sent, make_position_id
-                            from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID
+                            from trading.outcome_delivery import deliver_outcome_tg
 
-                            delivery_key = make_position_id(STRATEGY, run_id or "", str(event_id or ""), symbol)
-                            state = load_state()
-                            if outcome_tg_sent(state, delivery_key):
-                                log_info(
-                                    logger,
-                                    "OUTCOME_TG_SEND_SKIP_ALREADY_FINALIZED",
-                                    symbol=symbol,
-                                    run_id=run_id,
-                                    stage=None,
-                                    step="FAST0_OUTCOME_TG",
-                                    extra={"delivery_key": delivery_key},
-                                )
-                            else:
-                                tg_ready = bool(TG_BOT_TOKEN and TG_CHAT_ID)
-                                msg = format_fast0_outcome_message(
-                                    symbol=symbol,
-                                    run_id=run_id,
-                                    event_id=event_id,
-                                    res=res_val,
-                                    entry_price=entry_price,
-                                    tp_price=tp_price,
-                                    sl_price=sl_price,
-                                    exit_price=exit_price_val,
-                                    pnl_pct=pnl_val,
-                                    hold_seconds=hold_val,
-                                    dist_to_peak_pct=dist_val if dist_val else None,
-                                    context_score=ctx_val if ctx_val else None,
-                                    risk_profile=_rp or None,
-                                    notional_usd=_nt if _nt > 0 else None,
-                                    leverage=_lev,
-                                    margin_mode=_mm,
-                                )
+                            msg = format_fast0_outcome_message(
+                                symbol=symbol,
+                                run_id=run_id,
+                                event_id=event_id,
+                                strategy=strategy_name,
+                                res=res_val,
+                                entry_price=entry_price,
+                                tp_price=tp_price,
+                                sl_price=sl_price,
+                                exit_price=exit_price_val,
+                                pnl_pct=pnl_val,
+                                hold_seconds=hold_val,
+                                dist_to_peak_pct=dist_val if dist_val else None,
+                                context_score=ctx_val if ctx_val else None,
+                                risk_profile=_rp or None,
+                                notional_usd=_nt if _nt > 0 else None,
+                                leverage=_lev,
+                                margin_mode=_mm,
+                            )
 
-                                def _send_fn() -> None:
-                                    send_telegram(
-                                        msg,
-                                        strategy=STRATEGY,
-                                        side="SHORT",
-                                        mode="FAST0",
-                                        event_id=event_id,
-                                        context_score=ctx_val if ctx_val else None,
-                                        entry_ok=True,
-                                        formatted=True,
-                                        meta={
-                                            "kind": "OUTCOME",
-                                            "exec_mode": (mode or "").strip().lower() or "paper",
-                                            "risk_profile": _rp or "",
-                                            "symbol": symbol,
-                                            "entry_price": entry_price,
-                                            "tp_price": tp_price,
-                                            "sl_price": sl_price,
-                                            "exit_price": exit_price_val,
-                                            "pnl_pct": pnl_val,
-                                            "notional_usd": _nt if _nt > 0 else None,
-                                            "leverage": _lev,
-                                            "margin_mode": _mm,
-                                            "dist_to_peak_pct": dist_val if dist_val else None,
-                                            "liq_long_usd_30s": liq_val,
-                                            "context_score": ctx_val if ctx_val else None,
-                                        },
-                                    )
-
-                                log_info(
-                                    logger,
-                                    "OUTCOME_TG_SEND_START",
-                                    symbol=symbol,
-                                    run_id=run_id,
-                                    stage=None,
-                                    step="FAST0_OUTCOME_TG",
-                                    extra={"delivery_key": delivery_key, "delivery_reason": "tg_not_already_finalized"},
-                                )
-
-                                ok = _send_telegram_with_retry(
-                                    logger=logger,
-                                    send_fn=_send_fn,
-                                    delivery_key=delivery_key,
-                                    symbol=symbol,
-                                    run_id=run_id,
-                                    stage=None,
-                                    step="FAST0_OUTCOME_TG",
-                                )
-
-                                if ok and tg_ready:
-                                    _mark_outcome_tg_sent_by_key(delivery_key=delivery_key, symbol=symbol, run_id=run_id)
-                                    log_info(
-                                        logger,
-                                        "OUTCOME_TG_DELIVERED_AND_MARKED",
-                                        symbol=symbol,
-                                        run_id=run_id,
-                                        stage=None,
-                                        step="FAST0_OUTCOME_TG",
-                                        extra={"delivery_key": delivery_key, "delivery_mode": "fast0_outcome_candles"},
-                                    )
-                                elif ok and not tg_ready:
-                                    log_info(
-                                        logger,
-                                        "OUTCOME_TG_SEND_NOOP_TOKEN_MISSING_NO_MARK",
-                                        symbol=symbol,
-                                        run_id=run_id,
-                                        stage=None,
-                                        step="FAST0_OUTCOME_TG",
-                                        extra={"delivery_key": delivery_key},
-                                    )
-                                else:
-                                    log_info(
-                                        logger,
-                                        "OUTCOME_TG_SEND_EXHAUSTED_NO_MARK",
-                                        symbol=symbol,
-                                        run_id=run_id,
-                                        stage=None,
-                                        step="FAST0_OUTCOME_TG",
-                                        extra={"delivery_key": delivery_key},
-                                    )
+                            deliver_outcome_tg(
+                                logger=logger,
+                                delivery_strategy=strategy_name,
+                                run_id=run_id or "",
+                                event_id=str(event_id or ""),
+                                symbol=symbol,
+                                res=res_val,
+                                send_text=msg,
+                                tg_send_enabled=True,
+                                delivery_reason="tg_not_already_finalized",
+                                delivery_mode="fast0_outcome_candles",
+                                stage=None,
+                                step="FAST0_OUTCOME_TG",
+                                send_telegram_kwargs={
+                                    "strategy": strategy_name,
+                                    "side": "SHORT",
+                                    "mode": "FAST0_FILTERED" if strategy_name == STRATEGY_FILTERED else "FAST0",
+                                    "event_id": str(event_id),
+                                    "context_score": ctx_val if ctx_val else None,
+                                    "entry_ok": True,
+                                    "skip_reasons": None,
+                                    "formatted": True,
+                                    "meta": {
+                                        "kind": "OUTCOME",
+                                        "exec_mode": (mode or "").strip().lower() or "paper",
+                                        "risk_profile": _rp or "",
+                                        "symbol": symbol,
+                                        "entry_price": entry_price,
+                                        "tp_price": tp_price,
+                                        "sl_price": sl_price,
+                                        "exit_price": exit_price_val,
+                                        "pnl_pct": pnl_val,
+                                        "notional_usd": _nt if _nt > 0 else None,
+                                        "leverage": _lev,
+                                        "margin_mode": _mm,
+                                        "dist_to_peak_pct": dist_val if dist_val else None,
+                                        "liq_long_usd_30s": liq_val,
+                                        "context_score": ctx_val if ctx_val else None,
+                                    },
+                                },
+                            )
                         except Exception:
                             log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
             # Paper: close position on OUTCOME (TP_hit/SL_hit). Also for guard-blocked (position.mode=paper).
@@ -718,7 +627,7 @@ def _run_fast0_outcome_watcher(
                 if AUTO_TRADING_ENABLE and (MODE == "paper" or (mode or "").strip().lower() == "paper"):
                     from trading.paper_outcome import close_from_outcome
                     close_from_outcome(
-                        strategy=STRATEGY,
+                        strategy=strategy_name,
                         symbol=symbol,
                         run_id=run_id,
                         event_id=event_id,
@@ -750,7 +659,7 @@ def run_fast0_for_symbol(
     base_dir: Union[str, Path, None] = None,
 ) -> None:
     """
-    Run fast stage-0 sampling loop for symbol. Writes events to short_pump_fast0 strategy.
+    Run fast stage-0 sampling loop for symbol. Writes events to short_pump_fast0 or short_pump_fast0_filtered.
     No entry decisions, no trading. Data for later EV/WR analysis.
     base_dir: datasets root (e.g. /root/pump_short/datasets). If None, uses CWD/datasets.
     """
@@ -761,7 +670,10 @@ def run_fast0_for_symbol(
     base_dir_str = str(base_dir) if base_dir else None
 
     register_symbol(cfg.symbol)
-    entry_ok_fired = False
+    entry_ok_fired_by_strategy = {
+        STRATEGY: False,
+        STRATEGY_FILTERED: False,
+    }
     try:
         start_ts = time.time()
         tick = 0
@@ -830,6 +742,7 @@ def run_fast0_for_symbol(
                     ob_imbalance, spread_bps = orderbook_imbalance_and_spread(ob, levels=10)
 
                 dist_to_peak = (peak_price - last_price) / peak_price * 100.0 if peak_price > 0 else 0.0
+                route_strategy = _resolve_fast0_strategy(dist_to_peak)
 
                 payload: Dict[str, Any] = {
                     "time_utc": dbg5.get("time_utc", now_utc),
@@ -844,6 +757,13 @@ def run_fast0_for_symbol(
                     "pump_ts": pump_ts,
                     "tick": tick,
                 }
+                cvd_30s = snap.get("cvd_delta_ratio_30s")
+                cvd_1m = snap.get("cvd_delta_ratio_1m")
+                liq_short_usd_30s = liq.get("liq_short_usd_30s")
+                liq_long_usd_30s = liq.get("liq_long_usd_30s")
+                volume_1m_val = snap.get("volume_1m")
+                volume_sma_20 = snap.get("volume_sma_20")
+                volume_zscore_20 = snap.get("volume_zscore_20")
 
                 event_id = f"{run_id}_fast0_{tick}_{uuid.uuid4().hex[:8]}"
 
@@ -877,18 +797,18 @@ def run_fast0_for_symbol(
                             step="FAST0",
                             extra={"reason": entry_reason, "tick": tick, "context_score": context_score, "dist_to_peak_pct": dist_to_peak},
                         )
-                elif entry_ok_fired:
+                elif entry_ok_fired_by_strategy.get(route_strategy, False):
                     log_info(
                         logger,
                         "FAST0_ENTRY_SUPPRESSED",
                         symbol=cfg.symbol,
                         run_id=run_id,
                         step="FAST0",
-                        extra={"tick": tick, "reason": "already_fired"},
+                        extra={"tick": tick, "reason": "already_fired", "strategy": route_strategy},
                     )
-                entry_ok = entry_ok_pass and not entry_ok_fired
+                entry_ok = entry_ok_pass and not entry_ok_fired_by_strategy.get(route_strategy, False)
                 if entry_ok:
-                    entry_ok_fired = True
+                    entry_ok_fired_by_strategy[route_strategy] = True
                 payload["entry_ok"] = entry_ok
                 skip_reasons = "" if entry_ok else (entry_reason if not entry_ok_pass else "fast0_sample")
 
@@ -897,7 +817,7 @@ def run_fast0_for_symbol(
                         "run_id": run_id,
                         "event_id": event_id,
                         "symbol": cfg.symbol,
-                        "strategy": STRATEGY,
+                        "strategy": route_strategy,
                         "mode": mode,
                         "source_mode": mode,
                         "side": "SHORT",
@@ -916,7 +836,7 @@ def run_fast0_for_symbol(
 
                 write_event_row(
                     row,
-                    strategy=STRATEGY,
+                    strategy=route_strategy,
                     mode=mode,
                     wall_time_utc=now_utc,
                     schema_version=3,
@@ -929,25 +849,26 @@ def run_fast0_for_symbol(
                     tp_price = entry_price * (1.0 - FAST0_TP_PCT)
                     sl_price = entry_price * (1.0 + FAST0_SL_PCT)
                     from trading.state import make_position_id
-                    trade_id = make_position_id(STRATEGY, run_id or "", str(event_id or ""), cfg.symbol)
+                    ensure_dataset_files(route_strategy, mode, now_utc, schema_version=3, base_dir=base_dir_str)
+                    trade_id = make_position_id(route_strategy, run_id or "", str(event_id or ""), cfg.symbol)
                     trade_row = {
                         "trade_id": trade_id,
                         "event_id": event_id,
                         "run_id": run_id,
                         "symbol": cfg.symbol,
-                        "strategy": STRATEGY,
+                        "strategy": route_strategy,
                         "mode": mode,
                         "side": "SHORT",
                         "entry_time_utc": payload.get("time_utc", now_utc),
                         "entry_price": entry_price,
                         "tp_price": tp_price,
                         "sl_price": sl_price,
-                        "trade_type": "FAST0_PAPER",
+                        "trade_type": "FAST0_FILTERED_PAPER" if route_strategy == STRATEGY_FILTERED else "FAST0_PAPER",
                     }
                     entry_time_str = payload.get("time_utc", now_utc)
                     write_trade_row(
                         trade_row,
-                        strategy=STRATEGY,
+                        strategy=route_strategy,
                         mode=mode,
                         wall_time_utc=now_utc,
                         schema_version=3,
@@ -958,6 +879,7 @@ def run_fast0_for_symbol(
                     sig = build_fast0_signal(
                         symbol=cfg.symbol,
                         run_id=run_id,
+                        strategy=route_strategy,
                         dist_to_peak_pct=dist_to_peak,
                         context_score=context_score,
                         cvd_30s=cvd_30s,
@@ -1001,7 +923,7 @@ def run_fast0_for_symbol(
                                 try:
                                     from trading.risk_profile import get_risk_profile as _get_risk_profile_f0
                                     _rp_entry, _, _ = _get_risk_profile_f0(
-                                        "short_pump_fast0",
+                                        route_strategy,
                                         dist_to_peak_pct=dist_to_peak,
                                         liq_long_usd_30s=liq_long_usd_30s,
                                         context_score=context_score,
@@ -1013,9 +935,9 @@ def run_fast0_for_symbol(
                                     _rp_entry = ""
                                 send_telegram(
                                     format_tg(sig),
-                                    strategy=STRATEGY,
+                                    strategy=route_strategy,
                                     side="SHORT",
-                                    mode="FAST0",
+                                    mode="FAST0_FILTERED" if route_strategy == STRATEGY_FILTERED else "FAST0",
                                     event_id=event_id,
                                     context_score=context_score,
                                     entry_ok=True,
@@ -1031,6 +953,7 @@ def run_fast0_for_symbol(
                                         "dist_to_peak_pct": dist_to_peak,
                                         "liq_long_usd_30s": liq_long_usd_30s,
                                         "context_score": context_score,
+                                        "strategy": route_strategy,
                                     },
                                 )
                                 # ML score logging only (no filtering)
@@ -1047,7 +970,7 @@ def run_fast0_for_symbol(
                                             step="FAST0",
                                             extra={
                                                 "event_id": str(event_id),
-                                                "strategy": STRATEGY,
+                                                "strategy": route_strategy,
                                                 "risk_profile": _rp_entry or "",
                                                 "ml_score": score,
                                             },
@@ -1080,8 +1003,9 @@ def run_fast0_for_symbol(
                             "dist_to_peak_pct": dist_to_peak,
                             "context_score": context_score,
                             "liq_long_usd_30s": liq_long_usd_30s,
+                            "strategy": route_strategy,
                         },
-                        name=f"fast0_outcome_{cfg.symbol}_{trade_id[:16]}",
+                        name=f"fast0_outcome_{route_strategy}_{cfg.symbol}_{trade_id[:16]}",
                         daemon=True,
                     )
                     t.start()
@@ -1091,7 +1015,7 @@ def run_fast0_for_symbol(
                         symbol=cfg.symbol,
                         run_id=run_id,
                         step="FAST0",
-                        extra={"event_id": event_id, "trade_id": trade_id},
+                        extra={"event_id": event_id, "trade_id": trade_id, "strategy": route_strategy, "route_strategy": route_strategy},
                     )
 
                 log_info(

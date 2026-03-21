@@ -67,6 +67,7 @@ from trading.state import (
     record_open,
     save_state,
 )
+from short_pump.attach import attach_outcome_monitor
 
 logger = logging.getLogger(__name__)
 
@@ -166,13 +167,18 @@ def _dedupe_key(signal: Signal) -> str:
 
 def _get_allowed_strategies() -> List[str]:
     """Runtime list from STRATEGIES env (so CLI --strategies can override)."""
-    raw = os.getenv("STRATEGIES", "short_pump").strip()
+    raw = os.getenv("STRATEGIES", "short_pump,short_pump_filtered,short_pump_fast0,short_pump_fast0_filtered").strip()
     out = [s.strip() for s in raw.split(",") if s.strip()]
-    return out if out else ["short_pump"]
+    return out if out else ["short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"]
 
 
 # Priority for multi-strategy selection: lower index = higher priority
-_STRATEGY_PRIORITY: dict[str, int] = {"short_pump_fast0": 0, "short_pump": 1}
+_STRATEGY_PRIORITY: dict[str, int] = {
+    "short_pump_fast0_filtered": 0,
+    "short_pump_fast0": 1,
+    "short_pump_filtered": 2,
+    "short_pump": 3,
+}
 
 
 def _selection_key(signal: Signal) -> tuple:
@@ -417,7 +423,10 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00:00")
     if close_on_timeout(state, now_utc, broker=broker if EXECUTION_MODE == "live" else None):
-        save_state(state)
+        # close_on_timeout (and called helpers) internally persist state via load_state()/save_state().
+        # Do NOT overwrite the file with this runner-local stale snapshot, otherwise we can lose
+        # outcome_tg_sent marks and re-close the same positions repeatedly.
+        state = load_state()
 
     if EXECUTION_MODE == "live" and broker is not None:
         from trading.outcome_worker import run_outcome_worker
@@ -494,7 +503,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
         risk_profile_name = ""
         risk_mult = 1.0
-        if (signal.strategy or "").strip() in ("short_pump", "short_pump_fast0"):
+        if (signal.strategy or "").strip() in ("short_pump", "short_pump_filtered", "short_pump_fast0"):
             risk_profile_name, risk_mult, _ = get_risk_profile(
                 (signal.strategy or "").strip(),
                 stage=getattr(signal, "stage", None),
@@ -688,6 +697,11 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             "run_once: open strategy=%s symbol=%s position_id=%s entry=%.4f notional=%.2f risk_usd=%.2f",
             signal.strategy, signal.symbol, pid or position_id, entry_log, notional_usd, risk_usd,
         )
+        # Persist position immediately so attach can rely on persisted state
+        try:
+            save_state(state)
+        except Exception:
+            logger.exception("run_once: save_state failed after open for position_id=%s", pid or position_id)
 
         # LIVE_OPEN Telegram: only after position confirmed on exchange (get_open_position size > 0)
         if EXECUTION_MODE == "live":
@@ -730,7 +744,33 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                         "LIVE_OPEN_TG_FAILED | strategy=%s symbol=%s",
                         signal.strategy, signal.symbol,
                     )
+        # For SP-PAPER: A3-lite attach — runner establishes ownership deterministically.
+        try:
+            if (signal.strategy or "").strip() in {"short_pump", "short_pump_filtered"} and position.get("mode") == "paper" and pid:
+                meta = {
+                    "attach_by": "runner",
+                    "outcome_watch_minutes": position.get("outcome_watch_minutes"),
+                    "outcome_poll_seconds": position.get("outcome_poll_seconds"),
+                }
+                try:
+                    # Pass in-memory state to attach so it mutates same object and persists atomically.
+                    tracker_id = attach_outcome_monitor(pid, meta, state=state)
+                    if tracker_id:
+                        logger.info("attach_outcome_monitor persisted tracker_id=%s for position_id=%s", tracker_id, pid)
+                    else:
+                        logger.warning("attach_outcome_monitor did not persist for position_id=%s", pid)
+                except Exception:
+                    logger.exception("attach_outcome_monitor call failed for position_id=%s", pid)
+                # reload canonical state to avoid any stale in-memory snapshot overwriting attach metadata
+                try:
+                    state = load_state()
+                except Exception:
+                    logger.exception("run_once: reload state after attach failed for position_id=%s", pid or position_id)
 
+        except Exception:
+            logger.exception("run_once: attach guard failed for position_id=%s", pid or position_id)
+
+        # Final persist of current canonical state
         save_state(state)
     finally:
         _finish_queue_processing(raw_lines)
@@ -749,7 +789,7 @@ def main() -> None:
         "--strategies",
         type=str,
         default=None,
-        help='Comma-separated strategies (e.g. "short_pump,short_pump_fast0"). Overrides env STRATEGIES.',
+        help='Comma-separated strategies (e.g. "short_pump,short_pump_filtered,short_pump_fast0"). Overrides env STRATEGIES.',
     )
     args = parser.parse_args()
     if args.strategies is not None:
@@ -757,7 +797,7 @@ def main() -> None:
     if args.once:
         run_once(dry_run_live=args.dry_run_live)
     else:
-        print("Usage: python3 -m trading.runner --once [--strategies short_pump,short_pump_fast0] [--dry-run-live]")
+        print("Usage: python3 -m trading.runner --once [--strategies short_pump,short_pump_filtered,short_pump_fast0] [--dry-run-live]")
         sys.exit(1)
 
 

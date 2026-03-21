@@ -1,0 +1,84 @@
+# entries_v2 enrichment QC
+
+- total_rows: 1396
+- matched_by_primary_key: 1393
+- matched_by_fallback_key: 435
+- enriched_rows_with_any_key_features: 1386
+
+## Source files
+
+- events_v3 files: 128
+- trades_v3 files: 128
+
+## Missing feature counts
+
+- accel_30s_vs_3m: 1396
+- avg_candle_body_pct_5: 1378
+- context_score: 849
+- cvd_delta_ratio_1m: 850
+- cvd_delta_ratio_30s: 850
+- data_available: 0
+- delta_ratio_1m: 535
+- delta_ratio_30s: 512
+- dist_to_peak_pct: 10
+- dist_to_sl_pct: 424
+- dist_to_tp_pct: 424
+- entry: 424
+- entry_ok: 10
+- entry_price: 59
+- event_id: 0
+- exit_price: 426
+- funding_rate_abs: 851
+- green_candles_5: 1378
+- hour_of_day: 1359
+- is_valid_for_ml: 0
+- liq_long_count_1m: 850
+- liq_long_count_30s: 850
+- liq_long_usd_30s: 850
+- liq_short_count_1m: 850
+- liq_short_count_30s: 850
+- liq_short_usd_30s: 850
+- lower_wick_ratio_last: 1378
+- mae_pct: 0
+- max_candle_body_pct_5: 1378
+- mfe_pct: 0
+- oi_change_1m_pct: 1154
+- oi_change_5m_pct: 1154
+- oi_change_fast_pct: 1074
+- opened_ts: 1313
+- orderbook_imbalance_10: 1396
+- outcome: 0
+- outcome_time_utc: 0
+- pnl_pct: 0
+- price_change_1m_pct: 1396
+- price_change_30s_pct: 1396
+- price_change_3m_pct: 1396
+- pump_age_sec: 1396
+- risk_profile: 1396
+- run_id: 0
+- side: 0
+- side_event: 10
+- skip_reasons: 232
+- sl: 424
+- sl_price: 59
+- source_mode: 264
+- spread_bps: 1396
+- stage: 852
+- strategy: 0
+- symbol: 0
+- time_since_peak_sec: 1378
+- time_since_signal_sec: 1396
+- time_utc: 10
+- tp: 424
+- tp_price: 59
+- trade_id: 0
+- trade_type: 59
+- upper_wick_ratio_last: 1378
+- volume_1m: 508
+- volume_5m: 490
+- volume_ratio_1m_20: 1396
+- volume_ratio_5m_20: 1378
+- volume_sma_20: 508
+- volume_zscore_20: 508
+- wall_time_utc: 10
+- wick_body_ratio_last: 1378

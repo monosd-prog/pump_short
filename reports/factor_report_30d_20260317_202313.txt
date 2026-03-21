@@ -1,0 +1,225 @@
+FACTOR REPORT — days=30 strategies=short_pump,short_pump_fast0
+Generated at UTC: 2026-03-17 20:23:13
+
+================================================================================
+STRATEGY: short_pump
+================================================================================
+
+A) Strategy summary
+Strategy: short_pump
+N=258, TP=109, SL=133, TIMEOUT=2
+WR=45.0%, EV=-0.009, EV20=-0.290
+Data quality:
+  - trade_id coverage=100%
+  - event_id coverage=100%
+  - run_id coverage=100%
+  - symbol coverage=100%
+  - outcome coverage=100%
+  - pnl_pct coverage=100%
+  - hold_seconds coverage=100%
+  - dup_trade_id=0
+
+B) Single factors
+Factor: dist_to_peak_pct
+  [7.5,10): n=48, TP=27, SL=16, TIMEOUT=2, WR=62.8%, EV=+0.364, EV20=+0.420
+  [3.5,5): n=64, TP=32, SL=29, TIMEOUT=0, WR=52.5%, EV=+0.154, EV20=-0.010
+  [2,3.5): n=35, TP=16, SL=19, TIMEOUT=0, WR=45.7%, EV=+0.006, EV20=+0.100
+  [5,7.5): n=61, TP=22, SL=34, TIMEOUT=0, WR=39.3%, EV=-0.136, EV20=-0.120
+  [-inf,2): n=26, TP=6, SL=20, TIMEOUT=0, WR=23.1%, EV=-0.492, EV20=-0.560
+Factor: context_score
+  [0.4,0.6): n=160, TP=76, SL=72, TIMEOUT=2, WR=51.4%, EV=+0.128, EV20=+0.040
+  [0.6,0.8): n=76, TP=26, SL=46, TIMEOUT=0, WR=36.1%, EV=-0.206, EV20=-0.230
+Factor: stage
+  [3,4): n=207, TP=96, SL=95, TIMEOUT=2, WR=50.3%, EV=+0.105, EV20=-0.180
+  [2,3): n=45, TP=12, SL=33, TIMEOUT=0, WR=26.7%, EV=-0.413, EV20=-0.450
+Factor: cvd_delta_ratio_30s
+  [-0.5,0): n=252, TP=108, SL=128, TIMEOUT=2, WR=45.8%, EV=+0.007, EV20=-0.180
+Factor: cvd_delta_ratio_1m
+  [-0.5,0): n=221, TP=95, SL=113, TIMEOUT=1, WR=45.7%, EV=+0.005, EV20=-0.180
+  [-1,-0.5): n=21, TP=7, SL=11, TIMEOUT=1, WR=38.9%, EV=-0.137, EV20=-0.137
+Factor: delta_ratio_30s
+  [-0.5,0): n=252, TP=108, SL=128, TIMEOUT=2, WR=45.8%, EV=+0.007, EV20=-0.180
+Factor: delta_ratio_1m
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: liq_long_usd_30s
+  [0,5e+03): n=252, TP=108, SL=128, TIMEOUT=2, WR=45.8%, EV=+0.007, EV20=-0.180
+Factor: liq_short_usd_30s
+  [0,5e+03): n=252, TP=108, SL=128, TIMEOUT=2, WR=45.8%, EV=+0.007, EV20=-0.180
+Factor: oi_change_fast_pct
+  [-2,0): n=98, TP=46, SL=49, TIMEOUT=1, WR=48.4%, EV=+0.065, EV20=-0.120
+  [0,2): n=100, TP=41, SL=49, TIMEOUT=1, WR=45.6%, EV=+0.002, EV20=+0.260
+  [2,5): n=20, TP=8, SL=11, TIMEOUT=0, WR=42.1%, EV=-0.074, EV20=-0.074
+Factor: oi_change_1m_pct
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: oi_change_5m_pct
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: funding_rate_abs
+  [0.002,0.005): n=23, TP=13, SL=7, TIMEOUT=1, WR=65.0%, EV=+0.410, EV20=+0.370
+  [0.0005,0.001): n=22, TP=11, SL=11, TIMEOUT=0, WR=50.0%, EV=+0.100, EV20=+0.100
+  [0,0.0005): n=107, TP=49, SL=52, TIMEOUT=1, WR=48.5%, EV=+0.067, EV20=-0.010
+  [0.005,0.01): n=39, TP=14, SL=20, TIMEOUT=0, WR=41.2%, EV=-0.094, EV20=+0.100
+  [0.01,inf): n=45, TP=17, SL=27, TIMEOUT=0, WR=38.6%, EV=-0.150, EV20=-0.450
+Factor: volume_1m
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: volume_5m
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: volume_sma_20
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: volume_zscore_20
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: spread_bps
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: orderbook_imbalance_10
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: symbol
+  no buckets passing sample safety threshold
+
+C) Delta analysis
+Factor: delta_ratio_30s
+  [-0.5,0): n=252, TP=108, SL=128, TIMEOUT=2, WR=45.8%, EV=+0.007, EV20=-0.180
+Factor: delta_ratio_1m
+  NaN: n=258, TP=109, SL=133, TIMEOUT=2, WR=45.0%, EV=-0.009, EV20=-0.290
+Factor: cvd_delta_ratio_30s
+  [-0.5,0): n=252, TP=108, SL=128, TIMEOUT=2, WR=45.8%, EV=+0.007, EV20=-0.180
+Factor: cvd_delta_ratio_1m
+  [-0.5,0): n=221, TP=95, SL=113, TIMEOUT=1, WR=45.7%, EV=+0.005, EV20=-0.180
+  [-1,-0.5): n=21, TP=7, SL=11, TIMEOUT=1, WR=38.9%, EV=-0.137, EV20=-0.137
+
+D) Symbol analysis
+symbol: not tracked
+
+E) Market regime
+Market regime:
+  funding_rate_abs: mean=0.005236, p25=5e-05, p50=0.0009471, p75=0.008
+  oi_change_fast_pct: mean=0.7359, p25=-0.4414, p50=0.1106, p75=0.9728
+  liq_long_usd_30s: mean=0, p25=0, p50=0, p75=0
+  liq_short_usd_30s: mean=0, p25=0, p50=0, p75=0
+  volume_1m: not tracked
+
+F) Best combinations
+- (context_score=[0.4,0.6)) & (dist_to_peak_pct=[7.5,10)): n=41, WR=64.9%, EV=+0.405, EV20=+0.530 :: n=41, WR=64.9%, EV=+0.405, EV20=+0.530
+- (dist_to_peak_pct=[7.5,10)) & (liq_long_usd_30s=[0,5e+03)): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (dist_to_peak_pct=[7.5,10)) & (volume_zscore_20=nan): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[7.5,10)): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (cvd_delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[7.5,10)): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (context_score=[0.4,0.6)) & (dist_to_peak_pct=[3.5,5)): n=50, WR=58.3%, EV=+0.283, EV20=+0.210 :: n=50, WR=58.3%, EV=+0.283, EV20=+0.210
+- (dist_to_peak_pct=[3.5,5)) & (liq_long_usd_30s=[0,5e+03)): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+- (dist_to_peak_pct=[3.5,5)) & (volume_zscore_20=nan): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+- (delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[3.5,5)): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+- (cvd_delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[3.5,5)): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+
+G) Candidates for paper filters
+- (context_score=[0.4,0.6)) & (dist_to_peak_pct=[7.5,10)): n=41, WR=64.9%, EV=+0.405, EV20=+0.530 :: n=41, WR=64.9%, EV=+0.405, EV20=+0.530
+- (dist_to_peak_pct=[7.5,10)) & (liq_long_usd_30s=[0,5e+03)): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (dist_to_peak_pct=[7.5,10)) & (volume_zscore_20=nan): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[7.5,10)): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (cvd_delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[7.5,10)): n=48, WR=62.8%, EV=+0.364, EV20=+0.420 :: n=48, WR=62.8%, EV=+0.364, EV20=+0.420
+- (context_score=[0.4,0.6)) & (dist_to_peak_pct=[3.5,5)): n=50, WR=58.3%, EV=+0.283, EV20=+0.210 :: n=50, WR=58.3%, EV=+0.283, EV20=+0.210
+- (dist_to_peak_pct=[3.5,5)) & (liq_long_usd_30s=[0,5e+03)): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+- (dist_to_peak_pct=[3.5,5)) & (volume_zscore_20=nan): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+- (delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[3.5,5)): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+- (cvd_delta_ratio_30s=[-0.5,0)) & (dist_to_peak_pct=[3.5,5)): n=64, WR=52.5%, EV=+0.154, EV20=-0.010 :: n=64, WR=52.5%, EV=+0.154, EV20=-0.010
+
+================================================================================
+STRATEGY: short_pump_fast0
+================================================================================
+
+A) Strategy summary
+Strategy: short_pump_fast0
+N=159, TP=71, SL=73, TIMEOUT=4
+WR=49.3%, EV=+0.082, EV20=-0.340
+Data quality:
+  - trade_id coverage=100%
+  - event_id coverage=100%
+  - run_id coverage=100%
+  - symbol coverage=100%
+  - outcome coverage=100%
+  - pnl_pct coverage=100%
+  - hold_seconds coverage=100%
+  - dup_trade_id=0
+
+B) Single factors
+Factor: dist_to_peak_pct
+  [2,3.5): n=29, TP=15, SL=14, TIMEOUT=0, WR=51.7%, EV=+0.138, EV20=+0.100
+  [-inf,2): n=121, TP=54, SL=54, TIMEOUT=3, WR=50.0%, EV=+0.097, EV20=-0.340
+Factor: context_score
+  [0.4,0.6): n=44, TP=23, SL=16, TIMEOUT=3, WR=59.0%, EV=+0.276, EV20=+0.250
+  [0.2,0.4): n=113, TP=48, SL=57, TIMEOUT=0, WR=45.7%, EV=+0.006, EV20=-0.670
+Factor: stage
+  [-inf,2): n=157, TP=71, SL=73, TIMEOUT=3, WR=49.3%, EV=+0.083, EV20=-0.340
+Factor: cvd_delta_ratio_30s
+  [-0.5,0): n=138, TP=64, SL=65, TIMEOUT=1, WR=49.6%, EV=+0.091, EV20=-0.340
+Factor: cvd_delta_ratio_1m
+  [-0.5,0): n=148, TP=68, SL=69, TIMEOUT=1, WR=49.6%, EV=+0.091, EV20=-0.340
+Factor: delta_ratio_30s
+  NaN: n=159, TP=71, SL=73, TIMEOUT=4, WR=49.3%, EV=+0.082, EV20=-0.340
+Factor: delta_ratio_1m
+  NaN: n=159, TP=71, SL=73, TIMEOUT=4, WR=49.3%, EV=+0.082, EV20=-0.340
+Factor: liq_long_usd_30s
+  [0,5e+03): n=118, TP=48, SL=57, TIMEOUT=3, WR=45.7%, EV=+0.006, EV20=-0.340
+Factor: liq_short_usd_30s
+  [0,5e+03): n=157, TP=71, SL=73, TIMEOUT=3, WR=49.3%, EV=+0.083, EV20=-0.340
+Factor: oi_change_fast_pct
+  NaN: n=159, TP=71, SL=73, TIMEOUT=4, WR=49.3%, EV=+0.082, EV20=-0.340
+Factor: oi_change_1m_pct
+  [2,5): n=23, TP=11, SL=11, TIMEOUT=0, WR=50.0%, EV=+0.100, EV20=+0.100
+  [0,2): n=59, TP=27, SL=28, TIMEOUT=0, WR=49.1%, EV=+0.080, EV20=-0.340
+  [-2,0): n=53, TP=24, SL=25, TIMEOUT=3, WR=49.0%, EV=+0.073, EV20=+0.140
+Factor: oi_change_5m_pct
+  [2,5): n=23, TP=11, SL=11, TIMEOUT=0, WR=50.0%, EV=+0.100, EV20=+0.100
+  [0,2): n=59, TP=27, SL=28, TIMEOUT=0, WR=49.1%, EV=+0.080, EV20=-0.340
+  [-2,0): n=53, TP=24, SL=25, TIMEOUT=3, WR=49.0%, EV=+0.073, EV20=+0.140
+Factor: funding_rate_abs
+  [0.01,inf): n=23, TP=11, SL=9, TIMEOUT=0, WR=55.0%, EV=+0.210, EV20=+0.210
+  [0,0.0005): n=70, TP=31, SL=30, TIMEOUT=3, WR=50.8%, EV=+0.112, EV20=-0.070
+  [0.002,0.005): n=21, TP=9, SL=12, TIMEOUT=0, WR=42.9%, EV=-0.057, EV20=-0.120
+Factor: volume_1m
+  [1e+06,inf): n=66, TP=35, SL=28, TIMEOUT=0, WR=55.6%, EV=+0.222, EV20=+0.210
+  [0,5e+04): n=21, TP=9, SL=8, TIMEOUT=3, WR=52.9%, EV=+0.140, EV20=+0.140
+  [1e+05,2.5e+05): n=25, TP=10, SL=13, TIMEOUT=0, WR=43.5%, EV=-0.043, EV20=-0.120
+  [2.5e+05,5e+05): n=21, TP=7, SL=12, TIMEOUT=0, WR=36.8%, EV=-0.189, EV20=-0.189
+Factor: volume_5m
+  [2e+06,inf): n=94, TP=44, SL=46, TIMEOUT=0, WR=48.9%, EV=+0.076, EV20=-0.340
+  [1e+06,2e+06): n=29, TP=12, SL=13, TIMEOUT=0, WR=48.0%, EV=+0.056, EV20=-0.120
+Factor: volume_sma_20
+  [1e+06,inf): n=25, TP=13, SL=10, TIMEOUT=0, WR=56.5%, EV=+0.243, EV20=+0.100
+  [1e+05,2.5e+05): n=22, TP=10, SL=8, TIMEOUT=0, WR=55.6%, EV=+0.222, EV20=+0.222
+  NaN: n=73, TP=34, SL=34, TIMEOUT=4, WR=50.0%, EV=+0.094, EV20=-0.030
+Factor: volume_zscore_20
+  [-0.5,0): n=30, TP=15, SL=12, TIMEOUT=0, WR=55.6%, EV=+0.222, EV20=-0.010
+  [2,inf): n=66, TP=30, SL=35, TIMEOUT=0, WR=46.2%, EV=+0.015, EV20=-0.120
+Factor: spread_bps
+  NaN: n=159, TP=71, SL=73, TIMEOUT=4, WR=49.3%, EV=+0.082, EV20=-0.340
+Factor: orderbook_imbalance_10
+  NaN: n=159, TP=71, SL=73, TIMEOUT=4, WR=49.3%, EV=+0.082, EV20=-0.340
+Factor: symbol
+  no buckets passing sample safety threshold
+
+C) Delta analysis
+Factor: delta_ratio_30s
+  NaN: n=159, TP=71, SL=73, TIMEOUT=4, WR=49.3%, EV=+0.082, EV20=-0.340
+Factor: delta_ratio_1m
+  NaN: n=159, TP=71, SL=73, TIMEOUT=4, WR=49.3%, EV=+0.082, EV20=-0.340
+Factor: cvd_delta_ratio_30s
+  [-0.5,0): n=138, TP=64, SL=65, TIMEOUT=1, WR=49.6%, EV=+0.091, EV20=-0.340
+Factor: cvd_delta_ratio_1m
+  [-0.5,0): n=148, TP=68, SL=69, TIMEOUT=1, WR=49.6%, EV=+0.091, EV20=-0.340
+
+D) Symbol analysis
+symbol: not tracked
+
+E) Market regime
+Market regime:
+  funding_rate_abs: mean=0.00412, p25=5e-05, p50=0.00073, p75=0.00412
+  oi_change_fast_pct: not tracked
+  liq_long_usd_30s: mean=6.636e+04, p25=0, p50=0, p75=5000
+  liq_short_usd_30s: mean=26.6, p25=0, p50=0, p75=0
+  volume_1m: mean=3.637e+06, p25=1.745e+05, p50=5.981e+05, p75=2.709e+06
+
+F) Best combinations
+- (context_score=[0.4,0.6)) & (delta_ratio_30s=nan): n=44, WR=59.0%, EV=+0.276, EV20=+0.250 :: n=44, WR=59.0%, EV=+0.276, EV20=+0.250
+- (context_score=[0.4,0.6)) & (cvd_delta_ratio_30s=[-0.5,0)): n=41, WR=57.9%, EV=+0.267, EV20=+0.260 :: n=41, WR=57.9%, EV=+0.267, EV20=+0.260
+
+G) Candidates for paper filters
+- (context_score=[0.4,0.6)) & (delta_ratio_30s=nan): n=44, WR=59.0%, EV=+0.276, EV20=+0.250 :: n=44, WR=59.0%, EV=+0.276, EV20=+0.250
+- (context_score=[0.4,0.6)) & (cvd_delta_ratio_30s=[-0.5,0)): n=41, WR=57.9%, EV=+0.267, EV20=+0.260 :: n=41, WR=57.9%, EV=+0.267, EV20=+0.260

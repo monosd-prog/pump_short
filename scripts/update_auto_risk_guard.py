@@ -24,11 +24,11 @@ from analytics.auto_risk_guard_metrics import (
 )
 
 
-def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, pd.DataFrame | None, tuple[str, str]]:
-    """Load and enrich outcomes for short_pump and short_pump_fast0 (same as daily_tg_report)."""
+def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, tuple[str, str]]:
+    """Load and enrich outcomes for short_pump, short_pump_filtered and fast0 strategies (same as daily_tg_report)."""
     # Outcomes
     all_outcomes: list[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_fast0"):
+    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
         result = load_outcomes(
             base_dir=base_dir,
             strategy=strategy,
@@ -44,7 +44,7 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
 
     # Events for enrichment
     all_events: list[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_fast0"):
+    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
         result = load_events_v2(
             data_dir=base_dir,
             strategy=strategy,
@@ -72,8 +72,13 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
         if has_strat
         else df_sorted
     )
+    df_spf = (
+        df_sorted[df_sorted["strategy"].astype(str) == "short_pump_filtered"]
+        if has_strat
+        else pd.DataFrame()
+    )
     df_f0 = (
-        df_sorted[df_sorted["strategy"].astype(str) == "short_pump_fast0"]
+        df_sorted[df_sorted["strategy"].astype(str).isin(["short_pump_fast0", "short_pump_fast0_filtered"])]
         if has_strat
         else pd.DataFrame()
     )
@@ -84,19 +89,32 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
         if has_ev_strat
         else all_ev
     )
+    ev_spf = (
+        all_ev[all_ev["strategy"].astype(str) == "short_pump_filtered"]
+        if has_ev_strat
+        else pd.DataFrame()
+    )
     ev_f0 = (
-        all_ev[all_ev["strategy"].astype(str) == "short_pump_fast0"]
+        all_ev[all_ev["strategy"].astype(str).isin(["short_pump_fast0", "short_pump_fast0_filtered"])]
         if has_ev_strat
         else pd.DataFrame()
     )
     df_sp_e = _ensure_stage_column(df_sp.copy()) if not df_sp.empty else None
+    df_spf_e = _ensure_stage_column(df_spf.copy()) if not df_spf.empty else None
     df_f0_e = _ensure_stage_column(df_f0.copy()) if not df_f0.empty else None
     if df_sp_e is not None and not df_sp_e.empty:
         df_sp_e = _enrich_core_with_events(df_sp_e, ev_sp if not ev_sp.empty else None, debug=False)
+    if df_spf_e is not None and not df_spf_e.empty:
+        df_spf_e = _enrich_core_with_events(df_spf_e, ev_spf if not ev_spf.empty else None, debug=False)
     if df_f0_e is not None and not df_f0_e.empty:
         df_f0_e = _enrich_core_with_events(df_f0_e, ev_f0 if not ev_f0.empty else None, debug=False)
 
-    return df_sp_e if df_sp_e is not None and not df_sp_e.empty else None, df_f0_e if df_f0_e is not None and not df_f0_e.empty else None, date_range
+    return (
+        df_sp_e if df_sp_e is not None and not df_sp_e.empty else None,
+        df_spf_e if df_spf_e is not None and not df_spf_e.empty else None,
+        df_f0_e if df_f0_e is not None and not df_f0_e.empty else None,
+        date_range,
+    )
 
 
 def _import_guard_from_pump_short(pump_short_root: Path):
@@ -115,7 +133,7 @@ def _import_guard_from_pump_short(pump_short_root: Path):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Update Auto Risk Guard state from live outcomes (short_pump + FAST0).")
+    parser = argparse.ArgumentParser(description="Update Auto Risk Guard state from live outcomes (short_pump + short_pump_filtered + FAST0).")
     parser.add_argument("--data-dir", default="/root/pump_short/datasets", help="Datasets root directory for outcomes/events.")
     parser.add_argument("--days", type=int, default=30, help="Days window for metrics (default: 30).")
     parser.add_argument(
@@ -127,10 +145,11 @@ def main() -> None:
     args = parser.parse_args()
 
     base_dir = Path(args.data_dir)
-    df_sp_e, df_f0_e, _ = _load_enriched_dfs(base_dir, days=args.days)
+    df_sp_e, df_spf_e, df_f0_e, _ = _load_enriched_dfs(base_dir, days=args.days)
 
     metrics_local: Dict[str, GuardModeMetrics] = build_guard_metrics_by_mode(
         df_sp_e,
+        df_spf_e,
         df_f0_e,
         rolling_n=args.rolling,
         tg_dist_min=float(sys.argv and 0 or 3.5),  # actual tg_dist_min is handled inside filter_active_trades env

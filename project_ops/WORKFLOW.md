@@ -10,15 +10,19 @@
 1. PLAN stage
    - создается `TASK_TEMPLATE`
    - заполняются разделы 1–5
+   - model policy: use the strong model for PLAN
 
 2. AGENT stage
    - реализация строго по Spec
+   - model policy: prefer the mid coding model for implementation
 
 3. PLAN stage (QA)
    - проверка и анализ
+   - model policy: return to the strong model for QA
 
 4. PLAN stage (Safety)
    - оценка рисков
+   - model policy: return to the strong model for Safety
 
 Правило:
 - `AGENT` mode не может быть запущен дважды подряд без возврата в `PLAN` (чтобы избежать неконтролируемых изменений)
@@ -134,7 +138,20 @@ Project Manager Agent → Production Safety Agent (go/no-go сигнал с ур
 
 ---
 
-### 7. Post-release monitoring
+### 7. Release Execution
+
+Порядок релиза (runtime и не-runtime задачи):
+
+Final Decision → Commit → Push → Controlled Deploy/Restart (if runtime) → Post-release Check
+
+Правила:
+- Commit + Push выполняются после **Final Decision = `Approved` / `Approved with notes`**
+- Deploy/Restart выполняется только если изменения затронули runtime (см. `RELEASE_POLICY.md`)
+- Restart scope определяется по Restart scope policy (см. `RELEASE_POLICY.md`) и не должен быть “всем подряд”
+- После controlled restart выполняется минимальная post-restart smoke/check в пределах restart scope и сохраняется evidence в задаче
+
+---
+### 8. Post-release monitoring
 
 - Production Safety Agent следит за:
   - runtime-метриками (PnL, MDD, частота сделок, распределение PnL),

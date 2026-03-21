@@ -9,6 +9,7 @@ import os
 from typing import Any, Tuple
 
 from trading.config import LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE
+from short_pump.rollout import SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,29 @@ def get_risk_profile(
     Priority for fast0: 100k+ > 5k-25k > base.
     """
     s = (strategy or "").strip()
+    if s == "short_pump_fast0_filtered":
+        s = "short_pump_fast0"
+    if s == "short_pump_filtered":
+        stage_i = None
+        try:
+            stage_i = int(stage) if stage is not None else None
+        except (TypeError, ValueError):
+            pass
+        dist_val = None
+        try:
+            dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else None
+        except (TypeError, ValueError):
+            pass
+        if stage_i == 4 and dist_val is not None and dist_val <= SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX:
+            profile = "short_pump_filtered_1R"
+            mult = 1.0
+            logger.info(
+                "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s selected_profile=%s risk_mult=%.1f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+                strategy, symbol, event_id, trade_id, profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+            )
+            return profile, mult, mult
+        return ("", 0.0, 0.0)
+
     if s == "short_pump":
         stage_i = None
         try:

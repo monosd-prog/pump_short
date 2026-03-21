@@ -114,6 +114,38 @@ def get_klines_5m_range(
     return _klines(category, symbol, "5", limit, start_ms=start_ms, end_ms=end_ms)
 
 
+def get_klines_1m_safe(category: str, symbol: str, limit: int = 300, retries: int = 3, backoff_sec: float = 1.0) -> pd.DataFrame:
+    """
+    Safe wrapper around get_klines_1m with simple retry/backoff.
+    On repeated failure returns empty DataFrame (caller should handle).
+    Also logs KL_FETCH_FAIL with symbol and reason.
+    """
+    from time import sleep
+
+    last_exc = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            df = get_klines_1m(category, symbol, limit=limit)
+            # ensure DataFrame returned consistently
+            if df is None or df.empty:
+                # treat as failure to fetch
+                raise RuntimeError("empty klines")
+            return df
+        except Exception as e:
+            last_exc = e
+            logger.warning("KL_FETCH_FAIL | symbol=%s attempt=%d/%d reason=%s", symbol, attempt, retries, str(e))
+            try:
+                sleep(backoff_sec * attempt)
+            except Exception:
+                pass
+    # all attempts failed
+    log_exception(logger, f"KL_FETCH_FAIL | symbol={symbol} | exhausted retries", step="KL_FETCH_FAIL", extra={"last_error": str(last_exc)})
+    # return empty DataFrame with expected columns
+    import pandas as pd
+    empty = pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume", "turnover"])
+    return empty
+
+
 def get_open_interest(category: str, symbol: str, limit: int = 80) -> pd.DataFrame:
     category = _norm_category(category)
     symbol = _norm_symbol(symbol)

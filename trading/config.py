@@ -37,8 +37,13 @@ MAX_OPEN_PER_STRATEGY = int(os.getenv("MAX_OPEN_PER_STRATEGY", "1"))
 MAX_TOTAL_RISK_PCT = float(os.getenv("MAX_TOTAL_RISK_PCT", "0.005"))  # 0.5% total
 
 # Strategies to trade (comma-separated). Default single strategy for backward compat.
-STRATEGIES_ENV = os.getenv("STRATEGIES", "short_pump").strip()
-ALLOWED_STRATEGIES: list[str] = [s.strip() for s in STRATEGIES_ENV.split(",") if s.strip()] or ["short_pump"]
+STRATEGIES_ENV = os.getenv("STRATEGIES", "short_pump,short_pump_filtered,short_pump_fast0,short_pump_fast0_filtered").strip()
+ALLOWED_STRATEGIES: list[str] = [s.strip() for s in STRATEGIES_ENV.split(",") if s.strip()] or [
+    "short_pump",
+    "short_pump_filtered",
+    "short_pump_fast0",
+    "short_pump_fast0_filtered",
+]
 
 # LIVE micro-risk guardrails
 MAX_RISK_USD_PER_TRADE = float(os.getenv("MAX_RISK_USD_PER_TRADE", "7.0"))

@@ -39,6 +39,18 @@ def _fast0_liq_max_usd() -> float:
         return 25000.0
 
 
+def _fast0_filtered_dist_max() -> float:
+    try:
+        v = os.getenv("SHORT_PUMP_FAST0_FILTERED_DIST_MAX", "1.0")
+        return float(str(v).replace(",", "."))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _fast0_filtered_enabled() -> bool:
+    return (os.getenv("SHORT_PUMP_FAST0_FILTERED_ENABLE", "0") or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
 def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
     """
     Variant #3: short_pump — allow only if stage==4 and dist_to_peak_pct >= 3.5.
@@ -62,6 +74,33 @@ def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
         return False, f"invalid dist_to_peak_pct={dist!r}"
     if not (dist_f >= _dist_min()):
         return False, f"dist_to_peak_pct={dist_f:.2f} < {_dist_min()}"
+    return True, ""
+
+
+def allow_entry_short_pump_filtered(signal: Any) -> Tuple[bool, str]:
+    """short_pump_filtered — allow only if enabled, stage==4 and dist_to_peak_pct <= threshold."""
+    from short_pump.rollout import SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX, SHORT_PUMP_FILTERED_ENABLE
+
+    if not SHORT_PUMP_FILTERED_ENABLE:
+        return False, "SHORT_PUMP_FILTERED_ENABLE=0"
+    stage = getattr(signal, "stage", None)
+    dist = getattr(signal, "dist_to_peak_pct", None)
+    if stage is None:
+        return False, "missing stage"
+    try:
+        stage_i = int(stage)
+    except (TypeError, ValueError):
+        return False, f"invalid stage={stage!r}"
+    if stage_i != 4:
+        return False, f"stage={stage_i} (require 4)"
+    if dist is None:
+        return False, "missing dist_to_peak_pct"
+    try:
+        dist_f = float(dist)
+    except (TypeError, ValueError):
+        return False, f"invalid dist_to_peak_pct={dist!r}"
+    if not (dist_f <= SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX):
+        return False, f"dist_to_peak_pct={dist_f:.2f} > {SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX}"
     return True, ""
 
 
@@ -93,13 +132,52 @@ def allow_entry_short_pump_fast0(signal: Any) -> Tuple[bool, str]:
     return True, ""
 
 
+def allow_entry_short_pump_fast0_filtered(signal: Any) -> Tuple[bool, str]:
+    """short_pump_fast0_filtered — allow only if enabled, stage/liq match fast0 and dist <= tighter filter."""
+    from trading.risk_profile import FAST0_AUTO_ENABLE, get_risk_profile, is_fast0_entry_allowed
+    if not FAST0_AUTO_ENABLE:
+        return False, "FAST0_AUTO_ENABLE=0"
+    if not _fast0_filtered_enabled():
+        return False, "SHORT_PUMP_FAST0_FILTERED_ENABLE=0"
+    liq = getattr(signal, "liq_long_usd_30s", None)
+    dist = getattr(signal, "dist_to_peak_pct", None)
+    if liq is None:
+        return False, "missing liq_long_usd_30s"
+    allowed, reason = is_fast0_entry_allowed(liq, dist)
+    if not allowed:
+        return False, reason
+    try:
+        dist_f = float(dist) if dist is not None else None
+    except (TypeError, ValueError):
+        dist_f = None
+    if dist_f is None:
+        return False, "missing dist_to_peak_pct"
+    if dist_f > _fast0_filtered_dist_max():
+        return False, f"dist_to_peak_pct={dist_f:.2f} > {_fast0_filtered_dist_max()}"
+    profile, risk_mult, _ = get_risk_profile(
+        "short_pump_fast0_filtered",
+        dist_to_peak_pct=dist,
+        liq_long_usd_30s=liq,
+        event_id=getattr(signal, "event_id", "") or "",
+        trade_id=getattr(signal, "trade_id", "") or "",
+        symbol=getattr(signal, "symbol", "") or "",
+    )
+    if not profile or risk_mult <= 0:
+        return False, reason or "no matching risk profile"
+    return True, ""
+
+
 def allow_entry(signal: Any) -> Tuple[bool, str]:
     """Strategy-specific gating. Returns (allowed, reason). Unknown strategy -> reject."""
     strategy = (getattr(signal, "strategy", None) or "").strip()
     if strategy == "short_pump":
         return allow_entry_short_pump(signal)
+    if strategy == "short_pump_filtered":
+        return allow_entry_short_pump_filtered(signal)
     if strategy == "short_pump_fast0":
         return allow_entry_short_pump_fast0(signal)
+    if strategy == "short_pump_fast0_filtered":
+        return allow_entry_short_pump_fast0_filtered(signal)
     return False, f"unknown strategy={strategy!r}"
 
 

@@ -144,6 +144,7 @@ def _mode_name_for_signal_and_profile(signal: Any, risk_profile_name: str) -> Op
 
     We intentionally reuse existing risk profile identifiers as mode keys:
     - short_pump_active_1R
+    - short_pump_filtered_1R
     - fast0_base_1R
     - fast0_1p5R
     - fast0_2R
@@ -157,7 +158,11 @@ def _mode_name_for_signal_and_profile(signal: Any, risk_profile_name: str) -> Op
         "short_pump_deep",
     }:
         return risk_profile_name
-    if s == "short_pump_fast0" and risk_profile_name in {
+    if s == "short_pump_filtered" and risk_profile_name in {
+        "short_pump_filtered_1R",
+    }:
+        return risk_profile_name
+    if s in {"short_pump_fast0", "short_pump_fast0_filtered"} and risk_profile_name in {
         "fast0_base_1R",
         "fast0_1p5R",
         "fast0_2R",
@@ -250,6 +255,7 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
     BOOTSTRAP_MODES = {
         "short_pump_mid",
         "short_pump_deep",
+        "short_pump_filtered_1R",
         "fast0_selective",
     }
 

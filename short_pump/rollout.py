@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import math
+import os
+from typing import Any
+
+
+def _get_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _get_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return float(str(raw).replace(",", "."))
+    except (TypeError, ValueError):
+        return default
+
+
+SHORT_PUMP_FILTERED_ENABLE = _get_bool("SHORT_PUMP_FILTERED_ENABLE", False)
+SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX = _get_float("SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX", 1.0)
+
+
+def _coerce_dist(dist_to_peak_pct: Any) -> float | None:
+    try:
+        value = float(dist_to_peak_pct)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    return value
+
+
+def resolve_short_pump_route(dist_to_peak_pct: Any) -> dict[str, Any]:
+    """
+    Decide whether a short_pump entry should stay on the baseline path or route to
+    short_pump_filtered.
+
+    Returns a dict with:
+    - route_strategy
+    - would_pass_dist_filter
+    - filter_reason
+    - strategy_candidate
+    - dist_to_peak_pct
+    """
+    dist_val = _coerce_dist(dist_to_peak_pct)
+    would_pass = dist_val is not None and dist_val <= SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX
+
+    if dist_val is None:
+        filter_reason = "missing_dist"
+    elif would_pass and SHORT_PUMP_FILTERED_ENABLE:
+        filter_reason = "pass"
+    elif would_pass and not SHORT_PUMP_FILTERED_ENABLE:
+        filter_reason = "disabled"
+    else:
+        filter_reason = "dist_gt_max"
+
+    route_strategy = "short_pump_filtered" if (SHORT_PUMP_FILTERED_ENABLE and would_pass) else "short_pump"
+    strategy_candidate = "short_pump_filtered" if would_pass else "baseline_only"
+    return {
+        "route_strategy": route_strategy,
+        "would_pass_dist_filter": would_pass,
+        "filter_reason": filter_reason,
+        "strategy_candidate": strategy_candidate,
+        "dist_to_peak_pct": dist_val,
+    }
+
+
+def is_tradeable_short_pump_filtered(stage: int, dist_to_peak_pct: float | None = None) -> bool:
+    """Return True when the filtered strategy should be allowed to trade."""
+    if stage != 4:
+        return False
+    dist_val = _coerce_dist(dist_to_peak_pct)
+    if dist_val is None:
+        return False
+    return dist_val <= SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX

@@ -977,7 +977,7 @@ def load_events_v2(
     else:
         entry_ok = pd.Series([True] * len(df), index=df.index)
 
-    if strategy in ("long_pullback", "short_pump", "short_pump_fast0"):
+    if strategy in ("long_pullback", "short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
         # For these strategies, entry_ok is the single source of truth for "entry" events.
         # short_pump: ARMED is readiness-only (entry_ok=False) and must not be inferred by stage/event_id.
         mask = entry_ok

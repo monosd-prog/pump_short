@@ -181,6 +181,7 @@ def update_daily_pnl(state: dict[str, Any], ts_utc: str, pnl_usd: float) -> None
 
 
 _OUTCOME_TG_SENT_MAX = 5000
+_OUTCOME_FINALIZED_MAX = 50000
 
 
 def outcome_tg_sent(state: dict[str, Any], key: str) -> bool:
@@ -202,6 +203,27 @@ def add_outcome_tg_sent(state: dict[str, Any], key: str) -> None:
         state["outcome_tg_sent"] = sent[-(_OUTCOME_TG_SENT_MAX // 2) :]
     else:
         state["outcome_tg_sent"] = sent
+
+
+def outcome_finalized(state: dict[str, Any], key: str) -> bool:
+    """True if a close row was already finalized for this key (trade_id/position_id)."""
+    finalized = state.get("outcome_finalized") or []
+    if not isinstance(finalized, list):
+        return False
+    return key in finalized
+
+
+def add_outcome_finalized(state: dict[str, Any], key: str) -> None:
+    """Mark a close row as finalized. Prune if over limit."""
+    finalized = state.get("outcome_finalized") or []
+    if not isinstance(finalized, list):
+        finalized = []
+    if key not in finalized:
+        finalized.append(key)
+    if len(finalized) > _OUTCOME_FINALIZED_MAX:
+        state["outcome_finalized"] = finalized[-(_OUTCOME_FINALIZED_MAX // 2) :]
+    else:
+        state["outcome_finalized"] = finalized
 
 
 def record_close(

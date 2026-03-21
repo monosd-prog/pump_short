@@ -74,6 +74,7 @@ def _metrics_for_subset(df_core: pd.DataFrame, rolling_n: int) -> GuardModeMetri
 
 def build_guard_metrics_by_mode(
     df_short_pump_enriched: Optional[pd.DataFrame],
+    df_short_pump_filtered_enriched: Optional[pd.DataFrame],
     df_fast0_enriched: Optional[pd.DataFrame],
     *,
     rolling_n: int = 20,
@@ -83,6 +84,7 @@ def build_guard_metrics_by_mode(
     Build GuardModeMetrics for боевые режимы:
 
     - short_pump_active_1R  (short_pump ACTIVE Base 1R: stage=4, dist>=tg_dist_min)
+    - short_pump_filtered_1R (short_pump_filtered: TP/SL core outcomes)
     - short_pump_mid        (short_pump MID: dist in [3.5,5), cs in [0.4,0.6))
     - short_pump_deep       (short_pump DEEP: stage=3, dist in [7.5,10), cs in [0.4,0.6), liqL30s=0)
     - fast0_base_1R         (dist<=1.5, liq=0)
@@ -104,6 +106,15 @@ def build_guard_metrics_by_mode(
             metrics["short_pump_active_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
     else:
         metrics["short_pump_active_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
+
+    # SHORT_PUMP FILTERED 1R
+    df_spf = df_short_pump_filtered_enriched.copy() if df_short_pump_filtered_enriched is not None else None
+    if df_spf is not None and not df_spf.empty and "outcome" in df_spf.columns:
+        out_spf = df_spf["outcome"].apply(_normalize_outcome_raw)
+        df_spf_core = df_spf[out_spf.isin(["TP_hit", "SL_hit"])].copy()
+        metrics["short_pump_filtered_1R"] = _metrics_for_subset(df_spf_core, rolling_n)
+    else:
+        metrics["short_pump_filtered_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
 
     # SHORT_PUMP MID / DEEP — reuse masks from executive_report for perfect sync
     if df_sp is not None and not df_sp.empty and "outcome" in df_sp.columns:

@@ -118,6 +118,7 @@ def build_fast0_signal(
     *,
     symbol: str,
     run_id: str,
+    strategy: str = "short_pump_fast0",
     dist_to_peak_pct: Any,
     context_score: Any,
     cvd_30s: Any,
@@ -135,7 +136,7 @@ def build_fast0_signal(
 ) -> Signal:
     """Build Signal for fast0 ENTRY_OK. entry/tp/sl optional (runner will skip if missing); still enqueue."""
     return Signal(
-        strategy="short_pump_fast0",
+        strategy=strategy,
         symbol=symbol,
         side="SHORT",
         ts_utc=ts_utc or "",
@@ -248,6 +249,7 @@ def format_fast0_outcome_message(
     symbol: str,
     run_id: str,
     event_id: str,
+    strategy: str = "short_pump_fast0",
     res: str,
     entry_price: float,
     tp_price: float,
@@ -263,7 +265,8 @@ def format_fast0_outcome_message(
     margin_mode: str | None = None,
 ) -> str:
     """Format FAST0 outcome for Telegram. Used when FAST0_TG_OUTCOME_ENABLE=1 or live outcome."""
-    header = f"{_emoji('SHORT')} SHORT | short_pump_fast0 | OUTCOME | res={res} | sym={symbol}"
+    strategy_name = (strategy or "short_pump_fast0").strip() or "short_pump_fast0"
+    header = f"{_emoji('SHORT')} SHORT | {strategy_name} | OUTCOME | res={res} | sym={symbol}"
     lines = [
         header,
         f"run_id={run_id} eid={_short_eid(event_id)}",

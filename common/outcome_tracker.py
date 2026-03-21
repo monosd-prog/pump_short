@@ -123,14 +123,91 @@ def track_outcome(
     max_path_len = min(int(getattr(cfg, "outcome_watch_minutes", 120)) + 2, 200)
     last_path_ts: Optional[pd.Timestamp] = None
 
+    # Attempt first fetch; if no candles available at all, mark UNKNOWN_NO_DATA and return
+    try:
+        candles_1m = fetch_klines_1m(cat, symbol, limit=300)
+    except Exception:
+        candles_1m = None
+    if candles_1m is None or candles_1m.empty:
+        # No candle data available -> mark unknown no data
+        details_payload = {
+            "timeout": False,
+            "tp_hit": False,
+            "sl_hit": False,
+            "tp_sl_same_candle": 0,
+            "conflict_policy": _normalize_conflict_policy(conflict_policy or OUTCOME_TP_SL_CONFLICT),
+            "use_candle_hilo": OUTCOME_USE_CANDLE_HILO,
+            "side": side_norm,
+        }
+        result = {
+            "run_id": str(run_id) if run_id else "",
+            "symbol": str(symbol) if symbol else "",
+            "entry_time_utc": entry_ts_utc.isoformat() if hasattr(entry_ts_utc, "isoformat") else str(entry_ts_utc),
+            "entry_price": float(entry_price),
+            "entry_source": str(entry_source) if entry_source else "unknown",
+            "entry_type": str(entry_type) if entry_type else "unknown",
+            "tp_price": float(tp_price),
+            "sl_price": float(sl_price),
+            "tp_pct": float(tp_pct),
+            "sl_pct": float(sl_pct),
+            "end_reason": "UNKNOWN_NO_DATA",
+            "outcome": "UNKNOWN_NO_DATA",
+            "hit_time_utc": "",
+            "minutes_to_hit": 0.0,
+            "mfe_pct": 0.0,
+            "mae_pct": 0.0,
+            "timeout_exit_price": 0.0,
+            "timeout_pnl_pct": 0.0,
+            "trade_type": "PAPER" if PAPER_MODE else "LIVE",
+            "exit_time_utc": entry_ts_utc.isoformat(),
+            "exit_price": float(entry_price),
+            "pnl_pct": 0.0,
+            "r_multiple": 0.0,
+            "details_payload": json.dumps(details_payload, ensure_ascii=False),
+            "path_1m": [],
+            "tp_sl_same_candle": 0,
+            "conflict_policy": _normalize_conflict_policy(conflict_policy or OUTCOME_TP_SL_CONFLICT),
+            "alt_outcome_tp_first": None,
+            "alt_outcome_sl_first": None,
+            "data_available": False,
+        }
+        return result
+
+    # Main loop: poll for new candles until end_ts
+    # Persist fetched candles to datasets for reproducibility and offline backfill.
+    try:
+        from pathlib import Path
+
+        # choose date from entry_ts_utc
+        try:
+            date_str = entry_ts_utc.strftime("%Y-%m-%d")
+        except Exception:
+            date_str = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d")
+        base_dir = Path.cwd() / "datasets" / "klines" / f"date={date_str}"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        # normalize columns and write only required ones
+        try:
+            kl_df = candles_1m.copy()
+            if "ts" in kl_df.columns:
+                kl_df["ts"] = pd.to_datetime(kl_df["ts"]).dt.tz_convert("UTC").dt.strftime("%Y-%m-%dT%H:%M:%S%z")
+            cols = [c for c in ("ts", "open", "high", "low", "close", "volume") if c in kl_df.columns]
+            out_path = base_dir / f"symbol={symbol}.csv"
+            kl_df[cols].to_csv(out_path, index=False)
+            logger.info("KL_SAVE | symbol=%s saved_klines=%s", symbol, str(out_path))
+        except Exception as e:
+            log_exception(logger, f"Failed to save klines for symbol={symbol}", step="KL_SAVE", extra={"error": str(e)})
+    except Exception:
+        # non-fatal: do not block outcome processing if saving klines fails
+        pass
     while pd.Timestamp.now(tz="UTC") < end_ts:
         try:
-            candles_1m = fetch_klines_1m(cat, symbol, limit=300)
-            if candles_1m is None or candles_1m.empty:
-                time.sleep(5)
-                continue
             future = candles_1m[candles_1m["ts"] >= entry_ts_utc].copy()
             if future is None or future.empty:
+                # try to re-fetch to get more recent candles
+                try:
+                    candles_1m = fetch_klines_1m(cat, symbol, limit=300)
+                except Exception:
+                    candles_1m = None
                 time.sleep(poll_seconds)
                 continue
         except Exception:

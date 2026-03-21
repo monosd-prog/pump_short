@@ -266,7 +266,9 @@ def _liq_snapshot(events_raw: pd.DataFrame) -> List[str]:
 def _report_title(strategy: str) -> str:
     if strategy == "long_pullback":
         return "📈 LONG_PULLBACK — MANAGEMENT REPORT"
-    if strategy == "short_pump_fast0":
+    if strategy in ("short_pump_fast0", "short_pump_fast0_filtered"):
+        if strategy == "short_pump_fast0_filtered":
+            return "⚡ FAST0 FILTERED — MANAGEMENT REPORT"
         return "⚡ FAST0 — MANAGEMENT REPORT"
     return "📊 SHORT_PUMP — MANAGEMENT REPORT"
 
@@ -322,7 +324,7 @@ def _format_report(
     stage3 = 0
     stage4 = 0
     stage0 = 0
-    if report_strategy == "short_pump_fast0":
+    if report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered"):
         # Entry OK = number of trades (unique trade_id in outcomes)
         if "trade_id" in outcomes_df.columns:
             entry_ok_count_fast0 = int(outcomes_df["trade_id"].nunique())
@@ -347,9 +349,9 @@ def _format_report(
     top_liq_value = 0.0
     liq_no_data_fast0 = False
 
-    if report_strategy == "short_pump_fast0":
+    if report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered"):
         events_liq = (
-            events_raw[events_raw["strategy"].astype(str) == "short_pump_fast0"]
+            events_raw[events_raw["strategy"].astype(str).isin(["short_pump_fast0", "short_pump_fast0_filtered"])]
             if events_raw is not None and not events_raw.empty and "strategy" in events_raw.columns
             else events_raw
         )
@@ -357,8 +359,8 @@ def _format_report(
         events_liq = events_raw
 
     if events_liq is None or events_liq.empty:
-        liq_no_data_fast0 = report_strategy == "short_pump_fast0"
-    elif report_strategy == "short_pump_fast0":
+        liq_no_data_fast0 = report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered")
+    elif report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered"):
         # FAST0: strict logic — long/short from available metrics, fallbacks, max spike from same row
         long_col = "liq_long_usd_30s" if "liq_long_usd_30s" in events_liq.columns else ("liq_long_count_30s" if "liq_long_count_30s" in events_liq.columns else None)
         short_col = "liq_short_usd_30s" if "liq_short_usd_30s" in events_liq.columns else ("liq_short_count_30s" if "liq_short_count_30s" in events_liq.columns else None)
@@ -464,7 +466,7 @@ def _format_report(
         f"• Целостность связок: 100%",
         f"• Конфликты: {conflicts_total}",
         "",
-        f"Stages: fast0 only" if report_strategy == "short_pump_fast0" else f"Stages: 3={stage3}, 4={stage4}, 0={stage0}",
+        f"Stages: fast0 only" if report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered") else f"Stages: 3={stage3}, 4={stage4}, 0={stage0}",
         "",
         "━━━━━━━━━━",
         "3️⃣ ДИНАМИКА СДЕЛОК",
@@ -1036,7 +1038,7 @@ def _investor_metrics_text(
     compact: bool = False,
 ) -> Tuple[List[str], int, str]:
     """Build extra text lines for investor report: MDD, rolling WR/EV/count (core), maturity gate.
-    When compact=True and report_strategy=short_pump_fast0, use compact liq research and skip DIAG block.
+    When compact=True and report_strategy=short_pump_fast0 or short_pump_fast0_filtered, use compact liq research and skip DIAG block.
     When compact=True and report_strategy=short_pump, skip context_score hypothesis and use shorter labels for Telegram.
     Returns: (lines, n_core, maturity_status)."""
     lines = ["", "━━━━━━━━━━", "ИНВЕСТОРСКИЕ МЕТРИКИ (скользящие / core)", ""]
@@ -1083,7 +1085,7 @@ def _investor_metrics_text(
         lines.append(f"• Кривая капитала (все): последнее={equity_all.iloc[-1]:.3f}R  MDD={mdd:.3f}R")
         lines.append(f"• Сделки: n_all={n}  n_core={n_core}")
 
-    if report_strategy == "short_pump_fast0":
+    if report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered"):
         # Entry OK = number of unique trades; TP/SL/TIMEOUT by unique trade_id
         entry_ok_count = int(df_sorted["trade_id"].nunique()) if "trade_id" in df_sorted.columns else len(df_sorted)
         if "trade_id" in df_sorted.columns:
@@ -1114,7 +1116,7 @@ def _investor_metrics_text(
     n_core_out = n_core
     maturity_status_out = _maturity_status_unified(n_core)
 
-    if report_strategy == "short_pump_fast0":
+    if report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered"):
         # FAST0: hypothesis universe = TP_hit, SL_hit, TIMEOUT (join with events to enrich).
         # Universe here is the full FAST0 outcomes subset within --days; enrichment may be partial if some dates
         # are missing events. Coverage is printed in debug logs.
@@ -1651,7 +1653,7 @@ def generate_compact_autotrading_report(
     rolling: int = 20,
 ) -> str:
     """
-    Build compact executive autotrading report (short_pump + short_pump_fast0) for given window.
+    Build compact executive autotrading report (short_pump + short_pump_filtered + fast0 variants) for given window.
 
     Used by external callers (e.g. Telegram bot) to avoid duplicating report logic.
     """
@@ -1660,9 +1662,9 @@ def generate_compact_autotrading_report(
 
     base_dir = Path(data_dir or "/root/pump_short/datasets")
 
-    # Load outcomes for short_pump and short_pump_fast0 (live only)
+    # Load outcomes for short_pump, short_pump_filtered and fast0 variants (live only)
     all_outcomes: List[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_fast0"):
+    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
         result = load_outcomes(
             base_dir=base_dir,
             strategy=strategy,
@@ -1680,7 +1682,7 @@ def generate_compact_autotrading_report(
 
     # Load events for same strategies (for ACTIVE / stage / dist enrichment)
     all_events: List[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_fast0"):
+    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
         result = load_events_v2(
             data_dir=base_dir,
             strategy=strategy,
@@ -1710,6 +1712,11 @@ def generate_compact_autotrading_report(
         if has_strat
         else df_sorted
     )
+    df_spf = (
+        df_sorted[df_sorted["strategy"].astype(str) == "short_pump_filtered"]
+        if has_strat
+        else pd.DataFrame()
+    )
     df_f0 = (
         df_sorted[df_sorted["strategy"].astype(str) == "short_pump_fast0"]
         if has_strat
@@ -1722,15 +1729,23 @@ def generate_compact_autotrading_report(
         if has_ev_strat
         else all_ev
     )
+    ev_spf = (
+        all_ev[all_ev["strategy"].astype(str) == "short_pump_filtered"]
+        if has_ev_strat
+        else pd.DataFrame()
+    )
     ev_f0 = (
         all_ev[all_ev["strategy"].astype(str) == "short_pump_fast0"]
         if has_ev_strat
         else pd.DataFrame()
     )
     df_sp_e = _ensure_stage_column(df_sp.copy()) if not df_sp.empty else None
+    df_spf_e = _ensure_stage_column(df_spf.copy()) if not df_spf.empty else None
     df_f0_e = _ensure_stage_column(df_f0.copy()) if not df_f0.empty else None
     if df_sp_e is not None and not df_sp_e.empty:
         df_sp_e = _enrich_core_with_events(df_sp_e, ev_sp if not ev_sp.empty else None, debug=False)
+    if df_spf_e is not None and not df_spf_e.empty:
+        df_spf_e = _enrich_core_with_events(df_spf_e, ev_spf if not ev_spf.empty else None, debug=False)
     if df_f0_e is not None and not df_f0_e.empty:
         df_f0_e = _enrich_core_with_events(df_f0_e, ev_f0 if not ev_f0.empty else None, debug=False)
 
@@ -1753,19 +1768,26 @@ def generate_compact_autotrading_report(
 
     # Load mode=paper outcomes for PAPER block (source of truth for DISABLED submodes)
     res_f0_paper = load_outcomes(base_dir=base_dir, strategy="short_pump_fast0", mode="paper", days=days)
+    res_f0_filtered_paper = load_outcomes(base_dir=base_dir, strategy="short_pump_fast0_filtered", mode="paper", days=days)
     res_sp_paper = load_outcomes(base_dir=base_dir, strategy="short_pump", mode="paper", days=days)
+    res_spf_paper = load_outcomes(base_dir=base_dir, strategy="short_pump_filtered", mode="paper", days=days)
     df_fast0_paper = res_f0_paper[0] if isinstance(res_f0_paper, tuple) else res_f0_paper
+    df_fast0_filtered_paper = res_f0_filtered_paper[0] if isinstance(res_f0_filtered_paper, tuple) else res_f0_filtered_paper
     df_short_pump_paper = res_sp_paper[0] if isinstance(res_sp_paper, tuple) else res_sp_paper
+    df_short_pump_filtered_paper = res_spf_paper[0] if isinstance(res_spf_paper, tuple) else res_spf_paper
 
     exec_report = build_executive_compact_report(
         df_sp_e if (df_sp_e is not None and not df_sp_e.empty) else None,
+        df_spf_e if (df_spf_e is not None and not df_spf_e.empty) else None,
         df_f0_e if (df_f0_e is not None and not df_f0_e.empty) else None,
         date_range,
         rolling_n=rolling,
         tg_dist_min=tg_dist_min,
         guard_state=guard_state,
         df_fast0_paper=df_fast0_paper if not df_fast0_paper.empty else None,
+        df_fast0_filtered_paper=df_fast0_filtered_paper if not df_fast0_filtered_paper.empty else None,
         df_short_pump_paper=df_short_pump_paper if not df_short_pump_paper.empty else None,
+        df_short_pump_filtered_paper=df_short_pump_filtered_paper if not df_short_pump_filtered_paper.empty else None,
     )
     return exec_report
 
@@ -1778,7 +1800,7 @@ def main() -> None:
     parser.add_argument(
         "--strategy",
         action="append",
-        help="Strategy filter (repeatable or comma-separated). Default: short_pump.",
+        help="Strategy filter (repeatable or comma-separated). Default: short_pump, short_pump_filtered, short_pump_fast0, short_pump_fast0_filtered.",
     )
     parser.add_argument("--debug", action="store_true", help="Print file counts and debug info")
     parser.add_argument("--investor-report", action="store_true", help="Add charts and extended metrics (PNG + optional TG photos)")
@@ -1818,7 +1840,7 @@ def main() -> None:
     all_outcomes: List[pd.DataFrame] = []
     n_outcomes_files = 0
     if strategy_set is None:
-        for strategy in ["short_pump", "long_pullback"]:
+        for strategy in ["short_pump", "short_pump_filtered", "long_pullback"]:
             result = load_outcomes(
                 base_dir=data_dir,
                 strategy=strategy,
@@ -1871,7 +1893,13 @@ def main() -> None:
     # Load events_raw for same strategies (for ENTRY QUALITY + LIQ snapshot)
     all_events: List[pd.DataFrame] = []
     n_events_files = 0
-    strategies_to_load = sorted(strategy_set) if strategy_set else ["short_pump", "long_pullback"]
+    strategies_to_load = sorted(strategy_set) if strategy_set else [
+        "short_pump",
+        "short_pump_filtered",
+        "short_pump_fast0",
+        "short_pump_fast0_filtered",
+        "long_pullback",
+    ]
     for strategy in strategies_to_load:
         result = load_events_v2(
             data_dir=data_dir,
@@ -1973,7 +2001,7 @@ def main() -> None:
     # For single-strategy fast0: use unique trade_id counts (not row counts)
     if strategy_set and len(strategy_set) == 1:
         report_strategy_pre = next(iter(strategy_set))
-        if report_strategy_pre == "short_pump_fast0" and "trade_id" in df.columns:
+        if report_strategy_pre in ("short_pump_fast0", "short_pump_fast0_filtered") and "trade_id" in df.columns:
             onorm = df["outcome"].apply(lambda x: _normalize_outcome(x))
             tp = int(df.loc[onorm == "TP_hit", "trade_id"].nunique())
             sl = int(df.loc[onorm == "SL_hit", "trade_id"].nunique())
@@ -2106,15 +2134,20 @@ def main() -> None:
             # Executive compact format: 5 blocks, Russian, TG-friendly
             has_strat = "strategy" in df_sorted.columns
             df_sp = df_sorted[df_sorted["strategy"].astype(str) == "short_pump"] if has_strat else (df_sorted if report_strategy == "short_pump" else pd.DataFrame())
+            df_spf = df_sorted[df_sorted["strategy"].astype(str) == "short_pump_filtered"] if has_strat else pd.DataFrame()
             df_f0 = df_sorted[df_sorted["strategy"].astype(str) == "short_pump_fast0"] if has_strat else (df_sorted if report_strategy == "short_pump_fast0" else pd.DataFrame())
             all_ev = events_raw if events_raw is not None and not events_raw.empty else pd.DataFrame()
             has_ev_strat = "strategy" in all_ev.columns
             ev_sp = all_ev[all_ev["strategy"].astype(str) == "short_pump"] if has_ev_strat else all_ev
+            ev_spf = all_ev[all_ev["strategy"].astype(str) == "short_pump_filtered"] if has_ev_strat else pd.DataFrame()
             ev_f0 = all_ev[all_ev["strategy"].astype(str) == "short_pump_fast0"] if has_ev_strat else pd.DataFrame()
             df_sp_e = _ensure_stage_column(df_sp.copy()) if not df_sp.empty else None
+            df_spf_e = _ensure_stage_column(df_spf.copy()) if not df_spf.empty else None
             df_f0_e = _ensure_stage_column(df_f0.copy()) if not df_f0.empty else None
             if df_sp_e is not None and not df_sp_e.empty:
                 df_sp_e = _enrich_core_with_events(df_sp_e, ev_sp if not ev_sp.empty else None, debug=debug)
+            if df_spf_e is not None and not df_spf_e.empty:
+                df_spf_e = _enrich_core_with_events(df_spf_e, ev_spf if not ev_spf.empty else None, debug=debug)
             if df_f0_e is not None and not df_f0_e.empty:
                 df_f0_e = _enrich_core_with_events(df_f0_e, ev_f0 if not ev_f0.empty else None, debug=debug)
 
@@ -2140,19 +2173,26 @@ def main() -> None:
 
             # Load mode=paper outcomes for PAPER block (source of truth for DISABLED submodes)
             res_f0_paper = load_outcomes(base_dir=data_dir, strategy="short_pump_fast0", mode="paper", days=args.days)
+            res_f0_filtered_paper = load_outcomes(base_dir=data_dir, strategy="short_pump_fast0_filtered", mode="paper", days=args.days)
             res_sp_paper = load_outcomes(base_dir=data_dir, strategy="short_pump", mode="paper", days=args.days)
+            res_spf_paper = load_outcomes(base_dir=data_dir, strategy="short_pump_filtered", mode="paper", days=args.days)
             df_fast0_paper = res_f0_paper[0] if isinstance(res_f0_paper, tuple) else res_f0_paper
+            df_fast0_filtered_paper = res_f0_filtered_paper[0] if isinstance(res_f0_filtered_paper, tuple) else res_f0_filtered_paper
             df_short_pump_paper = res_sp_paper[0] if isinstance(res_sp_paper, tuple) else res_sp_paper
+            df_short_pump_filtered_paper = res_spf_paper[0] if isinstance(res_spf_paper, tuple) else res_spf_paper
 
             exec_report = build_executive_compact_report(
                 df_sp_e if (df_sp_e is not None and not df_sp_e.empty) else None,
+                df_spf_e if (df_spf_e is not None and not df_spf_e.empty) else None,
                 df_f0_e if (df_f0_e is not None and not df_f0_e.empty) else None,
                 date_range,
                 rolling_n=args.rolling,
                 tg_dist_min=tg_dist_min,
                 guard_state=guard_state,
                 df_fast0_paper=df_fast0_paper if not df_fast0_paper.empty else None,
+                df_fast0_filtered_paper=df_fast0_filtered_paper if not df_fast0_filtered_paper.empty else None,
                 df_short_pump_paper=df_short_pump_paper if not df_short_pump_paper.empty else None,
+                df_short_pump_filtered_paper=df_short_pump_filtered_paper if not df_short_pump_filtered_paper.empty else None,
             )
             investor_lines = exec_report.split("\n")
             report = exec_report  # compact mode: executive report only (self-contained)
@@ -2191,7 +2231,7 @@ def main() -> None:
 
     # Telegram limit 4096 chars; compact path for FAST0 and short_pump to keep priority blocks and avoid trailing "..."
     MAX_TG_LEN = 4096
-    if (report_strategy == "short_pump_fast0" or report_strategy == "short_pump") and investor_mode and len(report) > MAX_TG_LEN:
+    if (report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered", "short_pump") ) and investor_mode and len(report) > MAX_TG_LEN:
         if not args.compact and base_report:
             investor_lines, _, _ = _investor_metrics_text(
                 df_sorted, args.rolling, date_range, report_strategy, args.maturity_threshold,
@@ -2211,7 +2251,7 @@ def main() -> None:
             if len(investor_part) < MAX_TG_LEN:
                 max_base = MAX_TG_LEN - len(investor_part) - 25
                 report = (report[:max_base] + "\n...[обрезано]...\n" + investor_part)
-            elif base_report and (report_strategy == "short_pump_fast0" or report_strategy == "short_pump") and investor_mode:
+            elif base_report and (report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered", "short_pump")) and investor_mode:
                 while len(report) > MAX_TG_LEN and len(investor_lines) > 5:
                     investor_lines = investor_lines[:-1]
                     report = base_report + "\n" + "\n".join(investor_lines)
