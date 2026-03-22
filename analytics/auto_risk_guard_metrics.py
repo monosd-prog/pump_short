@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from .short_pump_blocks import filter_active_trades
 from .stats import (
@@ -108,11 +111,34 @@ def build_guard_metrics_by_mode(
         metrics["short_pump_active_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
 
     # SHORT_PUMP FILTERED 1R
+    # Bootstrap extension: TIMEOUT with mfe_pct >= this threshold are included as near-TP evidence
+    # to accelerate n_core accumulation.  WR remains conservative (only TP/SL counted as wins).
+    _FILTERED_TIMEOUT_MFE_MIN = 0.8
     df_spf = df_short_pump_filtered_enriched.copy() if df_short_pump_filtered_enriched is not None else None
     if df_spf is not None and not df_spf.empty and "outcome" in df_spf.columns:
         out_spf = df_spf["outcome"].apply(_normalize_outcome_raw)
         df_spf_core = df_spf[out_spf.isin(["TP_hit", "SL_hit"])].copy()
-        metrics["short_pump_filtered_1R"] = _metrics_for_subset(df_spf_core, rolling_n)
+        original_core_n = len(df_spf_core)
+        timeout_included_count = 0
+
+        if "mfe_pct" in df_spf.columns:
+            _mfe_num = pd.to_numeric(df_spf["mfe_pct"], errors="coerce").fillna(0.0)
+            _timeout_ext_mask = (out_spf == "TIMEOUT") & (_mfe_num >= _FILTERED_TIMEOUT_MFE_MIN)
+            df_timeout_ext = df_spf[_timeout_ext_mask].copy()
+            timeout_included_count = len(df_timeout_ext)
+            if timeout_included_count > 0:
+                df_spf_core = pd.concat([df_spf_core, df_timeout_ext], ignore_index=True)
+
+        m_spf = _metrics_for_subset(df_spf_core, rolling_n)
+        if timeout_included_count > 0:
+            logger.info(
+                "BOOTSTRAP_CORE_EXTENDED | strategy=short_pump_filtered_1R"
+                " original_core_n=%d extended_core_n=%d timeout_included_count=%d",
+                original_core_n,
+                m_spf.n_core,
+                timeout_included_count,
+            )
+        metrics["short_pump_filtered_1R"] = m_spf
     else:
         metrics["short_pump_filtered_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
 

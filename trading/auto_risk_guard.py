@@ -250,8 +250,10 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
     # Bootstrap: do not DISABLE purely on "no/low data".
     # While n_core < BOOTSTRAP_MIN_TRADES, modes are considered in warmup and can be ACTIVE/WATCH,
     # but must not go to DISABLED due to ev/ev20/cons alone.
+    # BOOTSTRAP_WATCH_MIN_TRADES lowered 10→5 to allow faster ACTIVE promotion for
+    # short_pump_filtered_1R; metrics also count qualifying TIMEOUT (mfe>=0.8) as core evidence.
     BOOTSTRAP_MIN_TRADES = 20
-    BOOTSTRAP_WATCH_MIN_TRADES = 10
+    BOOTSTRAP_WATCH_MIN_TRADES = 5
     BOOTSTRAP_MODES = {
         "short_pump_mid",
         "short_pump_deep",
@@ -311,8 +313,8 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
 
     # --- Bootstrap state machine for new/low-history modes ---
     # Target behavior:
-    # - n_core < 10  -> WATCH (not ACTIVE, not DISABLED)
-    # - n_core >= 10 -> DISABLED if EV<=0 or EV20<0 else ACTIVE
+    # - n_core < 5   -> WATCH (not ACTIVE, not DISABLED)
+    # - n_core >= 5  -> DISABLED if EV<=0 or EV20<0 else ACTIVE
     # Applies ONLY to explicitly listed bootstrap modes (do not affect legacy modes / recovery logic).
     if current.mode_name in BOOTSTRAP_MODES:
         if n < BOOTSTRAP_WATCH_MIN_TRADES:

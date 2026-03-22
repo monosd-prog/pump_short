@@ -2,8 +2,22 @@ import argparse
 import json
 import os
 import time
+from pathlib import Path
+
+
+def _load_dotenv_if_available() -> None:
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.is_file():
+        return
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path, override=False)
+    except ImportError:
+        pass
+
 
 def main() -> None:
+    _load_dotenv_if_available()
     p = argparse.ArgumentParser(prog="short_pump")
     sub = p.add_subparsers(dest="cmd", required=True)
 

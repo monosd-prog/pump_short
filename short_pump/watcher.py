@@ -2026,7 +2026,8 @@ def run_watch_for_symbol(
                     except Exception as e:
                         log_exception(logger, "CSV_WRITE failed for summary", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="CSV_WRITE", extra={"log_file": log_summary})
 
-                    if TG_SEND_OUTCOME:
+                    _tg_send_outcome = TG_SEND_OUTCOME or os.getenv("TG_SEND_OUTCOME", "0") == "1"
+                    if _tg_send_outcome:
                         from trading.state import make_position_id
 
                         try:

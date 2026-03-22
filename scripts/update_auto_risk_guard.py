@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 import pandas as pd
 
@@ -13,15 +13,127 @@ from analytics.load import (
     load_events_v2,
     load_outcomes,
 )
-from scripts.daily_tg_report import (
-    _enrich_core_with_events,
-    _ensure_stage_column,
-    _sort_outcomes_for_series,
-)
 from analytics.auto_risk_guard_metrics import (
     GuardModeMetrics,
     build_guard_metrics_by_mode,
 )
+
+
+def _sort_outcomes_for_series(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Stable sort for rolling EV/WR calculations.
+    Prefer outcome timestamp, then opened timestamp, then run_id as a deterministic fallback.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df
+    out = df.copy()
+    out["_outcome_sort"] = pd.to_datetime(out.get("outcome_time_utc"), errors="coerce", utc=True)
+    out["_opened_sort"] = pd.to_datetime(out.get("opened_ts"), errors="coerce", utc=True)
+    sort_cols = ["_outcome_sort", "_opened_sort"]
+    ascending = [True, True]
+    if "run_id" in out.columns:
+        sort_cols.append("run_id")
+        ascending.append(True)
+    out = out.sort_values(sort_cols, ascending=ascending, kind="stable", na_position="last")
+    return out.drop(columns=["_outcome_sort", "_opened_sort"], errors="ignore").reset_index(drop=True)
+
+
+def _ensure_stage_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep enrichment-compatible columns present even before event join."""
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df
+    out = df.copy()
+    for col in ("stage", "dist_to_peak_pct", "liq_long_usd_30s", "context_score"):
+        if col not in out.columns:
+            out[col] = pd.NA
+    return out
+
+
+def _enrich_core_with_events(
+    df_core: pd.DataFrame,
+    events_raw: pd.DataFrame | None,
+    *,
+    debug: bool = False,
+) -> pd.DataFrame:
+    """
+    Enrich outcomes with entry-event fields required by guard/report masks.
+    Primary join is exact `event_id` (entry events share the same event_id as outcome rows).
+    Fallback is `(run_id, symbol, strategy)` using the latest `entry_ok=1`/highest-stage row.
+    """
+    if df_core is None or df_core.empty or events_raw is None or events_raw.empty:
+        return df_core
+
+    event_cols = [
+        c
+        for c in ("event_id", "run_id", "symbol", "strategy", "stage", "dist_to_peak_pct", "liq_long_usd_30s", "context_score", "entry_ok", "time_utc", "wall_time_utc")
+        if c in events_raw.columns
+    ]
+    if not event_cols:
+        return df_core
+
+    events = events_raw[event_cols].copy()
+    if "entry_ok" in events.columns:
+        entry_ok_num = pd.to_numeric(events["entry_ok"], errors="coerce").fillna(0)
+        events = events[entry_ok_num >= 1].copy()
+    if "stage" in events.columns:
+        events["_stage_num"] = pd.to_numeric(events["stage"], errors="coerce")
+    else:
+        events["_stage_num"] = pd.NA
+    events["_time_sort"] = pd.to_datetime(
+        events["time_utc"] if "time_utc" in events.columns else events.get("wall_time_utc"),
+        errors="coerce",
+        utc=True,
+    )
+
+    enrich_cols = [c for c in ("stage", "dist_to_peak_pct", "liq_long_usd_30s", "context_score") if c in events.columns]
+
+    def _coalesce_event_columns(df: pd.DataFrame) -> pd.DataFrame:
+        out = df.copy()
+        for col in enrich_cols:
+            evt_col = f"{col}_evt"
+            if evt_col not in out.columns:
+                continue
+            if col in out.columns:
+                out[col] = out[col].combine_first(out[evt_col])
+            else:
+                out[col] = out[evt_col]
+            out = out.drop(columns=[evt_col], errors="ignore")
+        return out
+
+    # Primary: exact event_id match.
+    if "event_id" in df_core.columns and "event_id" in events.columns:
+        by_event = (
+            events.sort_values(["_time_sort", "_stage_num"], ascending=[False, False], kind="stable", na_position="last")
+            .drop_duplicates(subset=["event_id"], keep="first")
+        )
+        merged = df_core.merge(
+            by_event[["event_id", *enrich_cols]],
+            on="event_id",
+            how="left",
+            suffixes=("", "_evt"),
+        )
+        merged = _coalesce_event_columns(merged)
+        coverage = float(merged["stage"].notna().mean()) if "stage" in merged.columns and len(merged) else 0.0
+        if coverage >= 0.8:
+            return merged
+        if debug:
+            print(f"[guard_update] low event_id enrichment coverage={coverage:.2%}; trying run_id+symbol fallback")
+
+    # Fallback: latest qualifying entry per (run_id, symbol, strategy).
+    join_keys = [c for c in ("run_id", "symbol", "strategy") if c in df_core.columns and c in events.columns]
+    if len(join_keys) < 2:
+        return df_core
+    by_lineage = (
+        events.sort_values(["_time_sort", "_stage_num"], ascending=[False, False], kind="stable", na_position="last")
+        .drop_duplicates(subset=join_keys, keep="first")
+    )
+    merged = df_core.merge(
+        by_lineage[[*join_keys, *enrich_cols]],
+        on=join_keys,
+        how="left",
+        suffixes=("", "_evt"),
+    )
+    return _coalesce_event_columns(merged)
 
 
 def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, tuple[str, str]]:
@@ -60,7 +172,7 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
 
     if df.empty:
         date_range = ("unknown", "unknown")
-        return None, None, date_range
+        return None, None, None, date_range
 
     ds_range = get_datasets_date_range(base_dir, days=days)
     date_range = ds_range if ds_range is not None else ("unknown", "unknown")
