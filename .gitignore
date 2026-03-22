@@ -19,3 +19,4 @@ __pycache__/
 # data / logs
 datasets/
 logs/
+reports/
