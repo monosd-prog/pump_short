@@ -34,6 +34,15 @@ cfg = Config.from_env()
 rt = Runtime(cfg)
 
 
+def _fast0_filtered_enabled() -> bool:
+    return (os.getenv("SHORT_PUMP_FAST0_FILTERED_ENABLE", "0") or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _current_exec_mode() -> str:
+    mode = (os.getenv("EXECUTION_MODE") or os.getenv("AUTO_TRADING_MODE") or "paper").strip().lower()
+    return mode if mode in ("paper", "live") else "paper"
+
+
 def _enabled_strategies() -> list[str]:
     strategies = ["short_pump"]
     if SHORT_PUMP_FILTERED_ENABLE:
@@ -42,13 +51,15 @@ def _enabled_strategies() -> list[str]:
         strategies.append("long_pullback")
     if ENABLE_FAST_FROM_PUMP:
         strategies.append("short_pump_fast0")
+        if _fast0_filtered_enabled():
+            strategies.append("short_pump_fast0_filtered")
     return strategies
 
 
 @app.on_event("startup")
 async def _log_enabled_strategies() -> None:
     logger.info("Enabled strategies: %s", ", ".join(_enabled_strategies()))
-    exec_mode = (os.getenv("EXECUTION_MODE") or os.getenv("AUTO_TRADING_MODE") or "paper").strip().lower()
+    exec_mode = _current_exec_mode()
     base_abs = os.path.abspath(DATASETS_ROOT)
     example_dir = get_dataset_dir("short_pump_fast0", wall_time_utc(), base_dir=DATASETS_ROOT)
     logger.info(
@@ -178,8 +189,9 @@ async def pump(evt: PumpEvent):
         if start_long:
             ensure_dataset_files("long_pullback", "live", now_utc, schema_version=2)
         if ENABLE_FAST_FROM_PUMP:
+            fast0_mode = _current_exec_mode()
             ensure_dataset_files(
-                "short_pump_fast0", "live", now_utc, schema_version=3, base_dir=DATASETS_ROOT
+                "short_pump_fast0", fast0_mode, now_utc, schema_version=3, base_dir=DATASETS_ROOT
             )
 
         logger.info(
@@ -195,11 +207,12 @@ async def pump(evt: PumpEvent):
 
             def _fast0_runner():
                 try:
+                    fast0_mode = _current_exec_mode()
                     run_fast0_for_symbol(
                         symbol=symbol,
                         run_id=run_id or "",
                         pump_ts=pump_ts,
-                        mode="live",
+                        mode=fast0_mode,
                         base_dir=DATASETS_ROOT,
                     )
                 except Exception:
