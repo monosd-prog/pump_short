@@ -545,9 +545,15 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             return
         fixed_notional_override = None
         if risk_profile_name and EXECUTION_MODE == "live":
-            fixed_notional_override = LIVE_FIXED_NOTIONAL_USD * risk_mult
+            fixed_notional_override = LIVE_FIXED_NOTIONAL_USD
         elif risk_profile_name and FIXED_POSITION_USD > 0:
             fixed_notional_override = FIXED_POSITION_USD * risk_mult
+        logger.info(
+            "SIZING_DEBUG | strategy=%s symbol=%s risk_profile=%s risk_mult=%.2f "
+            "live_fixed=%.1f resolved_notional=%.2f exec_mode=%s",
+            signal.strategy, signal.symbol, risk_profile_name or "", risk_mult,
+            LIVE_FIXED_NOTIONAL_USD, fixed_notional_override or 0.0, EXECUTION_MODE,
+        )
         risk_usd_override = risk_usd_for_live(equity) if EXECUTION_MODE == "live" else None
         notional_usd, risk_usd, reject_reason = calc_position_size(
             entry_f,
