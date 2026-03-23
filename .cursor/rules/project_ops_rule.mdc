@@ -53,6 +53,17 @@ Forbidden:
 - Make "side improvements"
 - Touch unrelated modules
 
+## POST-FIX WORKFLOW (MANDATORY)
+After AGENT fix:
+1. Execute:
+   - `py_compile` для affected files
+   - `git status` review (verify no unintended changes)
+2. Commit changes (NO fix is complete without commit)
+3. Push to remote
+4. If runtime files (e.g., `*.py`, `configs/`) are modified:
+   - Deploy/restart affected services
+5. Post-deploy smoke test / evidence collection (NO task is DONE without validation)
+
 ## BUG TASKS (special rule)
 For bug tasks, first MANDATORY:
 1. Build lineage:

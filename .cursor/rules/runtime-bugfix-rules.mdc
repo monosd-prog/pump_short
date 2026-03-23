@@ -1,0 +1,76 @@
+---
+description: Repo-wide runtime and bugfix rules for pump_short project
+alwaysApply: true
+---
+
+# Runtime and Bugfix Rules
+
+## General Workflow Principles
+1. First diagnose, then apply minimal safe fix
+2. Never do broad refactoring without explicit request
+3. For each bug, first build lineage/end-to-end path:
+   `ENTRY -> queue -> runner -> broker/state -> outcome -> delivery/report`
+4. Always separate:
+   - **Root cause**
+   - **Exact break point**
+   - **Minimal fix**
+   - **Validation evidence**
+
+## Fix Requirements
+- Each fix must be accompanied by:
+  - Exact diff
+  - `py_compile` for affected files
+  - Short smoke/runbook test
+
+## POST-FIX VALIDATION (MANDATORY)
+- NO runtime bugfix is complete without:
+  - `git commit` (explicitly track changes)
+  - `deploy/restart` if modified files are in use by running services
+  - Post-deploy smoke test (e.g., log checks, API ping)
+- NO task marked DONE until validation evidence is recorded (logs, CSV state, etc.)
+
+## Data-Related Issues Checklist
+For data-related problems, first check:
+1. `outcomes_v3.csv`
+2. `trading_closes.csv`
+3. `trading_state.json`
+4. `datasets/date=*/strategy=*/mode=*/...`
+
+## Telegram Delivery Issues Checklist
+For Telegram delivery problems, verify:
+1. `env/config`
+2. Delivery gating
+3. `outcome_tg_sent`
+4. `outcome_finalized`
+5. Log markers
+
+## Guard/Risk Issues
+For guard/risk issues:
+1. First check actual datasets/enrichment
+2. Then examine policy
+3. Don't consider missing sample as a bug until exact break point is proven
+
+## Model Selection Guidelines
+| Model       | When to Use                                                                 |
+|-------------|-----------------------------------------------------------------------------|
+| **free**    | Simple searches, auxiliary transformations, log reading                     |
+| **low**     | Local edits without architectural risk                                      |
+| **medium**  | Regular bugfixes in 1-3 files, runbooks, ETL, dataset scripts              |
+| **high**    | RCA, complex runtime bugs, cross-module fixes, outcome/guard/trading issues |
+| **ultra**   | Redesign, rollout architecture, strategy framework changes                  |
+
+## Subagent Usage Rules
+| Subagent        | When to Call                                                                        |
+|-----------------|------------------------------------------------------------------------------------|
+| **debugger**    | Bugs, TIMEOUTs, missing outcomes, delivery gaps, wrong states, suspicious lineage  |
+| **coder**       | When root cause is clear and minimal safe patch is needed                          |
+| **analyze_trade**| Analyzing specific trades: outcomes, TP/SL, PnL, price behavior                     |
+| **analyze_signal**| Analyzing ENTRY_OK correctness: route, context_score, dist_to_peak, filtered logic |
+
+## Response Format Requirements
+1. Brief reply
+2. Start with verdict
+3. Then exact root cause
+4. Then minimal next step
+5. No unnecessary details
+6. When creating Cursor tasks, explicitly specify recommended model: free/low/medium/high/ultra
