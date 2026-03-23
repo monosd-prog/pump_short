@@ -990,7 +990,15 @@ def build_executive_compact_report(
             suffix = ", no data"
         elif n_s < 10:
             suffix = ", low sample"
-        lines.append(f"{label}: {health} / 100 {_health_emoji(health)} (N={n_s}{suffix})")
+        _gm = (guard_state or {}).get(gk, {}).get("last_metrics", {})
+        _gev20 = _gm.get("ev20")
+        _gn = _gm.get("n_core")
+        gsuf = ""
+        if _gn is not None:
+            gsuf += f", gN={int(_gn)}"
+        if _gev20 is not None:
+            gsuf += f", gEV20={_gev20:+.2f}R"
+        lines.append(f"{label} [{gk}]: {health} / 100 {_health_emoji(health)} (N={n_s}{suffix}{gsuf})")
 
     # Secondary: aggregates (keep existing)
     for strat in ("SHORT_PUMP", "FAST0"):
@@ -1107,7 +1115,7 @@ def build_executive_compact_report(
             sub_core = df_core
 
         live_sp_count += 1
-        lines.append(f"    2.1.{live_sp_count} {sub_label}")
+        lines.append(f"    2.1.{live_sp_count} {sub_label} [{guard_key}]")
         lines.append("")
         lines.append("        🔹 Фильтр")
         for ln in filter_fn():
@@ -1146,9 +1154,17 @@ def build_executive_compact_report(
             trades_since_negative_start=trades_neg_sp,
             decision_window=DECISION_WINDOW_VERDICT,
         )
+        _gm_sp = (guard_state or {}).get(guard_key, {}).get("last_metrics", {})
+        _gev20_sp = _gm_sp.get("ev20")
+        _gn_sp = _gm_sp.get("n_core")
+        _gsuf_sp = ""
+        if _gn_sp is not None:
+            _gsuf_sp += f" | gN={int(_gn_sp)}"
+        if _gev20_sp is not None:
+            _gsuf_sp += f" | gEV20={_gev20_sp:+.2f}R"
         lines.append("        🔹 Метрики")
         lines.append(f"        WR: {wr_sub:.0f}%   EV: {ev_sub:+.2f}R   EV20: {ev20_sub:+.2f}R")
-        lines.append(f"        N: {len(sub_core)} | timeout: {timeout_sub}")
+        lines.append(f"        N: {len(sub_core)} | timeout: {timeout_sub}{_gsuf_sp}")
         lines.append("")
         lines.append("        🔹 Guard")
         lines.append(f"        {_guard_emoji_label(gst_sp, len(sub_core))}")
@@ -1204,16 +1220,24 @@ def build_executive_compact_report(
         sub_core = df_f0_core[mask_fn(df_f0_core)] if not df_f0_core.empty else pd.DataFrame()
         sub_all = df_f0_all[mask_fn(df_f0_all)] if not df_f0_all.empty else pd.DataFrame()
         n_sub = len(sub_core)
-        lines.append(f"    2.2.{live_fast0_count} {sub_label}")
+        lines.append(f"    2.2.{live_fast0_count} {sub_label} [{guard_key}]")
         lines.append("")
         lines.append("        🔹 Фильтр")
         for ln in filter_fn():
             lines.append(f"        {ln}")
         lines.append("")
+        _gm_f0 = (guard_state or {}).get(guard_key, {}).get("last_metrics", {})
+        _gev20_f0 = _gm_f0.get("ev20")
+        _gn_f0 = _gm_f0.get("n_core")
+        _gsuf_f0 = ""
+        if _gn_f0 is not None:
+            _gsuf_f0 += f" | gN={int(_gn_f0)}"
+        if _gev20_f0 is not None:
+            _gsuf_f0 += f" | gEV20={_gev20_f0:+.2f}R"
         if n_sub == 0:
             lines.append("        🔹 Метрики")
             lines.append("        WR: —   EV: —   EV20: —")
-            lines.append("        N: 0 | timeout: 0")
+            lines.append(f"        N: 0 | timeout: 0{_gsuf_f0}")
             lines.append("")
             lines.append("        🔹 Guard")
             lines.append(f"        {_guard_emoji_label(gst, 0)}")
@@ -1244,7 +1268,7 @@ def build_executive_compact_report(
             )
             lines.append("        🔹 Метрики")
             lines.append(f"        WR: {wr_sub:.0f}%   EV: {ev_sub:+.2f}R   EV20: {ev20_sub:+.2f}R")
-            lines.append(f"        N: {n_sub} | timeout: {timeout_sub}")
+            lines.append(f"        N: {n_sub} | timeout: {timeout_sub}{_gsuf_f0}")
             lines.append("")
             lines.append("        🔹 Guard")
             lines.append(f"        {_guard_emoji_label(gst, n_sub)}")
