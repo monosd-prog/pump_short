@@ -1085,7 +1085,7 @@ def build_executive_compact_report(
     short_pump_live_modes: list[tuple[str, str, callable, pd.DataFrame | None, pd.DataFrame | None]] = [
         ("SHORT_PUMP MID", "short_pump_mid", _filter_lines_short_pump_mid, df_sp_all, df_sp_core),
         ("SHORT_PUMP DEEP", "short_pump_deep", _filter_lines_short_pump_deep, df_sp_all, df_sp_core),
-        ("ACTIVE (stage4 + dist≥" + (f"{int(tg_dist_min)}" if tg_dist_min == int(tg_dist_min) else f"{tg_dist_min}") + "%)", "short_pump_active_1R", lambda: _filter_lines_short_pump_active(tg_dist_min), df_active, df_active_core),
+        ("SHORT_PUMP ACTIVE (stage4 + dist≥" + (f"{int(tg_dist_min)}" if tg_dist_min == int(tg_dist_min) else f"{tg_dist_min}") + "%)", "short_pump_active_1R", lambda: _filter_lines_short_pump_active(tg_dist_min), df_active, df_active_core),
         ("SHORT_PUMP FILTERED", "short_pump_filtered_1R", lambda: _filter_lines_short_pump_filtered(SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX), df_spf, df_spf_core),
     ]
 
@@ -1177,50 +1177,6 @@ def build_executive_compact_report(
         lines.append("    (нет live-подрежимов)")
         lines.append("")
 
-    # Preserve legacy ACTIVE-only block when data exists but guard missing
-    gst_sp_legacy = _guard_state_str(guard_state, "short_pump_active_1R") if guard_state else None
-    if df_active_core is not None and not df_active_core.empty and gst_sp_legacy and gst_sp_legacy.upper() not in ("DISABLED",):
-        trades_neg_sp = _trades_since_ev_negative(pnl_ac, rolling_n) if n_ac >= 20 else 0
-        guard_txt_sp = _guard_status_text(
-            guard_state, "short_pump_active_1R",
-            trades_since_negative_start=trades_neg_sp,
-            decision_window=DECISION_WINDOW_VERDICT,
-        )
-        ec_ac = _edge_consistency_frac(pnl_ac, rolling_n) if n_ac >= 20 else None
-        timeout_ac = _timeout_count(df_active) if df_active is not None else 0
-        lines.append("    2.1.X ACTIVE (legacy block)")
-        lines.append("")
-        lines.append("        🔹 Фильтр")
-        for ln in _filter_lines_short_pump_active(tg_dist_min):
-            lines.append(f"        {ln}")
-        lines.append("")
-        lines.append("        🔹 Метрики")
-        lines.append(f"        WR: {wr_ac:.0f}%   EV: {ev_ac:+.2f}R   EV20: {ev20_ac:+.2f}R")
-        lines.append(f"        N: {n_ac} | timeout: {timeout_ac}")
-        lines.append("")
-        lines.append("        🔹 Guard")
-        lines.append(f"        {_guard_emoji_label(gst_sp_legacy, n_ac)}")
-        lines.append("")
-        lines.append("        🔹 Диагноз")
-        diag_sp = _diagnosis_v2(
-            ev_ac, ev20_ac, n_ac, ec_ac, trades_neg_sp,
-            gst_sp_legacy, guard_txt_sp, DECISION_WINDOW_VERDICT,
-        )
-        for d in diag_sp:
-            lines.append(f"        {d}")
-        prog = _guard_progress_text(
-            guard_state, "short_pump_active_1R",
-            trades_since_negative_start=trades_neg_sp,
-            decision_window=DECISION_WINDOW_VERDICT,
-        )
-        if prog:
-            if gst_sp_legacy == "WATCH":
-                lines.append("        live-входы запрещены (paper only)")
-            lines.append(f"        {prog}")
-            if gst_sp_legacy == "WATCH":
-                lines.append(f"        {_guard_progress_watch_to_active(trades_neg_sp, DECISION_WINDOW_VERDICT)}")
-    elif not (df_active_core is not None and not df_active_core.empty):
-        lines.append("    2.1.1 ACTIVE: нет данных")
     lines.append("")
 
     # 2.2 FAST0 — только ACTIVE / WATCH / RECOVERY (не DISABLED)
