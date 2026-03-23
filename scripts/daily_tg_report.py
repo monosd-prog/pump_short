@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -61,6 +62,7 @@ from analytics.fast0_blocks import (
 )
 from analytics.short_pump_blocks import filter_active_trades
 from analytics.executive_report import build_executive_compact_report
+from telegram.send_helpers import send_document as _send_document_file
 
 
 def _run_guard_update(data_dir: Path, days: int, rolling: int = 20) -> None:
@@ -2229,46 +2231,34 @@ def main() -> None:
                 print("Saved chart:", p)
         return
 
-    # Telegram limit 4096 chars; compact path for FAST0 and short_pump to keep priority blocks and avoid trailing "..."
-    MAX_TG_LEN = 4096
-    if (report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered", "short_pump") ) and investor_mode and len(report) > MAX_TG_LEN:
-        if not args.compact and base_report:
-            investor_lines, _, _ = _investor_metrics_text(
-                df_sorted, args.rolling, date_range, report_strategy, args.maturity_threshold,
-                events_df=events_for_report, debug=debug, compact=True,
-            )
-            report = base_report + "\n" + "\n".join(investor_lines)
-        sep = "" if args.compact else base_report
-        while len(report) > MAX_TG_LEN and len(investor_lines) > 8:
-            investor_lines = investor_lines[:-1]
-            report = (sep + "\n" + "\n".join(investor_lines)) if sep else "\n".join(investor_lines)
-
-    if len(report) > MAX_TG_LEN:
-        marker = "ИНВЕСТОРСКИЕ МЕТРИКИ"
-        idx = report.find(marker)
-        if idx >= 0:
-            investor_part = report[idx:]
-            if len(investor_part) < MAX_TG_LEN:
-                max_base = MAX_TG_LEN - len(investor_part) - 25
-                report = (report[:max_base] + "\n...[обрезано]...\n" + investor_part)
-            elif base_report and (report_strategy in ("short_pump_fast0", "short_pump_fast0_filtered", "short_pump")) and investor_mode:
-                while len(report) > MAX_TG_LEN and len(investor_lines) > 5:
-                    investor_lines = investor_lines[:-1]
-                    report = base_report + "\n" + "\n".join(investor_lines)
-                if len(report) > MAX_TG_LEN:
-                    report = report[: MAX_TG_LEN - 3] + "..."
-            else:
-                report = report[: MAX_TG_LEN - 3] + "..."
-        else:
-            report = report[: MAX_TG_LEN - 3] + "..."
-
-    # Send text report (with error handling)
+    # File-first delivery: send full report as .txt document (no 4096 truncation)
+    _report_file_sent = False
+    _tmp_path: Optional[Path] = None
     try:
-        _send_telegram(report, token, chat_id)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", prefix="report_", delete=False, encoding="utf-8",
+        ) as _f:
+            _f.write(report)
+            _tmp_path = Path(_f.name)
+        _send_document_file(token, chat_id, _tmp_path, caption=f"Compact report {strategies_label}")
+        _report_file_sent = True
     except Exception as e:
-        print(f"WARNING: Failed to send text report to Telegram: {e}", file=sys.stderr)
-        if debug:
-            print(f"TG sendMessage failed: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"WARNING: sendDocument failed, falling back to text: {e}", file=sys.stderr)
+    finally:
+        if _tmp_path and _tmp_path.exists():
+            try:
+                _tmp_path.unlink()
+            except OSError:
+                pass
+
+    if not _report_file_sent:
+        MAX_TG_LEN = 4096
+        if len(report) > MAX_TG_LEN:
+            report = report[: MAX_TG_LEN - 3] + "..."
+        try:
+            _send_telegram(report, token, chat_id)
+        except Exception as e:
+            print(f"WARNING: Failed to send text report to Telegram: {e}", file=sys.stderr)
     
     # Send photos (with per-photo error handling)
     if chart_paths:

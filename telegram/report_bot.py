@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+import tempfile
 import traceback
 from pathlib import Path
 from typing import Optional, Tuple
@@ -71,9 +72,28 @@ def _handle_report(token: str, chat_id: int, msg_id: int, text: str) -> None:
     try:
         data_root = os.getenv("TG_REPORT_DATA_ROOT") or "/root/pump_short/datasets"
         report = generate_compact_autotrading_report(days_use, data_dir=data_root)
-        if len(report) > 4096:
-            report = report[:4093] + "..."
-        _send_message(token, chat_id, report)
+        _file_sent = False
+        _tmp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", prefix="report_", delete=False, encoding="utf-8",
+            ) as _f:
+                _f.write(report)
+                _tmp_path = _f.name
+            _send_document(token, int(chat_id), Path(_tmp_path), caption=f"Compact report {days_use}d")
+            _file_sent = True
+        except Exception:
+            pass
+        finally:
+            if _tmp_path and Path(_tmp_path).exists():
+                try:
+                    Path(_tmp_path).unlink()
+                except OSError:
+                    pass
+        if not _file_sent:
+            if len(report) > 4096:
+                report = report[:4093] + "..."
+            _send_message(token, chat_id, report)
     except Exception as e:
         tb = traceback.format_exc(limit=3)
         _send_message(
