@@ -201,13 +201,15 @@ def track_outcome(
         pass
     while pd.Timestamp.now(tz="UTC") < end_ts:
         try:
+            fresh = fetch_klines_1m(cat, symbol, limit=300)
+            if fresh is not None and not fresh.empty:
+                candles_1m = fresh
+        except Exception:
+            logger.debug("OUTCOME_KLINE_REFRESH_FAIL | symbol=%s run_id=%s", symbol, run_id)
+
+        try:
             future = candles_1m[candles_1m["ts"] >= entry_ts_utc].copy()
             if future is None or future.empty:
-                # try to re-fetch to get more recent candles
-                try:
-                    candles_1m = fetch_klines_1m(cat, symbol, limit=300)
-                except Exception:
-                    candles_1m = None
                 time.sleep(poll_seconds)
                 continue
         except Exception:

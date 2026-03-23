@@ -1,3 +1,8 @@
+---
+description: 
+alwaysApply: true
+---
+
 # Execution Modes: PLAN vs AGENT
 
 Определяет, как использовать режимы `PLAN` и `AGENT` при выполнении задач в рамках `project_ops`.
@@ -158,4 +163,3 @@
 - **Escalation Rules**
   - При наблюдении аномальных рисковых паттернов (резкая просадка, всплеск объема сделок, unexpected behavior) незамедлительно эскалирует Project Manager Agent и может инициировать emergency rollback.
   - Имеет право заблокировать включение live-режима или ML-фильтра до устранения критических рисков.
-
