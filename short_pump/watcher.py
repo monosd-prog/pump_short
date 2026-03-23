@@ -1640,8 +1640,6 @@ def run_watch_for_symbol(
                         step="ENTRY_DECISION",
                         extra={
                             "dist_to_peak_pct": dist_to_peak,
-                            "run_id": run_id,
-                            "symbol": cfg.symbol,
                             "event_id": str(event_id),
                             "reason": gate_reason,
                             "route_strategy": route_strategy,
@@ -2117,7 +2115,7 @@ def run_watch_for_symbol(
                                         "formatted": True,
                                         "meta": {
                                             "kind": "OUTCOME",
-                                            "exec_mode": (cfg.mode or "").strip().lower() or "paper",
+                                            "exec_mode": (getattr(cfg, "mode", "") or "").strip().lower() or "paper",
                                             "risk_profile": _rp or "",
                                             "symbol": cfg.symbol,
                                             "entry_price": summary.get("entry_price") or entry_snapshot.get("entry_price"),
