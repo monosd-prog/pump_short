@@ -550,6 +550,89 @@ def _run_fast0_outcome_watcher(
                             step="FAST0_OUTCOME",
                             extra={"liq_long_usd_30s": liq_val, "event_id": event_id, "reason": "liq<=0"},
                         )
+                        # Fallback TG: preserve liq-gate signal quality logging above, but still notify (visibility).
+                        try:
+                            from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+                            from trading.outcome_delivery import deliver_outcome_tg
+
+                            _rp_fb, _rm_fb, _ = get_risk_profile(
+                                strategy_name,
+                                liq_long_usd_30s=0,
+                                dist_to_peak_pct=dist_to_peak_pct,
+                            )
+                            _nt_fb, _lev_fb, _mm_fb = get_notional_and_leverage(_rm_fb)
+                            msg_fb = format_fast0_outcome_message(
+                                symbol=symbol,
+                                run_id=run_id,
+                                event_id=event_id,
+                                strategy=strategy_name,
+                                res=res_val,
+                                entry_price=entry_price,
+                                tp_price=tp_price,
+                                sl_price=sl_price,
+                                exit_price=exit_price_val,
+                                pnl_pct=pnl_val,
+                                hold_seconds=hold_val,
+                                dist_to_peak_pct=dist_val if dist_val else None,
+                                context_score=ctx_val if ctx_val else None,
+                                risk_profile=_rp_fb or None,
+                                notional_usd=_nt_fb if _nt_fb > 0 else None,
+                                leverage=_lev_fb,
+                                margin_mode=_mm_fb,
+                            )
+                            send_text_fb = f"[NO LIQ] liq=0 fallback\n{msg_fb}"
+                            deliver_outcome_tg(
+                                logger=logger,
+                                delivery_strategy=strategy_name,
+                                run_id=run_id or "",
+                                event_id=str(event_id or ""),
+                                symbol=symbol,
+                                res=res_val,
+                                send_text=send_text_fb,
+                                tg_send_enabled=True,
+                                delivery_reason="liq_zero_fallback",
+                                delivery_mode="fast0_outcome_candles_liq_fallback",
+                                stage=None,
+                                step="FAST0_OUTCOME_TG",
+                                send_telegram_kwargs={
+                                    "strategy": strategy_name,
+                                    "side": "SHORT",
+                                    "mode": "FAST0_FILTERED" if strategy_name == STRATEGY_FILTERED else "FAST0",
+                                    "event_id": str(event_id),
+                                    "context_score": ctx_val if ctx_val else None,
+                                    "entry_ok": True,
+                                    "skip_reasons": None,
+                                    "formatted": True,
+                                    "meta": {
+                                        "kind": "OUTCOME",
+                                        "exec_mode": (mode or "").strip().lower() or "paper",
+                                        "risk_profile": _rp_fb or "",
+                                        "symbol": symbol,
+                                        "entry_price": entry_price,
+                                        "tp_price": tp_price,
+                                        "sl_price": sl_price,
+                                        "exit_price": exit_price_val,
+                                        "pnl_pct": pnl_val,
+                                        "notional_usd": _nt_fb if _nt_fb > 0 else None,
+                                        "leverage": _lev_fb,
+                                        "margin_mode": _mm_fb,
+                                        "dist_to_peak_pct": dist_val if dist_val else None,
+                                        "liq_long_usd_30s": liq_val,
+                                        "context_score": ctx_val if ctx_val else None,
+                                        "fallback": True,
+                                        "reason": "liq_zero",
+                                        "liq_val": liq_val,
+                                    },
+                                },
+                            )
+                        except Exception:
+                            log_exception(
+                                logger,
+                                "FAST0_TG_LIQ_FALLBACK_SEND failed",
+                                symbol=symbol,
+                                run_id=run_id,
+                                step="FAST0_OUTCOME",
+                            )
                     elif liq_val > 0 and dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
                         try:
                             from trading.risk_profile import get_risk_profile, get_notional_and_leverage
