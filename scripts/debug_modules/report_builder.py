@@ -286,11 +286,23 @@ def _build_state_detail(state: StateReport) -> str:
         for pos in detail:
             age_h = pos.get("age_hours")
             age_str = f"{age_h:.1f}h" if age_h is not None else "?"
+            in_closes = pos.get("in_closes", False)
+            has_order = pos.get("order_id_present", False)
+            
+            # Compute confidence for display (same logic as issue_detector)
+            low_signals = []
+            if in_closes:
+                low_signals.append("in_closes")
+            if not has_order:
+                low_signals.append("no_order_id")
+            confidence = "MEDIUM" if len(low_signals) >= 2 else "HIGH"
+            confidence_label = f"[{confidence}]"
+            
             flag = " ⚠️ STUCK" if pos.get("pos_id", "") in stuck_ids else ""
             lines.append(
                 f"    {pos.get('strategy','?'):25s}  {pos.get('symbol','?'):15s}  "
                 f"mode={pos.get('mode','?'):5s}  age={age_str:8s}  "
-                f"order_id={'✅' if pos.get('order_id_present') else '❌'}{flag}"
+                f"order_id={'✅' if has_order else '❌'}  {confidence_label}{flag}"
             )
     else:
         lines.append("\n  Open positions: none")

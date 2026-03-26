@@ -29,6 +29,7 @@ Keys:
   open_positions_count    : int
   open_positions_detail   : list[dict]   — [{strategy, symbol, run_id, ts, mode, order_id_present, age_hours}]
   stuck_positions         : list[dict]   — positions older than stuck_threshold_hours (live mode)
+                                           each entry adds: in_closes: bool (run_id found in trading_closes.csv)
   queue_depth             : int
   processing_stuck        : bool         — .processing exists AND age >= _RUNNER_STUCK_MINUTES (5 min)
   processing_age_minutes  : float | None
@@ -207,6 +208,17 @@ def build(raw: RawData, no_signal_threshold_hours: float = 2.0) -> StateReport:
             detail: List[Dict[str, Any]] = []
             stuck: List[Dict[str, Any]] = []
 
+            # Pre-build closes_run_ids set for O(1) lookup
+            closes_run_ids: set[str] = set()
+            try:
+                closes_rows: List[Dict[str, Any]] = raw.get("closes_rows", [])
+                for row in closes_rows:
+                    run_id = row.get("run_id", "")
+                    if run_id:
+                        closes_run_ids.add(run_id)
+            except Exception:
+                closes_run_ids = set()
+
             for strategy, positions in open_positions.items():
                 if not isinstance(positions, dict):
                     continue
@@ -223,16 +235,19 @@ def build(raw: RawData, no_signal_threshold_hours: float = 2.0) -> StateReport:
                     ts_epoch = _parse_ts_to_epoch(ts_str)
                     age_h = _age_hours(ts_epoch, now)
                     has_order_id = bool(pos.get("order_id"))
+                    run_id = pos.get("run_id", "")
+                    in_closes = run_id in closes_run_ids
 
                     entry: Dict[str, Any] = {
                         "pos_id": pos_id,
                         "strategy": strategy,
                         "symbol": pos.get("symbol", ""),
-                        "run_id": pos.get("run_id", ""),
+                        "run_id": run_id,
                         "mode": mode,
                         "ts": ts_str or "",
                         "age_hours": round(age_h, 2) if age_h is not None else None,
                         "order_id_present": has_order_id,
+                        "in_closes": in_closes,
                     }
                     detail.append(entry)
 

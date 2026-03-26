@@ -479,7 +479,14 @@ def _detect_runner_hang(raw: RawData, state: StateReport) -> List[Issue]:
 
 
 def _detect_stuck_positions(raw: RawData, state: StateReport) -> List[Issue]:
-    """HIGH for each live open position older than 24 hours."""
+    """
+    Detect live open positions older than 24 hours.
+    Score confidence based on whether run_id is in closes_rows and order_id presence.
+    
+    Confidence scoring:
+    - HIGH: likely genuine hang (run_id NOT in closes, or order_id present)
+    - MEDIUM: likely state desync / garbage (run_id IN closes AND no order_id)
+    """
     issues: List[Issue] = []
     try:
         stuck = state.get("stuck_positions", [])
@@ -494,22 +501,37 @@ def _detect_stuck_positions(raw: RawData, state: StateReport) -> List[Issue]:
             ts = pos.get("ts", "?")
             pos_id = pos.get("pos_id", "?")
             has_order = pos.get("order_id_present", False)
+            in_closes = pos.get("in_closes", False)
             age_str = f"{age_h:.1f}h" if age_h is not None else "unknown age"
+
+            # Compute live_confidence based on LOW signals
+            low_signals: List[str] = []
+            if in_closes:
+                low_signals.append("in_closes")
+            if not has_order:
+                low_signals.append("no_order_id")
+
+            # Severity: if >=2 LOW signals → MEDIUM, else → HIGH
+            low_signal_count = len(low_signals)
+            live_confidence = "MEDIUM" if low_signal_count >= 2 else "HIGH"
+            severity = "MEDIUM" if low_signal_count >= 2 else "HIGH"
+            confidence_reason = " + ".join(low_signals) if low_signals else "(no LOW signals → conservative HIGH)"
 
             issues.append(Issue(
                 issue_id="",
                 type=IssueType.STUCK_POSITION,
-                severity="HIGH",
+                severity=severity,
                 source="datasets/trading_state.json → open_positions",
                 description=(
                     f"Live open position for {symbol} ({strategy}) is {age_str} old. "
-                    f"Expected to be closed within normal outcome window. "
+                    f"Confidence: [{live_confidence}] ({confidence_reason}). "
                     f"order_id present: {has_order}."
                 ),
                 evidence=(
                     f"pos_id: {pos_id}\n"
                     f"symbol: {symbol} | strategy: {strategy} | run_id: {run_id}\n"
-                    f"opened_ts: {ts} | age: {age_str} | order_id: {has_order}"
+                    f"opened_ts: {ts} | age: {age_str} | order_id: {has_order} | in_closes: {in_closes}\n"
+                    f"confidence: {live_confidence} ({confidence_reason})"
                 ),
                 component="outcome",
                 ts=ts,
