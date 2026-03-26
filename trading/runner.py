@@ -503,7 +503,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
         risk_profile_name = ""
         risk_mult = 1.0
-        if (signal.strategy or "").strip() in ("short_pump", "short_pump_filtered", "short_pump_fast0"):
+        if (signal.strategy or "").strip() in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
             risk_profile_name, risk_mult, _ = get_risk_profile(
                 (signal.strategy or "").strip(),
                 stage=getattr(signal, "stage", None),

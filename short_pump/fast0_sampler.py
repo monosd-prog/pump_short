@@ -620,10 +620,13 @@ def _run_fast0_outcome_watcher(
                             )
                         except Exception:
                             log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
-            # Paper: close position on OUTCOME (TP_hit/SL_hit). Also for guard-blocked (position.mode=paper).
-            try:
-                from trading.config import AUTO_TRADING_ENABLE, MODE
-                if AUTO_TRADING_ENABLE and (MODE == "paper" or (mode or "").strip().lower() == "paper"):
+            # Paper: close position on OUTCOME (TP_hit/SL_hit/TIMEOUT).
+            # Also handles guard-blocked paper (position.mode=paper).
+            # Not gated on AUTO_TRADING_ENABLE: close_from_outcome is a no-op
+            # (returns False / logs CLOSE_SKIP) when no open_positions entry exists,
+            # so it is safe to call unconditionally for paper-mode outcomes.
+            if (mode or "").strip().lower() == "paper":
+                try:
                     from trading.paper_outcome import close_from_outcome
                     close_from_outcome(
                         strategy=strategy_name,
@@ -640,8 +643,8 @@ def _run_fast0_outcome_watcher(
                             "mae_r": summary.get("mae_r"),
                         },
                     )
-            except Exception:
-                log_exception(logger, "FAST0_TRADING_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+                except Exception:
+                    log_exception(logger, "FAST0_TRADING_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
     except Exception as e:
         log_exception(logger, "FAST0_OUTCOME_ERROR", step="FAST0_OUTCOME", extra={"trade_id": trade_id})
     finally:
