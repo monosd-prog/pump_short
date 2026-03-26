@@ -10,7 +10,10 @@ from .volume_report import *
 from .joins import *
 from .aggregates import *
 from .features import *
-from .plots import *
+try:
+    from .plots import *
+except ImportError:
+    pass
 from .reconciliation import (
     reconcile_raw_vs_report,
     check_enrich_coverage,
