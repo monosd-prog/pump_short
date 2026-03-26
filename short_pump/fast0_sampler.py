@@ -526,21 +526,20 @@ def _run_fast0_outcome_watcher(
             )
             liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else 0.0
             if FAST0_TG_OUTCOME_ENABLE and res_val and res_val not in ("", "None"):
-                _skip_tg_live = False
-                try:
-                    from trading.config import EXECUTION_MODE
-                    _skip_tg_live = (EXECUTION_MODE or "").strip().lower() == "live"
-                    if _skip_tg_live:
-                        log_info(
-                            logger,
-                            "MODEL_OUTCOME_TG_SKIPPED_LIVE",
-                            symbol=symbol,
-                            run_id=run_id,
-                            step="FAST0_OUTCOME",
-                            extra={"event_id": event_id, "reason": "live_mode_only_live_outcome_tg"},
-                        )
-                except Exception:
-                    pass
+                # Skip TG only when this specific trade was executed in live mode.
+                # Previously used EXECUTION_MODE (global system mode) which incorrectly
+                # suppressed TG for all paper fast0 outcomes whenever the system ran in
+                # live mode. Fixed: use trade-level `mode` argument instead.
+                _skip_tg_live = (mode or "").strip().lower() == "live"
+                if _skip_tg_live:
+                    log_info(
+                        logger,
+                        "MODEL_OUTCOME_TG_SKIPPED_LIVE",
+                        symbol=symbol,
+                        run_id=run_id,
+                        step="FAST0_OUTCOME",
+                        extra={"event_id": event_id, "reason": "trade_mode_is_live", "trade_mode": mode},
+                    )
                 if not _skip_tg_live:
                     if not (liq_val > 0):
                         log_info(
