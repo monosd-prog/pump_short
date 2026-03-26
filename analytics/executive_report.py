@@ -1455,6 +1455,8 @@ def build_executive_compact_report(
     lines.append("")
     lines.append("🤖 5️⃣ ГОТОВНОСТЬ ML")
     lines.append("")
+    lines.append("    core — live operational TP/SL (узкое окно), не paper/guard population")
+    lines.append("")
     n_fast0_core = len(df_f0_op_core) if (df_f0_op_core is not None and not df_f0_op_core.empty) else 0
     n_sp_core = len(df_active_core) if (df_active_core is not None and not df_active_core.empty) else 0
     n_spf_core = len(df_spf_core) if (df_spf_core is not None and not df_spf_core.empty) else 0
@@ -1475,12 +1477,20 @@ def build_executive_compact_report(
     lines.append(f"    минимум ML: {LIGHTGBM_MIN}")
     lines.append(f"    комфорт: {LIGHTGBM_COMFORT}")
     lines.append("")
-    eta_f0 = f"~{eta_fast0_days}д" if remaining_fast0 > 0 and eta_fast0_days > 0 else "готово"
-    eta_sp = f"~{eta_sp_days}д" if remaining_sp > 0 and eta_sp_days > 0 else "готово"
-    eta_spf = f"~{eta_spf_days}д" if remaining_spf > 0 and eta_spf_days > 0 else "готово"
-    lines.append(f"    FAST0 → осталось {remaining_fast0} ({eta_f0})")
-    lines.append(f"    SHORT_PUMP → осталось {remaining_sp} ({eta_sp})")
-    lines.append(f"    SHORT_PUMP_FILTERED → осталось {remaining_spf} ({eta_spf})")
+    # ETA logic: if remaining > 0 but no core rate → "н/д"; else if remaining > 0 → "~Nd"; else → "готово"
+    def _eta_label(remaining: int, core_per_day: float, eta_days: int) -> str:
+        if remaining == 0:
+            return "готово"
+        if core_per_day == 0:
+            return "н/д"
+        return f"~{eta_days}д" if eta_days > 0 else "н/д"
+    
+    eta_f0 = _eta_label(remaining_fast0, core_per_day_fast0, eta_fast0_days)
+    eta_sp = _eta_label(remaining_sp, core_per_day_sp, eta_sp_days)
+    eta_spf = _eta_label(remaining_spf, core_per_day_spf, eta_spf_days)
+    lines.append(f"    FAST0 (live TP/SL) → осталось {remaining_fast0} ({eta_f0})")
+    lines.append(f"    SHORT_PUMP (live TP/SL) → осталось {remaining_sp} ({eta_sp})")
+    lines.append(f"    SHORT_PUMP_FILTERED (live TP/SL) → осталось {remaining_spf} ({eta_spf})")
     lines.append("")
     lines.append("ℹ️ 6️⃣ ЛЕГЕНДА")
     lines.append("")
