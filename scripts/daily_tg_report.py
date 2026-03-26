@@ -19,8 +19,6 @@ import os
 import re
 import subprocess
 import sys
-import logging
-logger = logging.getLogger(__name__)
 import tempfile
 import urllib.error
 import urllib.parse
@@ -2279,11 +2277,6 @@ def main() -> None:
                 if debug:
                     print(f"TG sendPhoto failed: {p.name} {type(e).__name__}: {e}", file=sys.stderr)
                 # Continue to next photo
-
-
-# TODO(TASK_B40_REPORTS): reconciliation logging helper — wired up in a follow-up iteration
-# when report_metrics_dict is available at the call site in main().
-# def _add_reconciliation_logging(outcomes_df, events_df, report_metrics): ...
 
 
 if __name__ == "__main__":
