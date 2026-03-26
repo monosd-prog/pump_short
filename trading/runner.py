@@ -622,6 +622,29 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             save_state(state)
             return
 
+        # LIVE PROFILE WHITELIST: only allow explicitly approved profiles in live mode
+        if EXECUTION_MODE == "live":
+            allowed_live_profiles = {"short_pump_active_1R", "fast0_selective"}
+            if risk_profile_name not in allowed_live_profiles:
+                logger.info(
+                    "LIVE_PROFILE_POLICY_BLOCK | strategy=%s symbol=%s run_id=%s profile=%s reason=not_in_live_whitelist",
+                    signal.strategy, signal.symbol, signal.run_id or "", risk_profile_name,
+                )
+                # Switch to paper execution path instead
+                try:
+                    _open_guard_blocked_paper_position(
+                        signal, risk_profile_name, "not_in_live_whitelist", state, equity, entry_f, tp, sl_f,
+                        stop_distance_pct, risk_mult, last_signal_ids,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "WHITELIST_BLOCKED_PAPER_OPEN_FAILED | strategy=%s symbol=%s: %s",
+                        signal.strategy, signal.symbol, e,
+                    )
+                _finish_queue_processing(raw_lines)
+                save_state(state)
+                return
+
         broker = get_broker(EXECUTION_MODE, dry_run_live=dry_run_live)
         position = broker.open_position(
             signal,
