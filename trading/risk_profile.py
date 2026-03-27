@@ -235,17 +235,27 @@ def get_risk_profile(
         except (TypeError, ValueError):
             pass
 
-        # New live submode: FAST0 SELECTIVE (context_score in [0.4,0.6), optional volume_1m>1e6 when available)
+        # New live submode: FAST0 SELECTIVE (context_score in [0.4,0.6), optional volume_1m>100k when available)
+        _FAST0_SELECTIVE_VOL_MIN = 100_000.0
         if ctx_val is not None and 0.4 <= ctx_val < 0.6:
-            if vol1_val is None or vol1_val > 1_000_000.0:
+            if vol1_val is None or vol1_val > _FAST0_SELECTIVE_VOL_MIN:
                 profile = "fast0_selective"
                 mult = _float_env("FAST0_SELECTIVE_RISK_MULT", 0.7) * FAST0_BASE_RISK_MULT
                 logger.info(
                     "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s liq_long_usd_30s=%.0f "
+                    "context_score=%.2f volume_1m=%s vol_threshold=%.0f "
                     "selected_profile=%s risk_mult=%.2f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
-                    strategy, symbol, event_id, trade_id, liq_val or 0, profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+                    strategy, symbol, event_id, trade_id, liq_val or 0,
+                    ctx_val, f"{vol1_val:.0f}" if vol1_val is not None else "None", _FAST0_SELECTIVE_VOL_MIN,
+                    profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
                 )
                 return profile, mult, mult
+            else:
+                logger.info(
+                    "RISK_PROFILE | strategy=%s symbol=%s event_id=%s context_score=%.2f "
+                    "volume_1m=%.0f vol_threshold=%.0f → vol_gate_blocked → fallback to liq_bucket",
+                    strategy, symbol, event_id, ctx_val, vol1_val, _FAST0_SELECTIVE_VOL_MIN,
+                )
         # Buckets: liq==0 -> 1R, 5k<liq<=25k -> 1.5R, liq>100k -> 2R
         if liq_val > FAST0_LIQ_100K:
             profile = "fast0_2R"
