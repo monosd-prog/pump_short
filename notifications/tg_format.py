@@ -263,15 +263,23 @@ def format_fast0_outcome_message(
     notional_usd: float | None = None,
     leverage: int | None = None,
     margin_mode: str | None = None,
+    live_confirmed: bool = False,
 ) -> str:
     """Format FAST0 outcome for Telegram. Used when FAST0_TG_OUTCOME_ENABLE=1 or live outcome."""
     strategy_name = (strategy or "short_pump_fast0").strip() or "short_pump_fast0"
     header = f"{_emoji('SHORT')} SHORT | {strategy_name} | OUTCOME | res={res} | sym={symbol}"
-    lines = [
-        header,
+    lines = [header]
+    if live_confirmed:
+        lines.append("🟢 LIVE CONFIRMED | source=bybit")
+    pnl_line = (
+        f"exit={_fmt_num(exit_price)} | pnl={_fmt_pct(pnl_pct)} | hold={_fmt_num(hold_seconds)}s"
+        if live_confirmed
+        else f"pnl={_fmt_pct(pnl_pct)} | hold={_fmt_num(hold_seconds)}s"
+    )
+    lines += [
         f"run_id={run_id} eid={_short_eid(event_id)}",
         f"entry={_fmt_num(entry_price)} tp={_fmt_num(tp_price)} sl={_fmt_num(sl_price)}",
-        f"pnl={_fmt_pct(pnl_pct)} | hold={_fmt_num(hold_seconds)}s",
+        pnl_line,
     ]
     if risk_profile:
         extra = [f"risk_profile={risk_profile}"]

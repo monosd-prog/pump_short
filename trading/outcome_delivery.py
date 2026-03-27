@@ -28,6 +28,7 @@ def deliver_outcome_tg(
     stage: int | None = None,
     step: str = "OUTCOME_TG",
     tg_send_enabled: bool = True,
+    delivery_key_suffix: str = "",
 ) -> bool:
     """
     Outcome Delivery Contract helper.
@@ -45,7 +46,7 @@ def deliver_outcome_tg(
         run_id or "",
         str(event_id or ""),
         symbol or "",
-    )
+    ) + (delivery_key_suffix or "")
 
     # Load state once for skip decision.
     state = load_state()

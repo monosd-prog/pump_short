@@ -7,6 +7,95 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_LIVE_OUTCOME_TG_SUFFIX = ":live"
+
+
+def _deliver_live_outcome_tg(
+    *,
+    strategy: str,
+    position: dict[str, Any],
+    symbol: str,
+    run_id: str,
+    event_id: str,
+    res: str,
+    exit_price: float,
+    pnl_pct: float,
+    exit_ts: str,
+) -> None:
+    """Send dedicated TG for live Bybit-confirmed outcome. Uses delivery_key_suffix=':live' to avoid
+    collision with the paper candle fallback key."""
+    try:
+        from notifications.tg_format import format_fast0_outcome_message
+        from trading.outcome_delivery import deliver_outcome_tg
+
+        entry_price = float(position.get("entry", 0) or 0)
+        tp_price = float(position.get("tp", 0) or 0)
+        sl_price = float(position.get("sl", 0) or 0)
+        risk_profile = (position.get("risk_profile") or "").strip() or None
+        notional_usd_raw = position.get("notional_usd")
+        leverage_raw = position.get("leverage")
+        margin_mode = (position.get("margin_mode") or "").strip() or None
+        notional_usd = float(notional_usd_raw) if notional_usd_raw is not None else None
+        leverage = int(leverage_raw) if leverage_raw is not None else None
+
+        hold_seconds = 0.0
+        try:
+            opened_dt = _parse_opened_ts(position.get("opened_ts", ""))
+            exit_dt_str = str(exit_ts).strip().replace("Z", "+00:00").replace("+0000", "+00:00")
+            exit_dt = datetime.fromisoformat(exit_dt_str)
+            if exit_dt.tzinfo is None:
+                exit_dt = exit_dt.replace(tzinfo=timezone.utc)
+            if opened_dt:
+                hold_seconds = max(0.0, (exit_dt - opened_dt).total_seconds())
+        except Exception:
+            pass
+
+        msg = format_fast0_outcome_message(
+            symbol=symbol,
+            run_id=run_id,
+            event_id=event_id,
+            strategy=strategy,
+            res=res,
+            entry_price=entry_price,
+            tp_price=tp_price,
+            sl_price=sl_price,
+            exit_price=exit_price,
+            pnl_pct=pnl_pct,
+            hold_seconds=hold_seconds,
+            risk_profile=risk_profile,
+            notional_usd=notional_usd,
+            leverage=leverage,
+            margin_mode=margin_mode,
+            live_confirmed=True,
+        )
+
+        deliver_outcome_tg(
+            logger=logger,
+            delivery_strategy=strategy,
+            run_id=run_id,
+            event_id=event_id,
+            symbol=symbol,
+            res=res,
+            send_text=msg,
+            tg_send_enabled=True,
+            delivery_reason="live_bybit_confirmed",
+            delivery_mode="live_bybit_confirmed",
+            stage=None,
+            step="LIVE_OUTCOME_TG",
+            delivery_key_suffix=_LIVE_OUTCOME_TG_SUFFIX,
+            send_telegram_kwargs={
+                "strategy": strategy,
+                "side": "SHORT",
+                "mode": "LIVE",
+                "event_id": str(event_id),
+            },
+        )
+    except Exception:
+        logger.exception(
+            "LIVE_OUTCOME_TG_FAILED | symbol=%s run_id=%s event_id=%s step=LIVE_OUTCOME_TG",
+            symbol, run_id, event_id,
+        )
+
 LIVE_OUTCOME_POLL_INTERVAL_SEC = int(
     (__import__("os").getenv("LIVE_OUTCOME_POLL_INTERVAL_SEC") or "5").replace(",", ".")
 )
@@ -159,6 +248,17 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
                         flush=True,
                     )
                     save_state(state)
+                    _deliver_live_outcome_tg(
+                        strategy=strategy,
+                        position=position,
+                        symbol=symbol,
+                        run_id=run_id,
+                        event_id=event_id,
+                        res=res,
+                        exit_price=exit_price,
+                        pnl_pct=pnl_pct,
+                        exit_ts=exit_ts,
+                    )
             else:
                 logger.debug("OUTCOME_WORKER_SKIP | position_id=%s res=%s (not TP/SL)", position_id, res)
         else:
