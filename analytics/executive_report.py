@@ -1251,7 +1251,8 @@ def build_executive_compact_report(
             lines.append(f"        N: 0 | timeout: 0{_gsuf_f0}")
             lines.append("")
             lines.append("        🔹 Guard")
-            lines.append(f"        {_guard_emoji_label(gst, 0)}")
+            _n_for_label = int(_gn_f0) if _gn_f0 is not None else 0
+            lines.append(f"        {_guard_emoji_label(gst, _n_for_label)}")
             prog = _guard_progress_text(guard_state, guard_key)
             if prog:
                 if gst == "WATCH":
@@ -1282,7 +1283,8 @@ def build_executive_compact_report(
             lines.append(f"        N: {n_sub} | timeout: {timeout_sub}{_gsuf_f0}")
             lines.append("")
             lines.append("        🔹 Guard")
-            lines.append(f"        {_guard_emoji_label(gst, n_sub)}")
+            _n_for_label = max(n_sub, int(_gn_f0)) if _gn_f0 is not None else n_sub
+            lines.append(f"        {_guard_emoji_label(gst, _n_for_label)}")
             lines.append("")
             lines.append("        🔹 Диагноз")
             diag = _diagnosis_v2(ev_sub, ev20_sub, n_sub, ec_sub, trades_neg, gst, guard_txt, DECISION_WINDOW_VERDICT)
