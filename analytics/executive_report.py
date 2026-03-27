@@ -492,13 +492,24 @@ def _fast0_mode_mask_2r(df: pd.DataFrame) -> pd.Series:
 
 
 def _fast0_mode_mask_selective(df: pd.DataFrame) -> pd.Series:
-    """Prefer risk_profile when present; fallback to context_score window."""
+    """Prefer risk_profile when present; fallback to context_score window + volume_1m gate.
+
+    Fallback mirrors production routing in risk_profile.py:
+    - context_score in [0.4, 0.6)
+    - volume_1m is None (not available) OR volume_1m > 100_000
+    When volume_1m column is absent from df, the volume gate is skipped (same as vol=None in prod).
+    """
     rp = df["risk_profile"].astype(str).str.strip() if "risk_profile" in df.columns else pd.Series([""] * len(df), index=df.index)
     has_rp = rp.notna() & (rp != "") & (rp != "nan")
     by_profile = has_rp & (rp.str.lower() == "fast0_selective")
     if "context_score" in df.columns:
         cs = pd.to_numeric(df["context_score"], errors="coerce")
-        fb = (~has_rp) & cs.notna() & (cs >= 0.4) & (cs < 0.6)
+        fb_cs = (~has_rp) & cs.notna() & (cs >= 0.4) & (cs < 0.6)
+        if "volume_1m" in df.columns:
+            vol = pd.to_numeric(df["volume_1m"], errors="coerce")
+            fb = fb_cs & (vol.isna() | (vol > 100_000.0))
+        else:
+            fb = fb_cs
     else:
         fb = pd.Series([False] * len(df), index=df.index)
     return by_profile | fb
@@ -581,7 +592,7 @@ def _filter_lines_fast0_base() -> list[str]:
     """Filter description for FAST0 BASE (liq=0)."""
     return [
         f"dist ≈ 0.8–{FAST0_OP_DIST_MAX}%",
-        "context_score ≥ 0.40",
+        "context_score ≥ 0.60",
         "liqL30s = 0",
     ]
 
@@ -590,7 +601,7 @@ def _filter_lines_fast0_selective() -> list[str]:
     return [
         f"dist ≈ 0.8–{FAST0_OP_DIST_MAX}%",
         "context_score ∈ [0.40, 0.60)",
-        "(опц.) volume_1m > 1,000,000 если доступно",
+        "(опц.) volume_1m > 100,000 если доступно",
     ]
 
 
@@ -1502,7 +1513,8 @@ def build_executive_compact_report(
     lines.append("")
     lines.append("    🟢 ACTIVE — торгуется")
     lines.append("    🟡 WATCH — наблюдение")
+    lines.append("    🟡 RECOVERY — восстановление (DISABLED→ACTIVE)")
     lines.append("    🔴 DISABLED — торговля остановлена")
-    lines.append("    🧪 EXP — эксперимент")
+    lines.append("    🧪 EXP — эксперимент (n_core < 20)")
 
     return "\n".join(lines)
