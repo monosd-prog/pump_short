@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from trading.config import (
@@ -12,6 +14,18 @@ from trading.config import (
     AUTO_RISK_GUARD_STATE_PATH,
     EXECUTION_MODE,
 )
+
+# Flag file that signals guard metrics are stale (written by outcome paths,
+# consumed by runner._maybe_refresh_guard). While present, new entries are blocked.
+_GUARD_REFRESH_FLAG = Path(AUTO_RISK_GUARD_STATE_PATH).parent / "guard_refresh_pending.flag"
+
+
+def _guard_refresh_pending() -> bool:
+    """Return True if a guard refresh is pending (flag file exists)."""
+    try:
+        return _GUARD_REFRESH_FLAG.exists()
+    except Exception:
+        return False
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +199,15 @@ def is_entry_allowed_for_signal(signal: Any, risk_profile_name: str) -> Tuple[bo
     if mode_name is None:
         # Guard is only defined for specific боевые режимы; everything else passes through.
         return True, ""
+
+    if _guard_refresh_pending():
+        logger.info(
+            "ENTRY_BLOCKED_GUARD_PENDING_REFRESH | mode=%s strategy=%s symbol=%s",
+            mode_name,
+            getattr(signal, "strategy", ""),
+            getattr(signal, "symbol", ""),
+        )
+        return False, "guard_refresh_pending"
 
     entry = get_mode_state(mode_name)
     state = entry.current_state
