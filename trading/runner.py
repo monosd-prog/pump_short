@@ -423,13 +423,16 @@ def _maybe_refresh_guard(base_dir: str) -> None:
             pass  # malformed state → proceed with refresh
 
     script = Path(__file__).resolve().parent.parent / "scripts" / "update_auto_risk_guard.py"
+    project_root = str(Path(__file__).resolve().parent.parent)
     if not script.is_file():
         logger.warning("GUARD_REFRESH_SKIP | script not found: %s", script)
         return
+    env = {**os.environ, "PYTHONPATH": project_root}
     try:
         result = subprocess.run(
             [sys.executable, str(script), "--data-dir", str(base_dir),
              "--days", str(GUARD_CANONICAL_DAYS)],
+            env=env,
             capture_output=True,
             timeout=60,
         )
