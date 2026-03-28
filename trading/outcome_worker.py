@@ -134,11 +134,12 @@ def _parse_opened_ts(opened_ts: str) -> datetime | None:
         return None
 
 
-def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
+def run_outcome_worker(state: dict[str, Any], broker: Any, *, base_dir: str | None = None) -> None:
     """
     Iterate over live open positions, resolve outcomes via Bybit, close on TP/SL.
     Modifies state in place.
     Network/timeout must NOT close position; log OUTCOME_PENDING and keep open.
+    base_dir: dataset root (passed to close_from_live_outcome for outcomes_v3 write).
     """
     from trading.bybit_live_outcome import resolve_live_outcome
     from trading.paper_outcome import close_from_live_outcome
@@ -241,6 +242,7 @@ def run_outcome_worker(state: dict[str, Any], broker: Any) -> None:
                     pnl_pct=pnl_pct,
                     ts_utc=exit_ts,
                     state=state,
+                    base_dir=base_dir,
                 )
                 if ok:
                     print(

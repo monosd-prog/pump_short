@@ -8,6 +8,7 @@ It must be safe to import in live runner context.
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -302,6 +303,115 @@ def close_from_outcome(
     return True
 
 
+def _write_live_outcome_v3(
+    *,
+    strategy: str,
+    symbol: str,
+    run_id: str,
+    event_id: str,
+    pid: str,
+    pos: dict[str, Any],
+    res: str,
+    exit_f: float,
+    pnl_pct_f: float,
+    pnl_r: float,
+    pnl_usd: float,
+    ts_utc: str,
+    base_dir: str | None,
+) -> None:
+    """Write the live outcome row to outcomes_v3 partition immediately after close.
+    Errors are caught and logged so they never block the close path."""
+    try:
+        from common.io_dataset import write_outcome_row
+
+        mode = str(pos.get("mode") or "live")
+        trade_id = str(pos.get("trade_id") or pid)
+        side = str(pos.get("side") or "SHORT")
+        entry = float(pos.get("entry", 0) or 0)
+        tp = float(pos.get("tp", 0) or 0)
+        sl = float(pos.get("sl", 0) or 0)
+
+        hold_seconds = 0.0
+        opened_ts = str(pos.get("opened_ts") or "")
+        try:
+            if opened_ts:
+                s = opened_ts.replace("Z", "+00:00").replace("+0000", "+00:00")
+                opened_dt = datetime.fromisoformat(s)
+                if opened_dt.tzinfo is None:
+                    opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                close_s = str(ts_utc or "").replace("Z", "+00:00").replace("+0000", "+00:00")
+                close_dt = datetime.fromisoformat(close_s)
+                if close_dt.tzinfo is None:
+                    close_dt = close_dt.replace(tzinfo=timezone.utc)
+                hold_seconds = max(0.0, (close_dt - opened_dt).total_seconds())
+        except Exception:
+            pass
+
+        details_json = json.dumps({
+            "tp_hit": res == "TP_hit",
+            "sl_hit": res == "SL_hit",
+            "entry_price": entry,
+            "tp": tp,
+            "sl": sl,
+            "exit_price": exit_f,
+            "hold_seconds": hold_seconds,
+            "pnl_source": "bybit",
+        }, ensure_ascii=False)
+
+        row: Dict[str, Any] = {
+            "trade_id": trade_id,
+            "event_id": str(event_id or ""),
+            "run_id": run_id,
+            "symbol": symbol,
+            "strategy": strategy,
+            "mode": mode,
+            "source_mode": mode,
+            "side": side,
+            "outcome_time_utc": ts_utc or _now_iso(),
+            "outcome": str(res or "UNKNOWN"),
+            "pnl_pct": pnl_pct_f,
+            "hold_seconds": hold_seconds,
+            "mae_pct": float(pos.get("mae_pct", 0) or 0),
+            "mfe_pct": float(pos.get("mfe_pct", 0) or 0),
+            "details_json": details_json,
+            "trade_type": "LIVE",
+            "opened_ts": opened_ts,
+            "entry": entry,
+            "tp": tp,
+            "sl": sl,
+            "exit_price": exit_f,
+            "pnl_r": pnl_r,
+            "pnl_usd": pnl_usd,
+            "risk_profile": str(pos.get("risk_profile") or ""),
+            "order_id": str(pos.get("order_id") or ""),
+            "position_idx": str(pos.get("position_idx") or ""),
+            "notional_usd": float(pos.get("notional_usd", 0) or 0),
+            "leverage": int(pos.get("leverage", 0) or 0),
+            "margin_mode": str(pos.get("margin_mode") or ""),
+            "outcome_source": "bybit",
+            "data_available": "1",
+        }
+
+        write_outcome_row(
+            row,
+            strategy=strategy,
+            mode=mode,
+            wall_time_utc=ts_utc or _now_iso(),
+            schema_version=3,
+            base_dir=base_dir,
+            path_mode=mode,
+        )
+        logger.info(
+            "LIVE_OUTCOME_V3_WRITTEN | strategy=%s symbol=%s trade_id=%s run_id=%s event_id=%s outcome=%s",
+            strategy, symbol, trade_id, run_id, event_id, res,
+        )
+    except Exception:
+        logger.exception(
+            "LIVE_OUTCOME_V3_WRITE_FAILED | strategy=%s symbol=%s run_id=%s event_id=%s",
+            strategy, symbol, run_id, event_id,
+        )
+
+
 def close_from_live_outcome(
     *,
     strategy: str,
@@ -313,11 +423,13 @@ def close_from_live_outcome(
     pnl_pct: Any,
     ts_utc: str,
     state: dict[str, Any],
+    base_dir: str | None = None,
 ) -> bool:
     """
     Finalize a LIVE outcome (from Bybit resolver):
     - remove open position from state
     - append to trading_closes.csv
+    - write outcomes_v3 live partition row immediately
     """
     pid = make_position_id(strategy, run_id, str(event_id or ""), symbol)
     pos = (state.get("open_positions") or {}).get(strategy, {}).get(pid)
@@ -390,6 +502,21 @@ def close_from_live_outcome(
             "position_idx": str(pos.get("position_idx") or ""),
             "outcome_source": "bybit",
         }
+    )
+    _write_live_outcome_v3(
+        strategy=strategy,
+        symbol=symbol,
+        run_id=run_id,
+        event_id=event_id,
+        pid=pid,
+        pos=pos,
+        res=res,
+        exit_f=exit_f,
+        pnl_pct_f=pnl_pct_f,
+        pnl_r=float(pnl_r),
+        pnl_usd=float(pnl_usd),
+        ts_utc=ts_utc or _now_iso(),
+        base_dir=base_dir,
     )
     return True
 

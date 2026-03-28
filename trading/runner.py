@@ -430,7 +430,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
     if EXECUTION_MODE == "live" and broker is not None:
         from trading.outcome_worker import run_outcome_worker
-        run_outcome_worker(state, broker)
+        run_outcome_worker(state, broker, base_dir=DATASET_BASE_DIR)
         save_state(state)
 
     signals, raw_lines = get_latest_signals()
