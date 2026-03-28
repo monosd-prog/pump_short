@@ -196,7 +196,17 @@ def _selection_key(signal: Signal) -> tuple:
 
 def _pick_one_candidate(signals: List[Signal], allowed: List[str]) -> tuple[Optional[Signal], int]:
     """Filter by allowed strategies, sort by priority + tie-breaks. Returns (picked signal, n_candidates)."""
-    candidates = [s for s in signals if (s.strategy or "").strip() in allowed]
+    candidates = []
+    for s in signals:
+        if (s.strategy or "").strip() in allowed:
+            candidates.append(s)
+        else:
+            logger.info(
+                "SIGNAL_DROPPED_STRATEGY_NOT_ALLOWED | strategy=%s symbol=%s run_id=%s",
+                s.strategy or "",
+                s.symbol or "",
+                getattr(s, "run_id", "") or "",
+            )
     if not candidates:
         return None, 0
     candidates.sort(key=_selection_key)
