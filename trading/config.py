@@ -87,3 +87,10 @@ AUTO_RISK_GUARD_STATE_PATH = os.getenv(
     "AUTO_RISK_GUARD_STATE_PATH",
     str(_ROOT / "datasets" / "auto_risk_guard_state.json"),
 )
+
+# Canonical window for guard metric computation (days).
+# Used by report and event-driven runner refresh. Override via env.
+GUARD_CANONICAL_DAYS: int = int(os.getenv("GUARD_CANONICAL_DAYS", "30"))
+
+# Minimum seconds between successive guard refreshes (debounce for event-driven trigger).
+MIN_GUARD_REFRESH_SEC: int = int(os.getenv("MIN_GUARD_REFRESH_SEC", "300"))

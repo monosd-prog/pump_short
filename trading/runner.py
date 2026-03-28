@@ -6,6 +6,7 @@ import csv
 import fcntl
 import logging
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,7 @@ from trading.config import (
     DISABLE_MAX_CONCURRENT_TRADES,
     EXECUTION_MODE,
     FIXED_POSITION_USD,
+    GUARD_CANONICAL_DAYS,
     LEVERAGE,
     LIVE_FIXED_NOTIONAL_USD,
     LIVE_LEVERAGE,
@@ -36,6 +38,7 @@ from trading.config import (
     MAX_OPEN_PER_STRATEGY,
     MAX_RISK_USD_PER_TRADE,
     MAX_TOTAL_RISK_PCT,
+    MIN_GUARD_REFRESH_SEC,
     MODE,
     PAPER_EQUITY_USD,
     PROCESSED_PATH,
@@ -388,6 +391,61 @@ def _fmt_opt(val: Optional[float | int], fmt: str = "%s") -> str:
         return str(val) if val is not None else "N/A"
 
 
+def _maybe_refresh_guard(base_dir: str) -> None:
+    """
+    Trigger a canonical guard refresh when a pending flag exists and the last
+    guard update is older than MIN_GUARD_REFRESH_SEC (debounce).
+
+    Flag: <base_dir>/guard_refresh_pending.flag
+    Written by: _write_live_outcome_v3, close_from_outcome, fast0_sampler paper path.
+    Removed on success; kept on failure so next tick retries.
+    """
+    flag = Path(base_dir) / "guard_refresh_pending.flag"
+    if not flag.exists():
+        return
+
+    guard_path = Path(base_dir) / "auto_risk_guard_state.json"
+    if guard_path.exists():
+        try:
+            import json as _json
+            with open(guard_path, "r", encoding="utf-8") as _f:
+                _gstate = _json.load(_f)
+            _first = next(iter(_gstate.values()), {}) if isinstance(_gstate, dict) else {}
+            _updated = str(_first.get("updated_at") or "")
+            if _updated:
+                _dt = datetime.fromisoformat(_updated.replace("Z", "+00:00"))
+                if _dt.tzinfo is None:
+                    _dt = _dt.replace(tzinfo=timezone.utc)
+                _age = (datetime.now(timezone.utc) - _dt).total_seconds()
+                if _age < MIN_GUARD_REFRESH_SEC:
+                    return  # too recent — debounce
+        except Exception:
+            pass  # malformed state → proceed with refresh
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "update_auto_risk_guard.py"
+    if not script.is_file():
+        logger.warning("GUARD_REFRESH_SKIP | script not found: %s", script)
+        return
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "--data-dir", str(base_dir),
+             "--days", str(GUARD_CANONICAL_DAYS)],
+            capture_output=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            flag.unlink(missing_ok=True)
+            logger.info("GUARD_REFRESH_DONE | days=%d base_dir=%s", GUARD_CANONICAL_DAYS, base_dir)
+        else:
+            logger.warning(
+                "GUARD_REFRESH_FAILED | returncode=%d stderr=%s",
+                result.returncode,
+                (result.stderr or b"")[:200].decode("utf-8", errors="replace"),
+            )
+    except Exception as e:
+        logger.warning("GUARD_REFRESH_ERROR | err=%s", e)
+
+
 def _run_once_body(*, dry_run_live: bool = False) -> None:
     ts_iso = datetime.now(timezone.utc).isoformat()
     allowed = _get_allowed_strategies()
@@ -432,6 +490,8 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
         from trading.outcome_worker import run_outcome_worker
         run_outcome_worker(state, broker, base_dir=DATASET_BASE_DIR)
         save_state(state)
+
+    _maybe_refresh_guard(DATASET_BASE_DIR)
 
     signals, raw_lines = get_latest_signals()
     n_signals = len(signals)

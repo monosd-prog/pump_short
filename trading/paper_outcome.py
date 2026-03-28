@@ -300,7 +300,21 @@ def close_from_outcome(
             "mae_r": (f"{float(mae_r):.4f}" if mae_r != "" else ""),
         }
     )
+    _touch_guard_refresh_flag(None)
     return True
+
+
+def _touch_guard_refresh_flag(base_dir: str | None) -> None:
+    """Touch guard_refresh_pending.flag to signal that a new outcome was finalized.
+    The runner picks this up and triggers a canonical guard refresh (debounced).
+    Errors are silently ignored — never blocks the outcome write path."""
+    try:
+        from trading.config import DATASET_BASE_DIR as _DEFAULT_BASE_DIR
+        root = Path(base_dir) if base_dir else Path(_DEFAULT_BASE_DIR)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "guard_refresh_pending.flag").touch(exist_ok=True)
+    except Exception:
+        pass
 
 
 def _write_live_outcome_v3(
@@ -405,6 +419,7 @@ def _write_live_outcome_v3(
             "LIVE_OUTCOME_V3_WRITTEN | strategy=%s symbol=%s trade_id=%s run_id=%s event_id=%s outcome=%s",
             strategy, symbol, trade_id, run_id, event_id, res,
         )
+        _touch_guard_refresh_flag(base_dir)
     except Exception:
         logger.exception(
             "LIVE_OUTCOME_V3_WRITE_FAILED | strategy=%s symbol=%s run_id=%s event_id=%s",

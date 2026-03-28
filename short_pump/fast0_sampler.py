@@ -505,6 +505,11 @@ def _run_fast0_outcome_watcher(
                 base_dir=base_dir,
                 path_mode=mode if (mode or "").strip().lower() in ("paper", "live") else None,
             )
+            try:
+                from trading.paper_outcome import _touch_guard_refresh_flag
+                _touch_guard_refresh_flag(base_dir)
+            except Exception:
+                pass
             res_val = end_reason
             ep = summary.get("exit_price")
             exit_price_val = float(ep) if ep is not None else (tp_price if res_val == "TP_hit" else sl_price if res_val == "SL_hit" else entry_price)
