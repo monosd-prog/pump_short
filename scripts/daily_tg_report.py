@@ -64,11 +64,16 @@ from analytics.short_pump_blocks import filter_active_trades
 from analytics.executive_report import build_executive_compact_report
 from telegram.send_helpers import send_document as _send_document_file
 
+# Canonical guard refresh window — independent of report display window.
+# Override via env: GUARD_CANONICAL_DAYS=60 to use a wider history.
+_GUARD_CANONICAL_DAYS: int = int(os.getenv("GUARD_CANONICAL_DAYS", "30"))
+
 
 def _run_guard_update(data_dir: Path, days: int, rolling: int = 20) -> None:
     """
     Run update_auto_risk_guard.py before loading guard_state.
-    Ensures compact report uses fresh guard state aligned with current outcomes.
+    Always uses _GUARD_CANONICAL_DAYS (default 30) regardless of the report display
+    window (days), so guard_state is never overwritten by arbitrary report windows.
     Failures are logged but do not block report generation.
     """
     pump_short_root = data_dir.parent if data_dir.name == "datasets" else Path("/root/pump_short")
@@ -77,7 +82,7 @@ def _run_guard_update(data_dir: Path, days: int, rolling: int = 20) -> None:
         return
     try:
         subprocess.run(
-            [sys.executable, str(script), "--data-dir", str(data_dir), "--days", str(days), "--rolling", str(rolling), "--pump-short-root", str(pump_short_root)],
+            [sys.executable, str(script), "--data-dir", str(data_dir), "--days", str(_GUARD_CANONICAL_DAYS), "--rolling", str(rolling), "--pump-short-root", str(pump_short_root)],
             cwd=str(_PROJECT_ROOT),
             capture_output=True,
             timeout=120,
