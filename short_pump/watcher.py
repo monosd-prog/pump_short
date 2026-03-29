@@ -1180,12 +1180,19 @@ def run_watch_for_symbol(
                     ok_fast, payload_fast = decide_entry_fast(
                         cfg, trades_fast, oi_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                     )
-                    # Unified snapshot features from already-fetched data (reuse candles_1m if available; no new API calls)
+                    # Unified snapshot features from already-fetched data.
+                    # In FAST_ONLY mode candles_1m is never fetched by the 1m branch above;
+                    # fetch it here so volume features are populated for short_pump as well.
+                    if not ("candles_1m" in locals() and candles_1m is not None):
+                        try:
+                            candles_1m = get_klines_1m(cfg.category, cfg.symbol, limit=60)
+                        except Exception:
+                            candles_1m = None
                     try:
                         snap = market_features_snapshot(
                             trades=trades_fast,
                             oi=oi_fast,
-                            candles_1m=candles_1m if "candles_1m" in locals() else None,
+                            candles_1m=candles_1m,
                             candles_5m=candles_5m,
                             funding_payload=funding_payload,
                         )
