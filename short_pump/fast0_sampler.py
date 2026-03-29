@@ -814,12 +814,17 @@ def run_fast0_for_symbol(
                 context_score, _ = compute_context_score_5m(dbg5)
 
                 # Unified snapshot features (delta/cvd/oi/funding/volume) from already-fetched data
+                try:
+                    _pump_ts_utc = pd.Timestamp(pump_ts, tz="UTC") if pump_ts else None
+                except Exception:
+                    _pump_ts_utc = None
                 snap = market_features_snapshot(
                     trades=trades,
                     oi=oi,
                     candles_1m=candles_1m,
                     candles_5m=candles_5m,
                     funding_payload=funding_payload,
+                    pump_ts_utc=_pump_ts_utc,
                 )
 
                 # Liquidations via unified adapter

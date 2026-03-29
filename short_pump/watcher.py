@@ -955,6 +955,7 @@ def run_watch_for_symbol(
                                 candles_1m=candles_1m,
                                 candles_5m=candles_5m,
                                 funding_payload=funding_payload,
+                                pump_ts_utc=pump_start_ts,
                             )
                             decision_1m_payload.update({k: v for k, v in snap.items() if v is not None})
                         except Exception:
@@ -1195,6 +1196,7 @@ def run_watch_for_symbol(
                             candles_1m=candles_1m,
                             candles_5m=candles_5m,
                             funding_payload=funding_payload,
+                            pump_ts_utc=pump_start_ts,
                         )
                         payload_fast.update({k: v for k, v in snap.items() if v is not None})
                     except Exception:

@@ -413,6 +413,7 @@ def market_features_snapshot(
     candles_5m: Optional[pd.DataFrame],
     funding_payload: Optional[Mapping[str, Any]],
     now_ts_utc: Optional[pd.Timestamp] = None,
+    pump_ts_utc: Optional[pd.Timestamp] = None,
 ) -> Dict[str, Any]:
     """
     Pure feature computation from already-fetched market data.
@@ -447,7 +448,7 @@ def market_features_snapshot(
         candles_5m=candles_5m,
         lookback_5m=20,
     )
-    tlife = time_life_features(now_ts_utc=now_ts_utc, candles_5m=candles_5m)
+    tlife = time_life_features(now_ts_utc=now_ts_utc, candles_5m=candles_5m, pump_ts_utc=pump_ts_utc)
 
     return {
         "delta_ratio_30s": dr30,
