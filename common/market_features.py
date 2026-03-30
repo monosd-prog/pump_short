@@ -453,6 +453,22 @@ def market_features_snapshot(
     oi_1m = oi_change_pct(oi, lookback_minutes=1) if oi is not None else None
     oi_5m = oi_change_pct(oi, lookback_minutes=5) if oi is not None else None
 
+    oi_abs: Optional[float] = None
+    if oi is not None and not oi.empty and "openInterest" in oi.columns:
+        try:
+            oi_abs = float(oi.iloc[-1]["openInterest"])
+        except (TypeError, ValueError):
+            pass
+
+    oi_abs_usd: Optional[float] = None
+    if funding_payload:
+        try:
+            raw = funding_payload.get("openInterestValue")
+            if raw is not None:
+                oi_abs_usd = float(raw)
+        except (TypeError, ValueError):
+            pass
+
     fr, _ts, fr_abs = normalize_funding(funding_payload)
     ls_buy, ls_sell = normalize_ls_ratio(ls_ratio_payload)
 
@@ -478,6 +494,8 @@ def market_features_snapshot(
         "oi_change_fast_pct": oi_fast,
         "oi_change_1m_pct": oi_1m,
         "oi_change_5m_pct": oi_5m,
+        "oi_abs": oi_abs,
+        "oi_abs_usd": oi_abs_usd,
         "funding_rate": fr,
         "funding_rate_abs": fr_abs,
         "ls_ratio_buy": ls_buy,

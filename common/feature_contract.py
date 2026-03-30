@@ -41,6 +41,9 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     # long/short ratio
     "ls_ratio_buy",
     "ls_ratio_sell",
+    # absolute open interest
+    "oi_abs",
+    "oi_abs_usd",
     # liquidations
     "liq_short_count_30s",
     "liq_short_usd_30s",
