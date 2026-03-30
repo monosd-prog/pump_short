@@ -338,6 +338,71 @@ def normalize_funding(payload: Optional[Mapping[str, Any]]) -> tuple[Optional[fl
     return rate, ts_utc, rate_abs
 
 
+def price_structure_features_1m(
+    candles_1m: Optional[pd.DataFrame],
+    rsi_period: int = 14,
+    ma_period: int = 20,
+) -> Dict[str, Optional[float]]:
+    """
+    RSI(14), SMA(20), EMA(20) and distance-to-MA features from 1m candles.
+    Pure pandas — no external TA library.  All outputs are None-safe.
+    """
+    out: Dict[str, Optional[float]] = {
+        "rsi_14_1m": None,
+        "ma_20_1m": None,
+        "ema_20_1m": None,
+        "dist_to_ma20_pct": None,
+        "dist_to_ema20_pct": None,
+    }
+    if candles_1m is None or candles_1m.empty or "close" not in candles_1m.columns:
+        return out
+    try:
+        close = candles_1m["close"].astype(float).reset_index(drop=True)
+        n = len(close)
+
+        # RSI-14: Wilder smoothing via EWM (alpha = 1/period)
+        if n >= rsi_period + 1:
+            try:
+                delta = close.diff()
+                gain = delta.clip(lower=0.0).ewm(alpha=1.0 / rsi_period, adjust=False).mean()
+                loss = (-delta.clip(upper=0.0)).ewm(alpha=1.0 / rsi_period, adjust=False).mean()
+                last_loss = float(loss.iloc[-1])
+                last_gain = float(gain.iloc[-1])
+                if last_loss == 0.0:
+                    out["rsi_14_1m"] = 100.0 if last_gain > 0 else 50.0
+                else:
+                    rs = last_gain / last_loss
+                    out["rsi_14_1m"] = float(100.0 - 100.0 / (1.0 + rs))
+            except Exception:
+                pass
+
+        last_close = float(close.iloc[-1])
+
+        # SMA-20
+        if n >= ma_period:
+            try:
+                ma = float(close.tail(ma_period).mean())
+                out["ma_20_1m"] = ma
+                if ma > 0:
+                    out["dist_to_ma20_pct"] = (last_close - ma) / ma * 100.0
+            except Exception:
+                pass
+
+        # EMA-20 (pandas ewm span=period)
+        if n >= ma_period:
+            try:
+                ema = float(close.ewm(span=ma_period, adjust=False).mean().iloc[-1])
+                out["ema_20_1m"] = ema
+                if ema > 0:
+                    out["dist_to_ema20_pct"] = (last_close - ema) / ema * 100.0
+            except Exception:
+                pass
+
+    except Exception:
+        pass
+    return out
+
+
 def volume_1m_features(
     candles_1m: Optional[pd.DataFrame], lookback: int = 20
 ) -> tuple[Optional[float], Optional[float], Optional[float]]:
@@ -485,6 +550,7 @@ def market_features_snapshot(
         lookback_5m=20,
     )
     tlife = time_life_features(now_ts_utc=now_ts_utc, candles_5m=candles_5m, pump_ts_utc=pump_ts_utc)
+    price_struct = price_structure_features_1m(candles_1m)
 
     return {
         "delta_ratio_30s": dr30,
@@ -508,5 +574,6 @@ def market_features_snapshot(
         **shape,
         **rel_vol,
         **tlife,
+        **price_struct,
     }
 

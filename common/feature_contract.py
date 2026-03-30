@@ -80,6 +80,12 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     # microstructure
     "spread_bps",
     "orderbook_imbalance_10",
+    # price structure (RSI + MA/EMA, 1m candles)
+    "rsi_14_1m",
+    "ma_20_1m",
+    "ema_20_1m",
+    "dist_to_ma20_pct",
+    "dist_to_ema20_pct",
     # misc
     "outcome_label",
     "payload_json",

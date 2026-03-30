@@ -70,6 +70,12 @@ EVENT_FIELDS_V2 = [
     "pump_age_sec",
     "spread_bps",
     "orderbook_imbalance_10",
+    # Price structure (RSI + MA/EMA)
+    "rsi_14_1m",
+    "ma_20_1m",
+    "ema_20_1m",
+    "dist_to_ma20_pct",
+    "dist_to_ema20_pct",
     # Outcome label can be logged on outcome events (canonical contract)
     "outcome_label",
     "payload_json",
