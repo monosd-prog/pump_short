@@ -287,6 +287,24 @@ def oi_change_pct(oi_df: pd.DataFrame, lookback_minutes: int) -> Optional[float]
     return float(((cur - past) / past) * 100.0)
 
 
+def normalize_ls_ratio(payload: Optional[Mapping[str, Any]]) -> tuple[Optional[float], Optional[float]]:
+    """
+    Normalize Bybit account-ratio payload to (ls_ratio_buy, ls_ratio_sell).
+    Returns (None, None) on missing or invalid input.
+    """
+    if not payload:
+        return None, None
+    try:
+        buy = float(payload["buyRatio"]) if payload.get("buyRatio") is not None else None
+    except (TypeError, ValueError):
+        buy = None
+    try:
+        sell = float(payload["sellRatio"]) if payload.get("sellRatio") is not None else None
+    except (TypeError, ValueError):
+        sell = None
+    return buy, sell
+
+
 def normalize_funding(payload: Optional[Mapping[str, Any]]) -> tuple[Optional[float], Optional[str], Optional[float]]:
     """
     Normalize funding payload to (funding_rate, funding_rate_ts_utc, funding_rate_abs).
@@ -414,6 +432,7 @@ def market_features_snapshot(
     funding_payload: Optional[Mapping[str, Any]],
     now_ts_utc: Optional[pd.Timestamp] = None,
     pump_ts_utc: Optional[pd.Timestamp] = None,
+    ls_ratio_payload: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Pure feature computation from already-fetched market data.
@@ -435,6 +454,7 @@ def market_features_snapshot(
     oi_5m = oi_change_pct(oi, lookback_minutes=5) if oi is not None else None
 
     fr, _ts, fr_abs = normalize_funding(funding_payload)
+    ls_buy, ls_sell = normalize_ls_ratio(ls_ratio_payload)
 
     v1, vsma, vz = volume_1m_features(candles_1m, lookback=20)
     v5 = volume_5m(candles_5m)
@@ -460,6 +480,8 @@ def market_features_snapshot(
         "oi_change_5m_pct": oi_5m,
         "funding_rate": fr,
         "funding_rate_abs": fr_abs,
+        "ls_ratio_buy": ls_buy,
+        "ls_ratio_sell": ls_sell,
         "volume_1m": v1,
         "volume_5m": v5,
         "volume_sma_20": vsma,

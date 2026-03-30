@@ -17,6 +17,7 @@ from short_pump.bybit_api import (
     get_open_interest,
     get_recent_trades,
     get_funding_rate,
+    get_ls_ratio,
 )
 from short_pump.config import Config
 from short_pump.context5m import (
@@ -808,6 +809,7 @@ def run_watch_for_symbol(
                 funding_payload = get_funding_rate(cfg.category, cfg.symbol)
                 funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
                 funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
+                ls_ratio_payload = get_ls_ratio(cfg.category, cfg.symbol)
 
                 # Convert DataFrame to list of dicts for build_dbg5
                 candles_5m_list = candles_5m.to_dict("records") if candles_5m is not None and not candles_5m.empty else []
@@ -943,6 +945,7 @@ def run_watch_for_symbol(
                         funding_payload = get_funding_rate(cfg.category, cfg.symbol)
                         funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
                         funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
+                        ls_ratio_payload = get_ls_ratio(cfg.category, cfg.symbol)
 
                         decision_1m_ok, decision_1m_payload = decide_entry_1m(
                             cfg, candles_1m, trades_1m, oi_1m, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
@@ -956,6 +959,7 @@ def run_watch_for_symbol(
                                 candles_5m=candles_5m,
                                 funding_payload=funding_payload,
                                 pump_ts_utc=pump_start_ts,
+                                ls_ratio_payload=ls_ratio_payload,
                             )
                             decision_1m_payload.update({k: v for k, v in snap.items() if v is not None})
                         except Exception:
@@ -1178,6 +1182,7 @@ def run_watch_for_symbol(
                     funding_payload = get_funding_rate(cfg.category, cfg.symbol)
                     funding_rate, funding_rate_ts_utc = normalize_funding(funding_payload)
                     funding_rate_abs = abs(funding_rate) if funding_rate is not None else None
+                    ls_ratio_payload = get_ls_ratio(cfg.category, cfg.symbol)
                     ok_fast, payload_fast = decide_entry_fast(
                         cfg, trades_fast, oi_fast, context_score, ctx_parts, dbg5.get("peak_price", 0.0)
                     )
@@ -1197,6 +1202,7 @@ def run_watch_for_symbol(
                             candles_5m=candles_5m,
                             funding_payload=funding_payload,
                             pump_ts_utc=pump_start_ts,
+                            ls_ratio_payload=ls_ratio_payload,
                         )
                         payload_fast.update({k: v for k, v in snap.items() if v is not None})
                     except Exception:

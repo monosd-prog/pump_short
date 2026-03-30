@@ -31,6 +31,8 @@ EVENT_FIELDS_V2 = [
     "oi_change_fast_pct",
     "funding_rate",
     "funding_rate_abs",
+    "ls_ratio_buy",
+    "ls_ratio_sell",
     "liq_short_count_30s",
     "liq_short_usd_30s",
     "liq_long_count_30s",

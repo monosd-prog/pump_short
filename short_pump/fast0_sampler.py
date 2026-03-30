@@ -17,6 +17,7 @@ import pandas as pd
 
 from short_pump.bybit_api import (
     get_funding_rate,
+    get_ls_ratio,
     get_klines_1m,
     get_klines_5m,
     get_open_interest,
@@ -800,6 +801,7 @@ def run_fast0_for_symbol(
                 oi = get_open_interest(cfg.category, cfg.symbol, limit=80)
                 trades = get_recent_trades(cfg.category, cfg.symbol, limit=1000)
                 funding_payload = get_funding_rate(cfg.category, cfg.symbol)
+                ls_ratio_payload = get_ls_ratio(cfg.category, cfg.symbol)
 
                 if candles_5m is None or candles_5m.empty:
                     continue
@@ -825,6 +827,7 @@ def run_fast0_for_symbol(
                     candles_5m=candles_5m,
                     funding_payload=funding_payload,
                     pump_ts_utc=_pump_ts_utc,
+                    ls_ratio_payload=ls_ratio_payload,
                 )
 
                 # Liquidations via unified adapter

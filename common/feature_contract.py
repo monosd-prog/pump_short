@@ -38,6 +38,9 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     # funding
     "funding_rate",
     "funding_rate_abs",
+    # long/short ratio
+    "ls_ratio_buy",
+    "ls_ratio_sell",
     # liquidations
     "liq_short_count_30s",
     "liq_short_usd_30s",

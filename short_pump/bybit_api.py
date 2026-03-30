@@ -14,6 +14,9 @@ logger = get_logger(__name__)
 _funding_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 _funding_ttl_sec = 60.0
 
+_ls_ratio_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_ls_ratio_ttl_sec = 300.0
+
 BYBIT_REST = "https://api.bybit.com"
 
 
@@ -276,6 +279,50 @@ def get_funding_rate(category: str, symbol: str) -> Optional[Dict[str, Any]]:
         log_exception(
             logger,
             "Failed to fetch funding rate",
+            step="BYBIT_API",
+            extra={"category": category, "symbol": symbol},
+        )
+        return None
+
+
+def get_ls_ratio(category: str, symbol: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch latest long/short position ratio for symbol from Bybit.
+    Returns raw payload dict with keys buyRatio, sellRatio, timestamp (latest row).
+    Returns None on any failure — never raises.
+    TTL-cached at 300s (Bybit updates this metric every 5 minutes).
+    """
+    category = _norm_category(category)
+    symbol = _norm_symbol(symbol)
+    cache_key = f"{category}:{symbol}"
+    now = time.monotonic()
+
+    cached = _ls_ratio_cache.get(cache_key)
+    if cached and (now - cached[0]) <= _ls_ratio_ttl_sec:
+        return cached[1]
+
+    try:
+        j = _get_json(
+            "/v5/market/account-ratio",
+            {
+                "category": category,
+                "symbol": symbol,
+                "period": "5min",
+                "limit": "1",
+            },
+        )
+        if j.get("retCode") != 0:
+            return None
+        lst = (j.get("result") or {}).get("list") or []
+        if not lst:
+            return None
+        payload = lst[0]
+        _ls_ratio_cache[cache_key] = (now, payload)
+        return payload
+    except Exception:
+        log_exception(
+            logger,
+            "Failed to fetch ls_ratio",
             step="BYBIT_API",
             extra={"category": category, "symbol": symbol},
         )
