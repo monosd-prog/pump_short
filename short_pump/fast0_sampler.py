@@ -459,12 +459,6 @@ def _run_fast0_outcome_watcher(
                                     except (TypeError, ValueError):
                                         _lev = None
                                     _mm = (position.get("margin_mode") or "").strip() or None
-                                    logger.info(
-                                        "OUTCOME_PROFILE_SOURCE | symbol=%s | risk_profile=%s | notional=%s | source=position",
-                                        symbol,
-                                        _rp,
-                                        _nt,
-                                    )
                                     from trading.outcome_delivery import deliver_outcome_tg
 
                                     msg = format_fast0_outcome_message(
