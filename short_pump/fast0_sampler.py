@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import os
 import threading
@@ -74,99 +73,6 @@ TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC = float(os.getenv("TG_OUTCOME_TG_SEND_RETRY
 
 _active_fast0_watchers = 0
 _fast0_watchers_lock = threading.Lock()
-
-
-def _fast0_position_outcome_snapshot(
-    strategy_name: str,
-    run_id: str,
-    event_id: str,
-    symbol: str,
-    trade_id: str,
-) -> Optional[dict[str, Any]]:
-    """
-    Immutable risk_profile / notional / leverage / margin from the open position in trading_state.
-    Returns None if no matching position exists.
-    """
-    try:
-        from trading.state import load_state, make_position_id
-
-        strat = (strategy_name or "").strip()
-        state = load_state()
-        op = (state.get("open_positions") or {}).get(strat) or {}
-        if not isinstance(op, dict):
-            return None
-        pid = make_position_id(strat, run_id or "", str(event_id or ""), symbol or "")
-        pos = op.get(pid)
-        if not isinstance(pos, dict) and trade_id:
-            tid = str(trade_id).strip()
-            for _k, p in op.items():
-                if isinstance(p, dict) and str(p.get("trade_id") or "").strip() == tid:
-                    pos = p
-                    break
-        if not isinstance(pos, dict):
-            return None
-        nu_f: Optional[float] = None
-        nu_raw = pos.get("notional_usd")
-        if nu_raw is not None and str(nu_raw).strip() != "":
-            try:
-                nu_f = float(nu_raw)
-            except (TypeError, ValueError):
-                nu_f = None
-        lev_i: Optional[int] = None
-        lev_raw = pos.get("leverage")
-        if lev_raw is not None and str(lev_raw).strip() != "":
-            try:
-                lev_i = int(float(lev_raw))
-            except (TypeError, ValueError):
-                lev_i = None
-        return {
-            "risk_profile": str(pos.get("risk_profile") or "").strip(),
-            "notional_usd": nu_f,
-            "leverage": lev_i,
-            "margin_mode": str(pos.get("margin_mode") or "").strip(),
-        }
-    except Exception:
-        return None
-
-
-def _fast0_closes_outcome_snapshot(trade_id: str) -> Optional[dict[str, Any]]:
-    """Last row in trading_closes.csv for trade_id (if any). Used when position already closed."""
-    try:
-        from trading.config import CLOSES_PATH
-
-        p = Path(CLOSES_PATH)
-        if not p.is_file():
-            return None
-        tid = str(trade_id or "").strip()
-        if not tid:
-            return None
-        last: Optional[dict[str, str]] = None
-        with open(p, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                if str(row.get("trade_id") or "").strip() == tid:
-                    last = row
-        if not last:
-            return None
-        nu_f: Optional[float] = None
-        if str(last.get("notional_usd") or "").strip():
-            try:
-                nu_f = float(last["notional_usd"])
-            except (TypeError, ValueError):
-                nu_f = None
-        lev_i: Optional[int] = None
-        if str(last.get("leverage") or "").strip():
-            try:
-                lev_i = int(float(last["leverage"]))
-            except (TypeError, ValueError):
-                lev_i = None
-        return {
-            "risk_profile": str(last.get("risk_profile") or "").strip(),
-            "notional_usd": nu_f,
-            "leverage": lev_i,
-            "margin_mode": str(last.get("margin_mode") or "").strip(),
-        }
-    except Exception:
-        return None
 
 
 def _tg_fields_from_summary(summary: dict[str, Any]) -> tuple[Optional[str], Optional[float], Optional[int], Optional[str]]:
@@ -593,46 +499,21 @@ def _run_fast0_outcome_watcher(
         summary["hold_seconds"] = max(1.0, hold_sec)
         pnl = summary.get("pnl_pct")
         summary["pnl_pct"] = float(pnl) if pnl is not None else 0.0
-        # risk_profile / notional: copy from open position (or last close row). Do not recompute at outcome for opened trades.
-        profile_src = "unknown"
-        snap = _fast0_position_outcome_snapshot(strategy_name, run_id, str(event_id), symbol, trade_id)
-        if snap is not None:
-            profile_src = "position"
-        else:
-            snap = _fast0_closes_outcome_snapshot(trade_id)
-            if snap is not None:
-                profile_src = "close"
-        if snap is not None:
-            summary["risk_profile"] = snap.get("risk_profile") or ""
-            if snap.get("notional_usd") is not None:
-                summary["notional_usd"] = snap["notional_usd"]
-            if snap.get("leverage") is not None:
-                summary["leverage"] = snap["leverage"]
-            if snap.get("margin_mode"):
-                summary["margin_mode"] = snap["margin_mode"]
-        elif (mode or "").strip().lower() == "paper":
-            profile_src = "fallback"
-            try:
-                from trading.risk_profile import get_risk_profile
+        try:
+            from trading.outcome_profile import apply_outcome_snapshot_to_summary
 
-                _rp, _, _ = get_risk_profile(
-                    strategy_name,
-                    liq_long_usd_30s=liq_long_usd_30s if liq_long_usd_30s is not None else 0,
-                    dist_to_peak_pct=dist_to_peak_pct,
-                )
-                summary["risk_profile"] = (_rp or "").strip()
-            except Exception:
-                log_exception(logger, "FAST0_PAPER_RISK_PROFILE", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
-                summary["risk_profile"] = ""
-        elif not summary.get("risk_profile"):
-            summary["risk_profile"] = ""
-        logger.info(
-            "OUTCOME_PROFILE_SOURCE | symbol=%s | risk_profile=%s | notional=%s | source=%s",
-            symbol,
-            summary.get("risk_profile"),
-            summary.get("notional_usd"),
-            profile_src,
-        )
+            apply_outcome_snapshot_to_summary(
+                summary,
+                strategy=strategy_name,
+                run_id=run_id,
+                event_id=str(event_id),
+                symbol=symbol,
+                trade_id=trade_id,
+                log=logger,
+            )
+        except Exception:
+            log_exception(logger, "FAST0_OUTCOME_PROFILE_APPLY", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
+            summary.setdefault("risk_profile", "")
         orow = build_outcome_row(
             summary,
             trade_id=trade_id,

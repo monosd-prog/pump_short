@@ -231,6 +231,24 @@ def _run_short_pump_guard_blocked_outcome_watcher(
         outcome_time_utc = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
         hold_sec = summary.get("hold_seconds") or 0.0
         summary["hold_seconds"] = max(1.0, hold_sec)
+        try:
+            from trading.outcome_profile import apply_canonical_risk_profile_to_summary
+
+            apply_canonical_risk_profile_to_summary(
+                summary,
+                strategy=strategy,
+                run_id=run_id,
+                event_id=str(event_id),
+                symbol=symbol,
+                trade_id=str(trade_id),
+                log=logger,
+            )
+        except Exception:
+            log_exception(logger, "OUTCOME_PROFILE_APPLY_FAILED", symbol=symbol, run_id=run_id, step="DATASET")
+        if not (summary.get("risk_profile") or "").strip():
+            summary["risk_profile"] = (
+                "short_pump_filtered_1R" if strategy == "short_pump_filtered" else "short_pump_active_1R"
+            )
         orow = build_outcome_row(
             summary,
             trade_id=trade_id,
@@ -250,9 +268,6 @@ def _run_short_pump_guard_blocked_outcome_watcher(
         if orow:
             orow["outcome_source"] = "watcher_guard_blocked"
             orow["trade_type"] = "PAPER"
-            orow["risk_profile"] = position.get("risk_profile") or (
-                "short_pump_filtered_1R" if strategy == "short_pump_filtered" else "short_pump_active_1R"
-            )
             write_outcome_row(
                 orow,
                 strategy=strategy,
@@ -1983,6 +1998,28 @@ def run_watch_for_symbol(
                         _skip_write
                         or (AUTO_TRADING_ENABLE and (EXECUTION_MODE or "").strip().lower() == "live")
                     )
+                    if not skip_watcher_outcome_write:
+                        try:
+                            from trading.outcome_profile import apply_canonical_risk_profile_to_summary
+
+                            apply_canonical_risk_profile_to_summary(
+                                summary,
+                                strategy=route_strategy,
+                                run_id=run_id,
+                                event_id=str(event_id),
+                                symbol=cfg.symbol,
+                                trade_id=str(trade_id),
+                                log=logger,
+                            )
+                        except Exception:
+                            log_exception(
+                                logger,
+                                "OUTCOME_PROFILE_APPLY_FAILED",
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                stage=st.stage,
+                                step="OUTCOME",
+                            )
                     outcome_row = None if skip_watcher_outcome_write else build_outcome_row(
                         summary,
                         trade_id=str(trade_id),
@@ -2067,22 +2104,31 @@ def run_watch_for_symbol(
 
                                 tg_event_id = entry_payload.get("event_id") or run_id
                                 context_score_msg = entry_payload.get("context_score", context_score)
-                                _rp, _rm, _ = ("", 0, 0)
-                                _nt, _lev, _mm = (0, 4, "isolated")
+                                _rp = ""
+                                _nt = None
+                                _lev = None
+                                _mm = None
                                 try:
-                                    from trading.risk_profile import get_risk_profile, get_notional_and_leverage
+                                    from trading.outcome_profile import outcome_position_or_closes_snapshot
 
-                                    _rp, _rm, _ = get_risk_profile(
+                                    snap_tg, _tg_src = outcome_position_or_closes_snapshot(
                                         route_strategy,
-                                        stage=entry_payload.get("stage"),
-                                        dist_to_peak_pct=entry_payload.get("dist_to_peak_pct"),
-                                        event_id=str(tg_event_id),
-                                        symbol=cfg.symbol,
+                                        run_id,
+                                        str(tg_event_id),
+                                        cfg.symbol,
+                                        str(trade_id),
                                     )
-                                    if _rp:
-                                        _nt, _lev, _mm = get_notional_and_leverage(_rm)
+                                    if snap_tg:
+                                        _rp = str(snap_tg.get("risk_profile") or "").strip()
+                                        _nt = snap_tg.get("notional_usd")
+                                        _lev = snap_tg.get("leverage")
+                                        _mm = (snap_tg.get("margin_mode") or "").strip() or None
                                 except Exception:
                                     pass
+                                if _lev is None:
+                                    _lev = 4
+                                if not _mm:
+                                    _mm = "isolated"
 
                                 tg_text = format_outcome(
                                     strategy=route_strategy,
@@ -2102,7 +2148,7 @@ def run_watch_for_symbol(
                                     mfe_pct=summary.get("mfe_pct"),
                                     debug_payload=summary,
                                     risk_profile=_rp or None,
-                                    notional_usd=_nt if _nt > 0 else None,
+                                    notional_usd=_nt if _nt is not None and _nt > 0 else None,
                                     leverage=_lev,
                                     margin_mode=_mm,
                                 )
@@ -2138,7 +2184,7 @@ def run_watch_for_symbol(
                                             "sl_price": entry_snapshot.get("sl_price"),
                                             "exit_price": summary.get("exit_price"),
                                             "pnl_pct": summary.get("pnl_pct"),
-                                            "notional_usd": _nt if _nt > 0 else None,
+                                            "notional_usd": _nt if _nt is not None and _nt > 0 else None,
                                             "leverage": _lev,
                                             "margin_mode": _mm,
                                             "dist_to_peak_pct": entry_payload.get("dist_to_peak_pct"),
