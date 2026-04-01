@@ -232,6 +232,26 @@ def _run_short_pump_guard_blocked_outcome_watcher(
         hold_sec = summary.get("hold_seconds") or 0.0
         summary["hold_seconds"] = max(1.0, hold_sec)
         try:
+            from trading.paper_outcome import close_from_outcome
+
+            close_from_outcome(
+                strategy=strategy,
+                symbol=symbol,
+                run_id=run_id,
+                event_id=str(event_id),
+                res=end_reason,
+                pnl_pct=summary.get("pnl_pct"),
+                ts_utc=outcome_time_utc,
+                outcome_meta={
+                    "mfe_pct": summary.get("mfe_pct"),
+                    "mae_pct": summary.get("mae_pct"),
+                    "mfe_r": summary.get("mfe_r"),
+                    "mae_r": summary.get("mae_r"),
+                },
+            )
+        except Exception:
+            log_exception(logger, "GUARD_BLOCKED_CLOSE_FROM_OUTCOME", symbol=symbol, run_id=run_id, step="DATASET")
+        try:
             from trading.outcome_profile import apply_canonical_risk_profile_to_summary
 
             apply_canonical_risk_profile_to_summary(
@@ -325,22 +345,6 @@ def _run_short_pump_guard_blocked_outcome_watcher(
             )
         except Exception:
             log_exception(logger, "GUARD_BLOCKED_PAPER_TG_ERROR", symbol=symbol, run_id=run_id, step="OUTCOME")
-        from trading.paper_outcome import close_from_outcome
-        close_from_outcome(
-                strategy=strategy,
-                symbol=symbol,
-                run_id=run_id,
-                event_id=str(event_id),
-                res=end_reason,
-                pnl_pct=summary.get("pnl_pct"),
-                ts_utc=outcome_time_utc,
-                outcome_meta={
-                    "mfe_pct": summary.get("mfe_pct"),
-                    "mae_pct": summary.get("mae_pct"),
-                    "mfe_r": summary.get("mfe_r"),
-                    "mae_r": summary.get("mae_r"),
-                },
-            )
     except Exception as e:
         log_exception(logger, "GUARD_BLOCKED_PAPER_OUTCOME_ERROR", symbol=symbol, run_id=run_id, step="OUTCOME", extra={"error": str(e)})
 
@@ -1991,6 +1995,33 @@ def run_watch_for_symbol(
                             },
                             extra=None,
                         )
+                    # Paper: close first so trading_closes has risk_profile before canonical merge + outcomes_v3.
+                    try:
+                        from trading.config import AUTO_TRADING_ENABLE, MODE
+                        from trading.paper_outcome import close_from_outcome
+
+                        if AUTO_TRADING_ENABLE and MODE == "paper":
+                            event_id_outcome = entry_payload.get("event_id") or run_id
+                            end_reason_close = summary.get("end_reason") or summary.get("outcome") or ""
+                            outcome_time_utc_val = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
+                            close_from_outcome(
+                                strategy=route_strategy,
+                                symbol=cfg.symbol,
+                                run_id=run_id,
+                                event_id=str(event_id_outcome),
+                                res=end_reason_close,
+                                pnl_pct=summary.get("pnl_pct"),
+                                ts_utc=outcome_time_utc_val,
+                                outcome_meta={
+                                    "mfe_pct": summary.get("mfe_pct"),
+                                    "mae_pct": summary.get("mae_pct"),
+                                    "mfe_r": summary.get("mfe_r"),
+                                    "mae_r": summary.get("mae_r"),
+                                },
+                            )
+                    except Exception:
+                        log_exception(logger, "TRADING_CLOSE_FROM_OUTCOME failed", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME")
+
                     # For LIVE+auto: outcome from close_from_live_outcome/close_on_timeout only. Skip to avoid duplicate.
                     _skip_write, _skip_reason = _watcher_should_skip_outcome_live(run_id, str(event_id), cfg.symbol)
                     from trading.config import AUTO_TRADING_ENABLE, EXECUTION_MODE
@@ -2202,32 +2233,6 @@ def run_watch_for_symbol(
                                 stage=st.stage,
                                 step="TELEGRAM_SEND",
                             )
-
-                    # Paper: close position on OUTCOME (TP_hit/SL_hit)
-                    try:
-                        from trading.config import AUTO_TRADING_ENABLE, MODE
-                        if AUTO_TRADING_ENABLE and MODE == "paper":
-                            from trading.paper_outcome import close_from_outcome
-                            event_id_outcome = entry_payload.get("event_id") or run_id
-                            end_reason = summary.get("end_reason") or summary.get("outcome") or ""
-                            outcome_time_utc_val = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
-                            close_from_outcome(
-                                strategy=route_strategy,
-                                symbol=cfg.symbol,
-                                run_id=run_id,
-                                event_id=str(event_id_outcome),
-                                res=end_reason,
-                                pnl_pct=summary.get("pnl_pct"),
-                                ts_utc=outcome_time_utc_val,
-                                outcome_meta={
-                                    "mfe_pct": summary.get("mfe_pct"),
-                                    "mae_pct": summary.get("mae_pct"),
-                                    "mfe_r": summary.get("mfe_r"),
-                                    "mae_r": summary.get("mae_r"),
-                                },
-                            )
-                    except Exception:
-                        log_exception(logger, "TRADING_CLOSE_FROM_OUTCOME failed", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="OUTCOME")
 
                     _cleanup_symbol()
                     return summary

@@ -372,6 +372,27 @@ def _write_live_outcome_v3(
             "pnl_source": "bybit",
         }, ensure_ascii=False)
 
+        rp_live = str(pos.get("risk_profile") or "").strip()
+        profile_src = "position" if rp_live else "fallback"
+        if not rp_live:
+            try:
+                from trading.outcome_profile import last_closes_row_for_trade
+
+                cr = last_closes_row_for_trade(trade_id)
+                if cr:
+                    crp = str(cr.get("risk_profile") or "").strip()
+                    if crp:
+                        rp_live = crp
+                        profile_src = "close"
+            except Exception:
+                pass
+        logger.info(
+            "OUTCOME_PROFILE_SOURCE | symbol=%s | risk_profile=%s | source=%s",
+            symbol,
+            rp_live if rp_live else "(empty)",
+            profile_src,
+        )
+
         row: Dict[str, Any] = {
             "trade_id": trade_id,
             "event_id": str(event_id or ""),
@@ -396,7 +417,7 @@ def _write_live_outcome_v3(
             "exit_price": exit_f,
             "pnl_r": pnl_r,
             "pnl_usd": pnl_usd,
-            "risk_profile": str(pos.get("risk_profile") or ""),
+            "risk_profile": rp_live,
             "order_id": str(pos.get("order_id") or ""),
             "position_idx": str(pos.get("position_idx") or ""),
             "notional_usd": float(pos.get("notional_usd", 0) or 0),

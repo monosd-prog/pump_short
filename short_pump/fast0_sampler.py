@@ -499,6 +499,27 @@ def _run_fast0_outcome_watcher(
         summary["hold_seconds"] = max(1.0, hold_sec)
         pnl = summary.get("pnl_pct")
         summary["pnl_pct"] = float(pnl) if pnl is not None else 0.0
+        if (mode or "").strip().lower() == "paper":
+            try:
+                from trading.paper_outcome import close_from_outcome
+
+                close_from_outcome(
+                    strategy=strategy_name,
+                    symbol=symbol,
+                    run_id=run_id,
+                    event_id=event_id,
+                    res=end_reason,
+                    pnl_pct=summary.get("pnl_pct"),
+                    ts_utc=outcome_time_utc,
+                    outcome_meta={
+                        "mfe_pct": summary.get("mfe_pct"),
+                        "mae_pct": summary.get("mae_pct"),
+                        "mfe_r": summary.get("mfe_r"),
+                        "mae_r": summary.get("mae_r"),
+                    },
+                )
+            except Exception:
+                log_exception(logger, "FAST0_TRADING_CLOSE_FROM_OUTCOME", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
         try:
             from trading.outcome_profile import apply_outcome_snapshot_to_summary
 
@@ -733,31 +754,6 @@ def _run_fast0_outcome_watcher(
                             )
                         except Exception:
                             log_exception(logger, "FAST0_TG_OUTCOME_SEND failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
-            # Paper: close position on OUTCOME (TP_hit/SL_hit/TIMEOUT).
-            # Also handles guard-blocked paper (position.mode=paper).
-            # Not gated on AUTO_TRADING_ENABLE: close_from_outcome is a no-op
-            # (returns False / logs CLOSE_SKIP) when no open_positions entry exists,
-            # so it is safe to call unconditionally for paper-mode outcomes.
-            if (mode or "").strip().lower() == "paper":
-                try:
-                    from trading.paper_outcome import close_from_outcome
-                    close_from_outcome(
-                        strategy=strategy_name,
-                        symbol=symbol,
-                        run_id=run_id,
-                        event_id=event_id,
-                        res=end_reason,
-                        pnl_pct=summary.get("pnl_pct"),
-                        ts_utc=outcome_time_utc,
-                        outcome_meta={
-                            "mfe_pct": summary.get("mfe_pct"),
-                            "mae_pct": summary.get("mae_pct"),
-                            "mfe_r": summary.get("mfe_r"),
-                            "mae_r": summary.get("mae_r"),
-                        },
-                    )
-                except Exception:
-                    log_exception(logger, "FAST0_TRADING_CLOSE_FROM_OUTCOME failed", symbol=symbol, run_id=run_id, step="FAST0_OUTCOME")
     except Exception as e:
         log_exception(logger, "FAST0_OUTCOME_ERROR", step="FAST0_OUTCOME", extra={"trade_id": trade_id})
     finally:
