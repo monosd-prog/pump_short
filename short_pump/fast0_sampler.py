@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import threading
@@ -73,6 +74,120 @@ TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC = float(os.getenv("TG_OUTCOME_TG_SEND_RETRY
 
 _active_fast0_watchers = 0
 _fast0_watchers_lock = threading.Lock()
+
+
+def _fast0_position_outcome_snapshot(
+    strategy_name: str,
+    run_id: str,
+    event_id: str,
+    symbol: str,
+    trade_id: str,
+) -> Optional[dict[str, Any]]:
+    """
+    Immutable risk_profile / notional / leverage / margin from the open position in trading_state.
+    Returns None if no matching position exists.
+    """
+    try:
+        from trading.state import load_state, make_position_id
+
+        strat = (strategy_name or "").strip()
+        state = load_state()
+        op = (state.get("open_positions") or {}).get(strat) or {}
+        if not isinstance(op, dict):
+            return None
+        pid = make_position_id(strat, run_id or "", str(event_id or ""), symbol or "")
+        pos = op.get(pid)
+        if not isinstance(pos, dict) and trade_id:
+            tid = str(trade_id).strip()
+            for _k, p in op.items():
+                if isinstance(p, dict) and str(p.get("trade_id") or "").strip() == tid:
+                    pos = p
+                    break
+        if not isinstance(pos, dict):
+            return None
+        nu_f: Optional[float] = None
+        nu_raw = pos.get("notional_usd")
+        if nu_raw is not None and str(nu_raw).strip() != "":
+            try:
+                nu_f = float(nu_raw)
+            except (TypeError, ValueError):
+                nu_f = None
+        lev_i: Optional[int] = None
+        lev_raw = pos.get("leverage")
+        if lev_raw is not None and str(lev_raw).strip() != "":
+            try:
+                lev_i = int(float(lev_raw))
+            except (TypeError, ValueError):
+                lev_i = None
+        return {
+            "risk_profile": str(pos.get("risk_profile") or "").strip(),
+            "notional_usd": nu_f,
+            "leverage": lev_i,
+            "margin_mode": str(pos.get("margin_mode") or "").strip(),
+        }
+    except Exception:
+        return None
+
+
+def _fast0_closes_outcome_snapshot(trade_id: str) -> Optional[dict[str, Any]]:
+    """Last row in trading_closes.csv for trade_id (if any). Used when position already closed."""
+    try:
+        from trading.config import CLOSES_PATH
+
+        p = Path(CLOSES_PATH)
+        if not p.is_file():
+            return None
+        tid = str(trade_id or "").strip()
+        if not tid:
+            return None
+        last: Optional[dict[str, str]] = None
+        with open(p, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if str(row.get("trade_id") or "").strip() == tid:
+                    last = row
+        if not last:
+            return None
+        nu_f: Optional[float] = None
+        if str(last.get("notional_usd") or "").strip():
+            try:
+                nu_f = float(last["notional_usd"])
+            except (TypeError, ValueError):
+                nu_f = None
+        lev_i: Optional[int] = None
+        if str(last.get("leverage") or "").strip():
+            try:
+                lev_i = int(float(last["leverage"]))
+            except (TypeError, ValueError):
+                lev_i = None
+        return {
+            "risk_profile": str(last.get("risk_profile") or "").strip(),
+            "notional_usd": nu_f,
+            "leverage": lev_i,
+            "margin_mode": str(last.get("margin_mode") or "").strip(),
+        }
+    except Exception:
+        return None
+
+
+def _tg_fields_from_summary(summary: dict[str, Any]) -> tuple[Optional[str], Optional[float], Optional[int], Optional[str]]:
+    """Telegram OUTCOME lines: same values as outcomes_v3 (from summary)."""
+    rp = (summary.get("risk_profile") or "").strip() or None
+    nu_f: Optional[float] = None
+    nu_raw = summary.get("notional_usd")
+    if nu_raw is not None and str(nu_raw).strip() != "":
+        try:
+            nu_f = float(nu_raw)
+        except (TypeError, ValueError):
+            nu_f = None
+    lev_i: Optional[int] = None
+    lev_raw = summary.get("leverage")
+    if lev_raw is not None and str(lev_raw).strip() != "":
+        try:
+            lev_i = int(float(lev_raw))
+        except (TypeError, ValueError):
+            lev_i = None
+    mm = (summary.get("margin_mode") or "").strip() or None
+    return rp, nu_f, lev_i, mm
 
 
 def _resolve_fast0_strategy(dist_to_peak: float | None) -> str:
@@ -330,11 +445,28 @@ def _run_fast0_outcome_watcher(
                             ctx_val = float(context_score) if context_score is not None else 0.0
                             if dist_val >= FAST0_TG_OUTCOME_MIN_DIST and (liq_long_usd_30s or 0) > 0:
                                 try:
-                                    from trading.risk_profile import get_risk_profile, get_notional_and_leverage
-                                    _rp, _rm, _ = get_risk_profile(strategy_name, liq_long_usd_30s=liq_long_usd_30s or 0)
-                                    _nt, _lev, _mm = get_notional_and_leverage(_rm)
-
+                                    _rp = (position.get("risk_profile") or "").strip() or None
+                                    _nt = None
+                                    try:
+                                        if position.get("notional_usd") is not None and str(position.get("notional_usd")).strip() != "":
+                                            _nt = float(position.get("notional_usd"))
+                                    except (TypeError, ValueError):
+                                        _nt = None
+                                    _lev = None
+                                    try:
+                                        if position.get("leverage") is not None and str(position.get("leverage")).strip() != "":
+                                            _lev = int(float(position.get("leverage")))
+                                    except (TypeError, ValueError):
+                                        _lev = None
+                                    _mm = (position.get("margin_mode") or "").strip() or None
+                                    logger.info(
+                                        "OUTCOME_PROFILE_SOURCE | symbol=%s | risk_profile=%s | notional=%s | source=position",
+                                        symbol,
+                                        _rp,
+                                        _nt,
+                                    )
                                     from trading.outcome_delivery import deliver_outcome_tg
+
                                     msg = format_fast0_outcome_message(
                                         symbol=symbol,
                                         run_id=run_id,
@@ -349,8 +481,8 @@ def _run_fast0_outcome_watcher(
                                         hold_seconds=0,
                                         dist_to_peak_pct=dist_val,
                                         context_score=ctx_val,
-                                        risk_profile=_rp or None,
-                                        notional_usd=_nt if _nt > 0 else None,
+                                        risk_profile=_rp,
+                                        notional_usd=_nt if _nt is not None and _nt > 0 else None,
                                         leverage=_lev,
                                         margin_mode=_mm,
                                     )
@@ -387,7 +519,7 @@ def _run_fast0_outcome_watcher(
                                                 "sl_price": sl_price,
                                                 "exit_price": exit_price_val,
                                                 "pnl_pct": pnl_val,
-                                                "notional_usd": _nt if _nt > 0 else None,
+                                                "notional_usd": _nt if _nt is not None and _nt > 0 else None,
                                                 "leverage": _lev,
                                                 "margin_mode": _mm,
                                                 "dist_to_peak_pct": dist_val,
@@ -467,10 +599,28 @@ def _run_fast0_outcome_watcher(
         summary["hold_seconds"] = max(1.0, hold_sec)
         pnl = summary.get("pnl_pct")
         summary["pnl_pct"] = float(pnl) if pnl is not None else 0.0
-        # PAPER outcomes must have risk_profile so analytics/report can split by submode (fast0_base_1R, fast0_2R, etc.)
-        if not summary.get("risk_profile") and (mode or "").strip().lower() == "paper":
+        # risk_profile / notional: copy from open position (or last close row). Do not recompute at outcome for opened trades.
+        profile_src = "unknown"
+        snap = _fast0_position_outcome_snapshot(strategy_name, run_id, str(event_id), symbol, trade_id)
+        if snap is not None:
+            profile_src = "position"
+        else:
+            snap = _fast0_closes_outcome_snapshot(trade_id)
+            if snap is not None:
+                profile_src = "close"
+        if snap is not None:
+            summary["risk_profile"] = snap.get("risk_profile") or ""
+            if snap.get("notional_usd") is not None:
+                summary["notional_usd"] = snap["notional_usd"]
+            if snap.get("leverage") is not None:
+                summary["leverage"] = snap["leverage"]
+            if snap.get("margin_mode"):
+                summary["margin_mode"] = snap["margin_mode"]
+        elif (mode or "").strip().lower() == "paper":
+            profile_src = "fallback"
             try:
                 from trading.risk_profile import get_risk_profile
+
                 _rp, _, _ = get_risk_profile(
                     strategy_name,
                     liq_long_usd_30s=liq_long_usd_30s if liq_long_usd_30s is not None else 0,
@@ -482,6 +632,13 @@ def _run_fast0_outcome_watcher(
                 summary["risk_profile"] = ""
         elif not summary.get("risk_profile"):
             summary["risk_profile"] = ""
+        logger.info(
+            "OUTCOME_PROFILE_SOURCE | symbol=%s | risk_profile=%s | notional=%s | source=%s",
+            symbol,
+            summary.get("risk_profile"),
+            summary.get("notional_usd"),
+            profile_src,
+        )
         orow = build_outcome_row(
             summary,
             trade_id=trade_id,
@@ -558,15 +715,9 @@ def _run_fast0_outcome_watcher(
                         )
                         # Fallback TG: preserve liq-gate signal quality logging above, but still notify (visibility).
                         try:
-                            from trading.risk_profile import get_risk_profile, get_notional_and_leverage
                             from trading.outcome_delivery import deliver_outcome_tg
 
-                            _rp_fb, _rm_fb, _ = get_risk_profile(
-                                strategy_name,
-                                liq_long_usd_30s=0,
-                                dist_to_peak_pct=dist_to_peak_pct,
-                            )
-                            _nt_fb, _lev_fb, _mm_fb = get_notional_and_leverage(_rm_fb)
+                            _rp_fb, _nt_fb, _lev_fb, _mm_fb = _tg_fields_from_summary(summary)
                             msg_fb = format_fast0_outcome_message(
                                 symbol=symbol,
                                 run_id=run_id,
@@ -581,8 +732,8 @@ def _run_fast0_outcome_watcher(
                                 hold_seconds=hold_val,
                                 dist_to_peak_pct=dist_val if dist_val else None,
                                 context_score=ctx_val if ctx_val else None,
-                                risk_profile=_rp_fb or None,
-                                notional_usd=_nt_fb if _nt_fb > 0 else None,
+                                risk_profile=_rp_fb,
+                                notional_usd=_nt_fb if _nt_fb is not None and _nt_fb > 0 else None,
                                 leverage=_lev_fb,
                                 margin_mode=_mm_fb,
                             )
@@ -619,7 +770,7 @@ def _run_fast0_outcome_watcher(
                                         "sl_price": sl_price,
                                         "exit_price": exit_price_val,
                                         "pnl_pct": pnl_val,
-                                        "notional_usd": _nt_fb if _nt_fb > 0 else None,
+                                        "notional_usd": _nt_fb if _nt_fb is not None and _nt_fb > 0 else None,
                                         "leverage": _lev_fb,
                                         "margin_mode": _mm_fb,
                                         "dist_to_peak_pct": dist_val if dist_val else None,
@@ -641,11 +792,9 @@ def _run_fast0_outcome_watcher(
                             )
                     elif liq_val > 0 and dist_val >= FAST0_TG_OUTCOME_MIN_DIST:
                         try:
-                            from trading.risk_profile import get_risk_profile, get_notional_and_leverage
-                            _rp, _rm, _ = get_risk_profile(strategy_name, liq_long_usd_30s=liq_val)
-                            _nt, _lev, _mm = get_notional_and_leverage(_rm)
                             from trading.outcome_delivery import deliver_outcome_tg
 
+                            _rp, _nt, _lev, _mm = _tg_fields_from_summary(summary)
                             msg = format_fast0_outcome_message(
                                 symbol=symbol,
                                 run_id=run_id,
@@ -660,8 +809,8 @@ def _run_fast0_outcome_watcher(
                                 hold_seconds=hold_val,
                                 dist_to_peak_pct=dist_val if dist_val else None,
                                 context_score=ctx_val if ctx_val else None,
-                                risk_profile=_rp or None,
-                                notional_usd=_nt if _nt > 0 else None,
+                                risk_profile=_rp,
+                                notional_usd=_nt if _nt is not None and _nt > 0 else None,
                                 leverage=_lev,
                                 margin_mode=_mm,
                             )
@@ -698,7 +847,7 @@ def _run_fast0_outcome_watcher(
                                         "sl_price": sl_price,
                                         "exit_price": exit_price_val,
                                         "pnl_pct": pnl_val,
-                                        "notional_usd": _nt if _nt > 0 else None,
+                                        "notional_usd": _nt if _nt is not None and _nt > 0 else None,
                                         "leverage": _lev,
                                         "margin_mode": _mm,
                                         "dist_to_peak_pct": dist_val if dist_val else None,
