@@ -1995,13 +1995,24 @@ def run_watch_for_symbol(
                             },
                             extra=None,
                         )
-                    # Paper: close first so trading_closes has risk_profile before canonical merge + outcomes_v3.
+                    # Append trading_closes + finalize paper state before canonical merge + outcomes_v3.
+                    # Idempotent via close_from_outcome (no_open_position / outcome_finalized).
                     try:
-                        from trading.config import AUTO_TRADING_ENABLE, MODE
+                        from trading.config import AUTO_TRADING_ENABLE, EXECUTION_MODE, MODE
                         from trading.paper_outcome import close_from_outcome
+                        from trading.state import make_position_id
 
-                        if AUTO_TRADING_ENABLE and MODE == "paper":
+                        if AUTO_TRADING_ENABLE:
                             event_id_outcome = entry_payload.get("event_id") or run_id
+                            pid_attempt = make_position_id(
+                                route_strategy, run_id or "", str(event_id_outcome), cfg.symbol
+                            )
+                            logger.info(
+                                "WATCHER_CLOSE_ATTEMPT | strategy=%s | mode=%s | position_id=%s",
+                                route_strategy,
+                                (EXECUTION_MODE or MODE or "").strip() or "unknown",
+                                pid_attempt,
+                            )
                             end_reason_close = summary.get("end_reason") or summary.get("outcome") or ""
                             outcome_time_utc_val = summary.get("exit_time_utc") or summary.get("hit_time_utc") or wall_time_utc()
                             close_from_outcome(
