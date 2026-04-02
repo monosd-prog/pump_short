@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import os
 import threading
@@ -11,7 +12,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -28,7 +29,14 @@ from short_pump.config import Config
 from short_pump.context5m import StructureState, build_dbg5, compute_context_score_5m
 from short_pump.liquidations import get_liq_stats, register_symbol, unregister_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info
-from common.io_dataset import ensure_dataset_files, write_event_row, write_outcome_row, write_trade_row
+from common.io_dataset import (
+    _live_outcome_duplicate,
+    ensure_dataset_files,
+    get_dataset_dir,
+    write_event_row,
+    write_outcome_row,
+    write_trade_row,
+)
 from common.outcome_tracker import build_outcome_row, track_outcome
 from common.runtime import wall_time_utc
 from common.feature_contract import normalize_event_feature_row
@@ -187,6 +195,71 @@ class _Fast0OutcomeCfg:
     category: str = "linear"
     outcome_watch_minutes: int = 30
     outcome_poll_seconds: int = 5
+
+
+def _fast0_skip_paper_outcome_live_canonical(
+    *,
+    strategy_name: str,
+    run_id: str,
+    event_id: Any,
+    symbol: str,
+    trade_id: str,
+    outcome_time_utc: str,
+    base_dir: Optional[str],
+) -> Tuple[bool, str]:
+    """
+    True when a live canonical outcome already exists or a live exchange position is open for this
+    fast0 key — skip redundant paper outcomes_v3 row (outcome_worker / Bybit path owns the row).
+    """
+    eid = str(event_id or "").strip()
+    tid = str(trade_id or "").strip()
+    try:
+        from trading.state import load_state, make_position_id, outcome_finalized
+
+        pid = make_position_id(strategy_name, run_id or "", eid, symbol)
+        state = load_state()
+        if outcome_finalized(state, pid):
+            return True, "outcome_finalized"
+        strat_pos = (state.get("open_positions") or {}).get(strategy_name) or {}
+        pos = strat_pos.get(pid) if isinstance(strat_pos, dict) else None
+        if isinstance(pos, dict):
+            pm = (str(pos.get("mode") or "").strip().lower())
+            if pm == "live" and pos.get("order_id") and pos.get("position_idx") is not None:
+                return True, "open_live_position"
+    except Exception:
+        pass
+    try:
+        live_dir = get_dataset_dir(
+            strategy_name,
+            outcome_time_utc,
+            base_dir=base_dir,
+            path_mode="live",
+        )
+        live_path = os.path.join(live_dir, "outcomes_v3.csv")
+        if _live_outcome_duplicate(live_path, {"trade_id": tid, "event_id": eid}):
+            return True, "live_outcomes_v3_row"
+    except Exception:
+        pass
+    try:
+        from trading.config import CLOSES_PATH
+
+        if not tid and not eid:
+            return False, ""
+        if not os.path.isfile(CLOSES_PATH):
+            return False, ""
+        with open(CLOSES_PATH, "r", newline="", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rt = (row.get("trade_id") or "").strip()
+                re = (row.get("event_id") or "").strip()
+                match = (tid and rt == tid) or (eid and re == eid)
+                if not match:
+                    continue
+                if (row.get("mode") or "").strip().lower() == "live":
+                    return True, "trading_closes_live"
+    except Exception:
+        pass
+    return False, ""
 
 
 def _run_fast0_outcome_watcher(
@@ -550,20 +623,41 @@ def _run_fast0_outcome_watcher(
             orow["outcome_source"] = strategy_name
             if (mode or "").strip().lower() == "paper":
                 orow["trade_type"] = "PAPER"
-            write_outcome_row(
-                orow,
-                strategy=strategy_name,
-                mode=mode,
-                wall_time_utc=outcome_time_utc,
-                schema_version=3,
-                base_dir=base_dir,
-                path_mode=mode if (mode or "").strip().lower() in ("paper", "live") else None,
-            )
-            try:
-                from trading.paper_outcome import _touch_guard_refresh_flag
-                _touch_guard_refresh_flag(base_dir)
-            except Exception:
-                pass
+            skip_paper_live = False
+            skip_paper_reason = ""
+            if (mode or "").strip().lower() == "paper":
+                skip_paper_live, skip_paper_reason = _fast0_skip_paper_outcome_live_canonical(
+                    strategy_name=strategy_name,
+                    run_id=run_id or "",
+                    event_id=event_id,
+                    symbol=symbol,
+                    trade_id=trade_id,
+                    outcome_time_utc=outcome_time_utc,
+                    base_dir=base_dir,
+                )
+            if skip_paper_live:
+                logger.info(
+                    "FAST0_SKIP_PAPER_OUTCOME_LIVE_CANONICAL | trade_id=%s | event_id=%s | reason=%s",
+                    trade_id,
+                    event_id,
+                    skip_paper_reason,
+                )
+            else:
+                write_outcome_row(
+                    orow,
+                    strategy=strategy_name,
+                    mode=mode,
+                    wall_time_utc=outcome_time_utc,
+                    schema_version=3,
+                    base_dir=base_dir,
+                    path_mode=mode if (mode or "").strip().lower() in ("paper", "live") else None,
+                )
+                try:
+                    from trading.paper_outcome import _touch_guard_refresh_flag
+
+                    _touch_guard_refresh_flag(base_dir)
+                except Exception:
+                    pass
             res_val = end_reason
             ep = summary.get("exit_price")
             exit_price_val = float(ep) if ep is not None else (tp_price if res_val == "TP_hit" else sl_price if res_val == "SL_hit" else entry_price)
@@ -572,7 +666,7 @@ def _run_fast0_outcome_watcher(
             dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else 0.0
             ctx_val = float(context_score) if context_score is not None else 0.0
             logger.info(
-                "FAST0_OUTCOME | symbol=%s | run_id=%s | res=%s | exit=%s | pnl_pct=%s | hold=%s | event_id=%s | outcome_source=candles | tp_sl_same_candle=%s | conflict_policy=%s",
+                "FAST0_OUTCOME | symbol=%s | run_id=%s | res=%s | exit=%s | pnl_pct=%s | hold=%s | event_id=%s | outcome_source=candles | tp_sl_same_candle=%s | conflict_policy=%s | paper_dataset=%s",
                 symbol,
                 run_id,
                 res_val,
@@ -582,6 +676,7 @@ def _run_fast0_outcome_watcher(
                 event_id,
                 summary.get("tp_sl_same_candle", "n/a"),
                 summary.get("conflict_policy", "n/a"),
+                "skipped_live_canonical" if skip_paper_live else "written",
             )
             liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else 0.0
             if FAST0_TG_OUTCOME_ENABLE and res_val and res_val not in ("", "None"):
