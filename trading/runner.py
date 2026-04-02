@@ -576,7 +576,12 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
         risk_profile_name = ""
         risk_mult = 1.0
-        if (signal.strategy or "").strip() in ("short_pump", "short_pump_filtered", "short_pump_fast0"):
+        if (signal.strategy or "").strip() in (
+            "short_pump",
+            "short_pump_filtered",
+            "short_pump_fast0",
+            "short_pump_fast0_filtered",
+        ):
             risk_profile_name, risk_mult, _ = get_risk_profile(
                 (signal.strategy or "").strip(),
                 stage=getattr(signal, "stage", None),
@@ -588,6 +593,12 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 trade_id=str(getattr(signal, "trade_id", "") or ""),
                 symbol=signal.symbol or "",
             )
+            if risk_profile_name:
+                logger.info(
+                    "ENTRY_PROFILE_ASSIGNED | strategy=%s | risk_profile=%s",
+                    (signal.strategy or "").strip(),
+                    risk_profile_name,
+                )
 
         # Auto Risk Guard: self-healing gate per боевой режим (profile)
         allowed_guard, guard_reason = is_entry_allowed_for_signal(signal, risk_profile_name)
