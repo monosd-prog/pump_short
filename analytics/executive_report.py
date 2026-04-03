@@ -225,6 +225,109 @@ def _guard_state_str(guard_state: Optional[Dict[str, Any]], guard_key: str) -> O
     return (entry.get("current_state") or "").strip().upper() or None
 
 
+# Whitelist for Bybit live execution — must match trading/runner.py (allowed_live_profiles).
+ALLOWED_LIVE_PROFILES_FOR_REPORT = frozenset({"short_pump_active_1R", "fast0_selective"})
+
+_LIVE_ELIGIBILITY_GUARD_KEYS: tuple[str, ...] = (
+    "short_pump_mid",
+    "short_pump_deep",
+    "short_pump_active_1R",
+    "short_pump_filtered_1R",
+    "fast0_selective",
+    "fast0_base_1R",
+    "fast0_1p5R",
+    "fast0_2R",
+)
+
+
+def _parse_strategies_env_for_report() -> set[str]:
+    """Same parsing as trading/runner._get_allowed_strategies (reporting only)."""
+    raw = os.getenv(
+        "STRATEGIES",
+        "short_pump,short_pump_filtered,short_pump_fast0,short_pump_fast0_filtered",
+    ).strip()
+    parts = [s.strip() for s in raw.split(",") if s.strip()]
+    if not parts:
+        parts = ["short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"]
+    return set(parts)
+
+
+def _producer_strategies_for_guard_key(guard_key: str) -> frozenset[str]:
+    """Strategies that can emit signals for this risk_profile / guard bucket."""
+    if guard_key in ("short_pump_active_1R", "short_pump_mid", "short_pump_deep"):
+        return frozenset({"short_pump"})
+    if guard_key == "short_pump_filtered_1R":
+        return frozenset({"short_pump_filtered"})
+    if guard_key in ("fast0_selective", "fast0_base_1R", "fast0_1p5R", "fast0_2R"):
+        return frozenset({"short_pump_fast0", "short_pump_fast0_filtered"})
+    if guard_key == "short_pump_fast0_filtered_1R":
+        return frozenset({"short_pump_fast0_filtered"})
+    return frozenset()
+
+
+def _live_eligibility_parts(
+    guard_key: str,
+    guard_state_str: Optional[str],
+    strategies_set: set[str],
+) -> tuple[bool, bool, bool, bool, str]:
+    """
+    Returns (strategy_ok, live_whitelist_ok, guard_active_ok, final_eligible, reason).
+    final_eligible is YES only if all three flags are true (runner policy).
+    """
+    producers = _producer_strategies_for_guard_key(guard_key)
+    strat_ok = bool(producers & strategies_set) if producers else False
+    wl_ok = guard_key in ALLOWED_LIVE_PROFILES_FOR_REPORT
+    gst = (guard_state_str or "").strip().upper()
+    guard_active_ok = gst == "ACTIVE"
+    final = strat_ok and wl_ok and guard_active_ok
+    if not strat_ok:
+        reason = "strategy not in STRATEGIES"
+    elif not wl_ok:
+        reason = "not in live whitelist"
+    elif not guard_active_ok:
+        reason = "guard not ACTIVE"
+    else:
+        reason = "eligible for Bybit live"
+    return strat_ok, wl_ok, guard_active_ok, final, reason
+
+
+def _append_live_eligibility_submode(
+    lines: list[str],
+    guard_key: str,
+    guard_state_str: Optional[str],
+    strategies_set: set[str],
+) -> None:
+    """Two lines: header + YES/NO with reason (and strat/whitelist flags if not fully eligible)."""
+    strat_ok, wl_ok, _act_ok, final, reason = _live_eligibility_parts(
+        guard_key, guard_state_str, strategies_set
+    )
+    yn = "YES" if final else "NO"
+    lines.append("        🔹 Live eligibility")
+    if final:
+        lines.append(f"        {yn} — {reason}")
+    else:
+        lines.append(
+            f"        {yn} — {reason} (STRATEGIES: {'Y' if strat_ok else 'N'}, "
+            f"whitelist: {'Y' if wl_ok else 'N'})"
+        )
+
+
+def _append_live_eligibility_matrix(
+    lines: list[str],
+    guard_state: Optional[Dict[str, Any]],
+    strategies_set: set[str],
+) -> None:
+    lines.append("🎯 LIVE ELIGIBILITY (Bybit runner policy)")
+    lines.append("")
+    lines.append("    risk_profile | guard_state | live_eligible | reason")
+    for gk in _LIVE_ELIGIBILITY_GUARD_KEYS:
+        gst = _guard_state_str(guard_state, gk) or "N/A"
+        _s, _w, _a, fin, reason = _live_eligibility_parts(gk, gst, strategies_set)
+        le = "YES" if fin else "NO"
+        lines.append(f"    {gk} | {gst} | {le} | {reason}")
+    lines.append("")
+
+
 def _guard_progress_text(
     guard_state: Optional[Dict[str, Any]],
     guard_key: str,
@@ -694,6 +797,7 @@ def build_executive_compact_report(
     lines: list[str] = []
     start, end = date_range
     days = _calendar_days(date_range)
+    strategies_for_live = _parse_strategies_env_for_report()
 
     # --- подготовка данных ---
     df_sp = df_short_pump
@@ -1029,6 +1133,7 @@ def build_executive_compact_report(
             )
             lines.append(f"{strat} (agg): {health} / 100 {_health_emoji(health)}")
     lines.append("")
+    _append_live_eligibility_matrix(lines, guard_state, strategies_for_live)
     lines.append("1️⃣ СТРАТЕГИИ")
     lines.append("")
 
@@ -1147,6 +1252,8 @@ def build_executive_compact_report(
                 if gst_sp == "WATCH":
                     lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
             lines.append("")
+            _append_live_eligibility_submode(lines, guard_key, gst_sp, strategies_for_live)
+            lines.append("")
             lines.append("        🔹 Диагноз")
             lines.append("        bootstrap / нет данных за период")
             lines.append("")
@@ -1179,6 +1286,8 @@ def build_executive_compact_report(
         lines.append("")
         lines.append("        🔹 Guard")
         lines.append(f"        {_guard_emoji_label(gst_sp, len(sub_core))}")
+        lines.append("")
+        _append_live_eligibility_submode(lines, guard_key, gst_sp, strategies_for_live)
         lines.append("")
         lines.append("        🔹 Диагноз")
         diag_sp = _diagnosis_v2(
@@ -1261,6 +1370,8 @@ def build_executive_compact_report(
                 if gst == "WATCH":
                     lines.append(f"        {_guard_progress_watch_to_active(0, DECISION_WINDOW_VERDICT)}")
             lines.append("")
+            _append_live_eligibility_submode(lines, guard_key, gst, strategies_for_live)
+            lines.append("")
             lines.append("        🔹 Диагноз")
             lines.append("        bootstrap / нет сделок за период")
         else:
@@ -1286,21 +1397,23 @@ def build_executive_compact_report(
             _n_for_label = max(n_sub, int(_gn_f0)) if _gn_f0 is not None else n_sub
             lines.append(f"        {_guard_emoji_label(gst, _n_for_label)}")
             lines.append("")
+            _append_live_eligibility_submode(lines, guard_key, gst, strategies_for_live)
+            lines.append("")
             lines.append("        🔹 Диагноз")
             diag = _diagnosis_v2(ev_sub, ev20_sub, n_sub, ec_sub, trades_neg, gst, guard_txt, DECISION_WINDOW_VERDICT)
             for d in diag:
                 lines.append(f"        {d}")
-                prog = _guard_progress_text(
-                    guard_state, guard_key,
-                    trades_since_negative_start=trades_neg,
-                    decision_window=DECISION_WINDOW_VERDICT,
-                )
-                if prog:
-                    if gst == "WATCH":
-                        lines.append("        live-входы запрещены (paper only)")
-                    lines.append(f"        {prog}")
-                    if gst == "WATCH":
-                        lines.append(f"        {_guard_progress_watch_to_active(trades_neg, DECISION_WINDOW_VERDICT)}")
+            prog = _guard_progress_text(
+                guard_state, guard_key,
+                trades_since_negative_start=trades_neg,
+                decision_window=DECISION_WINDOW_VERDICT,
+            )
+            if prog:
+                if gst == "WATCH":
+                    lines.append("        live-входы запрещены (paper only)")
+                lines.append(f"        {prog}")
+                if gst == "WATCH":
+                    lines.append(f"        {_guard_progress_watch_to_active(trades_neg, DECISION_WINDOW_VERDICT)}")
         lines.append("")
     if live_fast0_count == 0:
         lines.append("    (нет live-подрежимов)")
@@ -1434,6 +1547,8 @@ def build_executive_compact_report(
         lines.append("")
         lines.append("        🔹 Guard")
         lines.append("        🔴 DISABLED")
+        lines.append("")
+        _append_live_eligibility_submode(lines, guard_key, _guard_state_str(guard_state, guard_key), strategies_for_live)
         lines.append("")
         lines.append("        🔹 Диагноз")
         lines.append("        торговля остановлена")
