@@ -63,6 +63,8 @@ class FactorBlock:
     factor: str
     tracked: bool
     buckets: List[BucketStats]
+    coverage_pct: float = 0.0
+    n_matched: int = 0
 
 
 @dataclass
@@ -171,6 +173,16 @@ def _fill_from_payload_json(df: pd.DataFrame) -> pd.DataFrame:
         "context_score": ["context_score"],
         "stage": ["stage"],
         "symbol": ["symbol"],
+        # new indicators (Apr 2026+)
+        "ls_ratio_buy": ["ls_ratio_buy"],
+        "ls_ratio_sell": ["ls_ratio_sell"],
+        "oi_abs": ["oi_abs"],
+        "oi_abs_usd": ["oi_abs_usd"],
+        "rsi_14_1m": ["rsi_14_1m"],
+        "ma_20_1m": ["ma_20_1m"],
+        "ema_20_1m": ["ema_20_1m"],
+        "dist_to_ma20_pct": ["dist_to_ma20_pct"],
+        "dist_to_ema20_pct": ["dist_to_ema20_pct"],
     }
 
     out = df.copy()
@@ -229,6 +241,9 @@ def _join_outcomes_trades_events(
         "volume_ratio_1m_20", "volume_ratio_5m_20",
         "time_since_peak_sec", "time_since_signal_sec", "pump_age_sec",
         "spread_bps", "orderbook_imbalance_10", "symbol",
+        # new indicators (Apr 2026+)
+        "ls_ratio_buy", "ls_ratio_sell", "oi_abs", "oi_abs_usd",
+        "rsi_14_1m", "ma_20_1m", "ema_20_1m", "dist_to_ma20_pct", "dist_to_ema20_pct",
     ]
     for col in factor_cols:
         ev_col = f"{col}_event"
@@ -369,6 +384,14 @@ def _bucketize(series: pd.Series, factor: str) -> pd.Series:
         "pump_age_sec": [0, 30, 60, 120, 180, 300, 600, 1200, 3600, np.inf],
         "spread_bps": [0, 1, 2, 3, 5, 10, np.inf],
         "orderbook_imbalance_10": [-np.inf, -0.5, -0.25, 0.0, 0.25, 0.5, np.inf],
+        # new indicators (Apr 2026+)
+        "ls_ratio_buy": [0, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, np.inf],
+        "ls_ratio_sell": [0, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, np.inf],
+        "oi_abs": [0, 5e5, 2e6, 5e6, 15e6, 50e6, np.inf],
+        "oi_abs_usd": [0, 1e6, 5e6, 10e6, 50e6, 200e6, np.inf],
+        "rsi_14_1m": [0, 30, 40, 50, 60, 70, 80, 100],
+        "dist_to_ma20_pct": [-np.inf, -5.0, -2.0, -1.0, 0.0, 1.0, 2.0, 5.0, np.inf],
+        "dist_to_ema20_pct": [-np.inf, -5.0, -2.0, -1.0, 0.0, 1.0, 2.0, 5.0, np.inf],
     }
     if factor == "symbol":
         return series.astype(str).fillna("UNKNOWN")
@@ -389,7 +412,9 @@ def _bucketize(series: pd.Series, factor: str) -> pd.Series:
 
 def _factor_block(df: pd.DataFrame, factor: str) -> FactorBlock:
     if factor not in df.columns:
-        return FactorBlock(factor=factor, tracked=False, buckets=[])
+        return FactorBlock(factor=factor, tracked=False, buckets=[], coverage_pct=0.0, n_matched=0)
+    coverage_pct = float(df[factor].notna().mean() * 100) if len(df) else 0.0
+    n_matched = int(df[factor].notna().sum())
     binned = _bucketize(df[factor], factor)
     norm = _normalize_outcome_column(df)
     ev_series = pd.to_numeric(df["ev_proxy"], errors="coerce").fillna(0.0)
@@ -424,7 +449,7 @@ def _factor_block(df: pd.DataFrame, factor: str) -> FactorBlock:
             )
         )
     rows.sort(key=lambda r: r.ev, reverse=True)
-    return FactorBlock(factor=factor, tracked=True, buckets=rows)
+    return FactorBlock(factor=factor, tracked=True, buckets=rows, coverage_pct=coverage_pct, n_matched=n_matched)
 
 
 def _symbol_block(df: pd.DataFrame) -> List[BucketStats]:
@@ -486,6 +511,36 @@ def _market_regime(df: pd.DataFrame) -> Dict[str, Any]:
     out["liq_short_usd_30s"] = _stat("liq_short_usd_30s")
     out["volume_1m"] = _stat("volume_1m")
     return out
+
+
+def _risk_profile_section(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """Per-risk_profile breakdown: n, TP/SL/TIMEOUT, WR, EV, EV20."""
+    if df.empty or "risk_profile" not in df.columns:
+        return []
+    norm = _normalize_outcome_column(df)
+    ev_series = pd.to_numeric(df.get("ev_proxy", 0.0), errors="coerce").fillna(0.0)
+    rows: List[Dict[str, Any]] = []
+    for rp, sub in df.groupby("risk_profile", dropna=True):
+        if sub.empty:
+            continue
+        norm_r = norm.loc[sub.index]
+        core_mask = norm_r.isin(CORE_OUTCOMES)
+        ev_r = ev_series.loc[sub.index][core_mask]
+        tp = int((norm_r == "TP_hit").sum())
+        sl = int((norm_r == "SL_hit").sum())
+        timeout = int((norm_r == "TIMEOUT").sum())
+        n = len(sub)
+        denom = tp + sl
+        wr = (tp / denom) if denom else 0.0
+        ev = float(ev_r.mean()) if not ev_r.empty else 0.0
+        ev20 = _compute_ev20(ev_r)
+        rows.append({
+            "risk_profile": str(rp),
+            "n": n, "tp": tp, "sl": sl, "timeout": timeout,
+            "wr": wr, "ev": ev, "ev20": ev20,
+        })
+    rows.sort(key=lambda r: r["ev"], reverse=True)
+    return rows
 
 
 def _combo_candidates(df: pd.DataFrame, factors: Sequence[str]) -> List[ComboCandidate]:
@@ -567,8 +622,8 @@ def _render_summary_block(summary: StrategySummary) -> List[str]:
 
 def _render_factor_block(block: FactorBlock) -> List[str]:
     if not block.tracked:
-        return [f"{block.factor}: not tracked"]
-    lines = [f"Factor: {block.factor}"]
+        return [f"{block.factor}: not tracked (coverage=0%, n=0)"]
+    lines = [f"Factor: {block.factor}  [coverage={block.coverage_pct:.0f}%, n={block.n_matched}]"]
     if not block.buckets:
         lines.append("  no buckets passing sample safety threshold")
         return lines
@@ -610,6 +665,18 @@ def _render_regime_block(reg: Mapping[str, Any]) -> List[str]:
                 f"  {key}: mean={stats['mean']:.4g}, p25={stats['p25']:.4g}, "
                 f"p50={stats['p50']:.4g}, p75={stats['p75']:.4g}"
             )
+    return lines
+
+
+def _render_risk_profile_block(rows: List[Dict[str, Any]]) -> List[str]:
+    if not rows:
+        return ["  no risk_profile data"]
+    lines: List[str] = []
+    for r in rows:
+        lines.append(
+            f"  {r['risk_profile']}: n={r['n']}, TP={r['tp']}, SL={r['sl']}, TIMEOUT={r['timeout']}, "
+            f"WR={r['wr']:.1%}, EV={r['ev']:+.3f}, EV20={r['ev20']:+.3f}"
+        )
     return lines
 
 
@@ -688,6 +755,16 @@ def build_factor_report_for_strategy(
         "spread_bps",
         "orderbook_imbalance_10",
         "symbol",
+        # new indicators (Apr 2026+)
+        "ls_ratio_buy",
+        "ls_ratio_sell",
+        "oi_abs",
+        "oi_abs_usd",
+        "rsi_14_1m",
+        "ma_20_1m",
+        "ema_20_1m",
+        "dist_to_ma20_pct",
+        "dist_to_ema20_pct",
     ]
 
     factors: Dict[str, Any] = {}
@@ -698,6 +775,8 @@ def build_factor_report_for_strategy(
         factors[f] = {
             "tracked": block.tracked,
             "buckets": [asdict(b) for b in block.buckets],
+            "coverage_pct": block.coverage_pct,
+            "n_matched": block.n_matched,
         }
 
     delta_factors = [
@@ -726,6 +805,16 @@ def build_factor_report_for_strategy(
         ],
     )
 
+    # Fresh-only combos: only factors with coverage >= 70%
+    high_cov_factors = [
+        f for f, block in factor_blocks.items()
+        if block.tracked and block.coverage_pct >= 70.0 and f != "symbol"
+    ]
+    fresh_combos = _combo_candidates(df, factors=high_cov_factors) if len(high_cov_factors) >= 2 else []
+
+    # Risk profile breakdown
+    risk_profile_rows = _risk_profile_section(df)
+
     return {
         "strategy": strategy,
         "summary": asdict(summary),
@@ -735,6 +824,9 @@ def build_factor_report_for_strategy(
         "market_regime": regime,
         "combos": [asdict(c) for c in combos],
         "candidates": [asdict(c) for c in combos],
+        "fresh_combos": [asdict(c) for c in fresh_combos],
+        "risk_profile_analysis": risk_profile_rows,
+        "high_coverage_factors": high_cov_factors,
     }
 
 
@@ -744,7 +836,8 @@ def render_factor_report_txt(report: Dict[str, Any]) -> str:
     """
     lines: List[str] = []
     meta = report.get("meta", {})
-    header = f"FACTOR REPORT — days={meta.get('days')} strategies={','.join(meta.get('strategies', []))}"
+    window_note = f"min_date={meta.get('min_date')}" if meta.get("min_date") else f"days={meta.get('days')}"
+    header = f"FACTOR REPORT v2 — {window_note} strategies={','.join(meta.get('strategies', []))}"
     lines.append(header)
     lines.append(f"Generated at UTC: {meta.get('generated_at')}")
     lines.append("")
@@ -768,6 +861,8 @@ def render_factor_report_txt(report: Dict[str, Any]) -> str:
                 factor=fname,
                 tracked=bool(fdata["tracked"]),
                 buckets=[BucketStats(**b) for b in fdata["buckets"]],
+                coverage_pct=float(fdata.get("coverage_pct", 0.0)),
+                n_matched=int(fdata.get("n_matched", 0)),
             )
             lines.extend(_render_factor_block(block))
 
@@ -780,6 +875,8 @@ def render_factor_report_txt(report: Dict[str, Any]) -> str:
                 factor=fname,
                 tracked=bool(block_data["tracked"]),
                 buckets=[BucketStats(**b) for b in block_data["buckets"]],
+                coverage_pct=float(block_data.get("coverage_pct", 0.0)),
+                n_matched=int(block_data.get("n_matched", 0)),
             )
             lines.extend(_render_factor_block(block))
 
@@ -806,6 +903,21 @@ def render_factor_report_txt(report: Dict[str, Any]) -> str:
         cands = [ComboCandidate(**c) for c in strat_block.get("candidates", [])]
         lines.extend(_render_candidates_block(cands))
 
+        # H. Risk profile breakdown
+        lines.append("")
+        lines.append("H) Risk profile breakdown")
+        rp_rows = strat_block.get("risk_profile_analysis", [])
+        lines.extend(_render_risk_profile_block(rp_rows))
+
+        # I. Fresh-only best combinations (coverage >= 70%)
+        lines.append("")
+        high_cov = strat_block.get("high_coverage_factors", [])
+        lines.append(f"I) Fresh-only best combinations (factors with coverage>=70%: {len(high_cov)} eligible)")
+        if high_cov:
+            lines.append(f"   Eligible factors: {', '.join(high_cov)}")
+        fresh_cands = [ComboCandidate(**c) for c in strat_block.get("fresh_combos", [])]
+        lines.extend(_render_candidates_block(fresh_cands))
+
         lines.append("")
 
     return "\n".join(lines)
@@ -817,14 +929,30 @@ def build_factor_report(
     days: int,
     strategies: Sequence[str] | None = None,
     mode: str = "live",
+    min_date: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """
     High-level entrypoint.
     Returns (json_report, txt_report).
+
+    min_date: YYYYMMDD string — restrict to dates >= min_date (fresh canonical window).
+              If set, computes 'days' from min_date to today, overriding the days param
+              when it would include older data.
     """
+    from datetime import datetime, timezone, timedelta
+
     if strategies is None or not strategies:
         strategies = ["short_pump", "short_pump_fast0"]
     base_dir = Path(base_dir)
+
+    if min_date is not None:
+        try:
+            min_dt = datetime.strptime(str(min_date), "%Y%m%d").replace(tzinfo=timezone.utc)
+            computed_days = (datetime.now(timezone.utc).date() - min_dt.date()).days + 1
+            if days is None or days > computed_days:
+                days = computed_days
+        except ValueError:
+            pass
 
     strat_blocks: List[Dict[str, Any]] = []
     for strat in strategies:
@@ -867,6 +995,7 @@ def build_factor_report(
 
     meta = {
         "days": days,
+        "min_date": min_date or "",
         "strategies": list(strategies),
         "base_dir": str(base_dir),
         "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
@@ -886,12 +1015,15 @@ def save_factor_report_files(
     strategies: Sequence[str] | None = None,
     mode: str = "live",
     reports_dir: Path | str | None = None,
+    min_date: Optional[str] = None,
 ) -> Tuple[Path, Path, str]:
     """
     Convenience entrypoint for CLI/Telegram.
     Returns (txt_path, json_path, summary_text).
     """
-    json_report, txt = build_factor_report(base_dir=base_dir, days=days, strategies=strategies, mode=mode)
+    json_report, txt = build_factor_report(
+        base_dir=base_dir, days=days, strategies=strategies, mode=mode, min_date=min_date
+    )
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     if reports_dir is None:
         reports_dir = Path("reports")

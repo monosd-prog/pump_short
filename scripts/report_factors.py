@@ -53,6 +53,20 @@ def main() -> None:
         default="live",
         help="Datasets mode to read (live|paper|lab). Default: live",
     )
+    parser.add_argument(
+        "--min-date",
+        type=str,
+        default="20260401",
+        help=(
+            "Fresh canonical window: only dates >= YYYYMMDD (default: 20260401). "
+            "Use 'all' to disable and fall back to --days window."
+        ),
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Shortcut: use fresh canonical window from 20260401 (same as --min-date 20260401)",
+    )
     args = parser.parse_args()
 
     base_dir = args.data_dir
@@ -60,17 +74,28 @@ def main() -> None:
     strategies = args.strategies
     mode = str(args.mode)
 
+    # Resolve min_date: --fresh forces 20260401; 'all' disables fresh filter
+    raw_min_date = "20260401" if args.fresh else str(args.min_date)
+    min_date: str | None = None if raw_min_date.strip().lower() == "all" else raw_min_date
+
     if mode.strip().lower() == "lab":
         print("[LAB MODE V1] WARNING: factor report on mode=lab is candle-only.")
         print("[LAB MODE V1] WARNING: delta/cvd/liq/oi/funding/spread/orderbook/context/stage are NOT reconstructed unless historical sources are added.")
         print("[LAB MODE V1] TIP: use audit_feature_contract.py --mode lab to inspect coverage.")
         print("")
 
+    if min_date:
+        print(f"[FACTOR REPORT v2] Fresh canonical window: date >= {min_date}")
+    else:
+        print(f"[FACTOR REPORT v2] Legacy mode: days={days}")
+    print("")
+
     txt_path, json_path, summary = save_factor_report_files(
         base_dir=base_dir,
         days=days,
         strategies=strategies,
         mode=mode,
+        min_date=min_date,
     )
 
     print(summary)
