@@ -44,6 +44,7 @@ MIN_N_BUCKET = 20
 MIN_N_COMBO = 30   # combinations filtering: only combo buckets with n >= MIN_N_COMBO
 MIN_N_SYMBOL = 20
 MIN_N_CANDIDATE = 40  # candidate selection: only combos with n >= MIN_N_CANDIDATE + WR/EV criteria
+MIN_FACTOR_COVERAGE_PCT = 70.0
 
 
 @dataclass
@@ -94,6 +95,116 @@ class ComboCandidate:
     ev: float
     ev20: float
     why_candidate: str
+
+
+@dataclass
+class StabilityRow:
+    factor: str
+    bucket: str
+    n30: int
+    ev30: float
+    ev20_30: float
+    n90: int
+    ev90: float
+    ev20_90: float
+    verdict: str
+
+
+def _is_nan_bucket(bucket: Any) -> bool:
+    s = str(bucket).strip().lower()
+    return s in {"nan", "none", ""} or "nan" in s
+
+
+def _factor_bucket_map(block: FactorBlock) -> Dict[str, BucketStats]:
+    return {str(b.bucket): b for b in block.buckets}
+
+
+def _stability_verdict(b30: Optional[BucketStats], b90: Optional[BucketStats]) -> str:
+    if b30 is None or b90 is None:
+        return "NOISY"
+    if b30.n < MIN_N_BUCKET or b90.n < MIN_N_BUCKET:
+        return "NOISY"
+    stable_positive = (b30.ev > 0.0 and b90.ev > 0.0)
+    if stable_positive and (b30.ev20 >= 0.0 and b90.ev20 >= 0.0):
+        return "STABLE_POSITIVE"
+    sign_flip = (b30.ev > 0.0 and b90.ev < 0.0) or (b30.ev < 0.0 and b90.ev > 0.0)
+    ev20_worsened = (b30.ev20 >= 0.0 and b90.ev20 < 0.0) or ((b30.ev20 - b90.ev20) >= 0.15)
+    if sign_flip or ev20_worsened:
+        return "UNSTABLE"
+    return "NOISY"
+
+
+def _build_stability_rows(
+    *,
+    blocks30: Mapping[str, FactorBlock],
+    blocks90: Mapping[str, FactorBlock],
+) -> List[StabilityRow]:
+    rows: List[StabilityRow] = []
+    common_factors = sorted(set(blocks30.keys()) & set(blocks90.keys()))
+    for factor in common_factors:
+        b30 = blocks30[factor]
+        b90 = blocks90[factor]
+        if (not b30.tracked) or (not b90.tracked):
+            continue
+        if b30.coverage_pct < MIN_FACTOR_COVERAGE_PCT or b90.coverage_pct < MIN_FACTOR_COVERAGE_PCT:
+            continue
+        m30 = _factor_bucket_map(b30)
+        m90 = _factor_bucket_map(b90)
+        all_buckets = sorted(set(m30.keys()) | set(m90.keys()))
+        for bucket in all_buckets:
+            if _is_nan_bucket(bucket):
+                continue
+            s30 = m30.get(bucket)
+            s90 = m90.get(bucket)
+            verdict = _stability_verdict(s30, s90)
+            rows.append(
+                StabilityRow(
+                    factor=factor,
+                    bucket=bucket,
+                    n30=int(s30.n) if s30 else 0,
+                    ev30=float(s30.ev) if s30 else 0.0,
+                    ev20_30=float(s30.ev20) if s30 else 0.0,
+                    n90=int(s90.n) if s90 else 0,
+                    ev90=float(s90.ev) if s90 else 0.0,
+                    ev20_90=float(s90.ev20) if s90 else 0.0,
+                    verdict=verdict,
+                )
+            )
+    rows.sort(
+        key=lambda r: (
+            1 if r.verdict == "STABLE_POSITIVE" else 0,
+            min(r.ev30, r.ev90),
+            min(r.ev20_30, r.ev20_90),
+            min(r.n30, r.n90),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _top_stable_factor_lines(rows: Sequence[StabilityRow], *, top_n: int = 5) -> List[str]:
+    scored: Dict[str, Dict[str, float]] = {}
+    for r in rows:
+        if r.verdict != "STABLE_POSITIVE":
+            continue
+        item = scored.setdefault(r.factor, {"stable_buckets": 0.0, "min_ev_sum": 0.0, "min_ev20_sum": 0.0})
+        item["stable_buckets"] += 1.0
+        item["min_ev_sum"] += min(r.ev30, r.ev90)
+        item["min_ev20_sum"] += min(r.ev20_30, r.ev20_90)
+    if not scored:
+        return ["  no stable factors passing thresholds"]
+    ranked = sorted(
+        scored.items(),
+        key=lambda kv: (kv[1]["stable_buckets"], kv[1]["min_ev_sum"], kv[1]["min_ev20_sum"]),
+        reverse=True,
+    )[:top_n]
+    lines: List[str] = []
+    for factor, agg in ranked:
+        lines.append(
+            f"  {factor}: stable_buckets={int(agg['stable_buckets'])}, "
+            f"score_ev={agg['min_ev_sum']:+.3f}, score_ev20={agg['min_ev20_sum']:+.3f}"
+        )
+    return lines
 
 
 def _debug_factor_columns(df: pd.DataFrame, *, tag: str) -> None:
@@ -567,6 +678,8 @@ def _combo_candidates(df: pd.DataFrame, factors: Sequence[str]) -> List[ComboCan
         combo_key = list(zip(ba, bb))
         key_series = pd.Series(combo_key, index=df.index)
         for (ba_val, bb_val), sub_idx in key_series.groupby(key_series).groups.items():
+            if _is_nan_bucket(ba_val) or _is_nan_bucket(bb_val):
+                continue
             sub = df.loc[sub_idx]
             n = len(sub)
             if n < MIN_N_COMBO:  # combinations filtering
@@ -692,6 +805,69 @@ def _render_candidates_block(cands: Sequence[ComboCandidate]) -> List[str]:
     return lines
 
 
+def _render_stability_block(rows: Sequence[StabilityRow]) -> List[str]:
+    lines: List[str] = []
+    lines.append(
+        f"Thresholds: min_n>={MIN_N_BUCKET}, factor_coverage>={MIN_FACTOR_COVERAGE_PCT:.0f}% (both 30d/90d), NaN buckets excluded"
+    )
+    if not rows:
+        lines.append("No stability rows after thresholds.")
+        return lines
+    for r in rows[:20]:
+        lines.append(
+            f"  {r.verdict}: {r.factor}={r.bucket} | "
+            f"30d[n={r.n30}, EV={r.ev30:+.3f}, EV20={r.ev20_30:+.3f}] vs "
+            f"90d[n={r.n90}, EV={r.ev90:+.3f}, EV20={r.ev20_90:+.3f}]"
+        )
+    return lines
+
+
+def _factor_blocks_map(df: pd.DataFrame, factor_list: Sequence[str]) -> Dict[str, FactorBlock]:
+    out: Dict[str, FactorBlock] = {}
+    for f in factor_list:
+        out[f] = _factor_block(df, f)
+    return out
+
+
+def _load_joined_window(base_dir: Path, strategy: str, mode: str, days: int) -> pd.DataFrame:
+    outcomes = load_outcomes(
+        base_dir=base_dir,
+        strategy=strategy,
+        mode=mode,
+        days=days,
+        include_test=False,
+        return_file_count=False,
+    )
+    if isinstance(outcomes, tuple):
+        outcomes = outcomes[0]
+    trades = load_trades_v3(
+        data_dir=base_dir,
+        strategy=strategy,
+        mode=mode,
+        days=days,
+        include_test=False,
+        return_file_count=False,
+    )
+    if isinstance(trades, tuple):
+        trades = trades[0]
+    events = load_events_v2(
+        data_dir=base_dir,
+        strategy=strategy,
+        mode=mode,
+        days=days,
+        include_test=False,
+        raw=True,
+        return_file_count=False,
+    )
+    if isinstance(events, tuple):
+        events = events[0]
+    joined = _join_outcomes_trades_events(outcomes, trades, events)
+    if joined.empty:
+        return joined
+    joined = _fill_from_payload_json(joined)
+    return _add_ev_proxy(joined)
+
+
 def build_factor_report_for_strategy(
     *,
     df: pd.DataFrame,
@@ -768,10 +944,8 @@ def build_factor_report_for_strategy(
     ]
 
     factors: Dict[str, Any] = {}
-    factor_blocks: Dict[str, FactorBlock] = {}
-    for f in factor_list:
-        block = _factor_block(df, f)
-        factor_blocks[f] = block
+    factor_blocks = _factor_blocks_map(df, factor_list)
+    for f, block in factor_blocks.items():
         factors[f] = {
             "tracked": block.tracked,
             "buckets": [asdict(b) for b in block.buckets],
@@ -789,9 +963,8 @@ def build_factor_report_for_strategy(
 
     symbol_rows = _symbol_block(df)
     regime = _market_regime(df)
-    combos = _combo_candidates(
-        df,
-        factors=[
+    eligible_combo_factors = [
+        f for f in [
             "dist_to_peak_pct",
             "context_score",
             "delta_ratio_30s",
@@ -802,13 +975,19 @@ def build_factor_report_for_strategy(
             "wick_body_ratio_last",
             "volume_ratio_1m_20",
             "symbol",
-        ],
+        ]
+        if factor_blocks.get(f, FactorBlock("", False, [])).tracked
+        and factor_blocks.get(f, FactorBlock("", False, [])).coverage_pct >= MIN_FACTOR_COVERAGE_PCT
+    ]
+    combos = _combo_candidates(
+        df,
+        factors=eligible_combo_factors,
     )
 
     # Fresh-only combos: only factors with coverage >= 70%
     high_cov_factors = [
         f for f, block in factor_blocks.items()
-        if block.tracked and block.coverage_pct >= 70.0 and f != "symbol"
+        if block.tracked and block.coverage_pct >= MIN_FACTOR_COVERAGE_PCT and f != "symbol"
     ]
     fresh_combos = _combo_candidates(df, factors=high_cov_factors) if len(high_cov_factors) >= 2 else []
 
@@ -894,6 +1073,10 @@ def render_factor_report_txt(report: Dict[str, Any]) -> str:
         # F. Best combinations
         lines.append("")
         lines.append("F) Best combinations")
+        lines.append(
+            f"Thresholds: min_n_combo>={MIN_N_COMBO}, min_n_candidate>={MIN_N_CANDIDATE}, "
+            f"factor_coverage>={MIN_FACTOR_COVERAGE_PCT:.0f}%, NaN buckets excluded"
+        )
         combos = [ComboCandidate(**c) for c in strat_block.get("combos", [])]
         lines.extend(_render_candidates_block(combos))
 
@@ -918,7 +1101,27 @@ def render_factor_report_txt(report: Dict[str, Any]) -> str:
         fresh_cands = [ComboCandidate(**c) for c in strat_block.get("fresh_combos", [])]
         lines.extend(_render_candidates_block(fresh_cands))
 
+        # J. Stability check (30d vs 90d)
         lines.append("")
+        lines.append("J) STABILITY CHECK (30d vs 90d)")
+        stability_rows = [StabilityRow(**r) for r in strat_block.get("stability_check", [])]
+        lines.extend(_render_stability_block(stability_rows))
+
+        lines.append("")
+
+    # Compact cross-strategy summary
+    lines.append("=" * 80)
+    lines.append("TOP STABLE FACTORS (compact)")
+    lines.append("=" * 80)
+    lines.append(
+        f"Thresholds: min_n>={MIN_N_BUCKET}, factor_coverage>={MIN_FACTOR_COVERAGE_PCT:.0f}% in 30d and 90d, NaN excluded"
+    )
+    top_map = report.get("top_stable_factors", {})
+    for strategy in ["short_pump", "short_pump_fast0"]:
+        lines.append(f"{strategy}:")
+        for line in top_map.get(strategy, ["  no stable factors passing thresholds"]):
+            lines.append(line)
+    lines.append("")
 
     return "\n".join(lines)
 
@@ -956,42 +1159,21 @@ def build_factor_report(
 
     strat_blocks: List[Dict[str, Any]] = []
     for strat in strategies:
-        outcomes = load_outcomes(
-            base_dir=base_dir,
-            strategy=strat,
-            mode=mode,
-            days=days,
-            include_test=False,
-            return_file_count=False,
-        )
-        if isinstance(outcomes, tuple):
-            outcomes = outcomes[0]
-        trades = load_trades_v3(
-            data_dir=base_dir,
-            strategy=strat,
-            mode=mode,
-            days=days,
-            include_test=False,
-            return_file_count=False,
-        )
-        if isinstance(trades, tuple):
-            trades = trades[0]
-        events = load_events_v2(
-            data_dir=base_dir,
-            strategy=strat,
-            mode=mode,
-            days=days,
-            include_test=False,
-            raw=True,
-            return_file_count=False,
-        )
-        if isinstance(events, tuple):
-            events = events[0]
         # Join chain: outcomes → trades → events so factors from trades_v3 and events_v3 are preserved
-        joined = _join_outcomes_trades_events(outcomes, trades, events)
+        joined = _load_joined_window(base_dir, strat, mode, days)
         _debug_factor_columns(joined, tag=f"{strat}:joined_raw")
         dprint(DEBUG_ENABLED, f"[FACTOR] strategy={strat} rows={len(joined)}")
-        strat_blocks.append(build_factor_report_for_strategy(df=joined, strategy=strat))
+        strat_report = build_factor_report_for_strategy(df=joined, strategy=strat)
+
+        # Stability check uses fixed windows (30d vs 90d), independent from render window.
+        factor_list = list(strat_report.get("factors", {}).keys())
+        df30 = _load_joined_window(base_dir, strat, mode, 30)
+        df90 = _load_joined_window(base_dir, strat, mode, 90)
+        blocks30 = _factor_blocks_map(df30, factor_list) if not df30.empty else {}
+        blocks90 = _factor_blocks_map(df90, factor_list) if not df90.empty else {}
+        stability_rows = _build_stability_rows(blocks30=blocks30, blocks90=blocks90)
+        strat_report["stability_check"] = [asdict(r) for r in stability_rows]
+        strat_blocks.append(strat_report)
 
     meta = {
         "days": days,
@@ -1004,6 +1186,11 @@ def build_factor_report(
         "meta": meta,
         "strategies": strat_blocks,
     }
+    top_stable_factors: Dict[str, List[str]] = {}
+    for block in strat_blocks:
+        srows = [StabilityRow(**r) for r in block.get("stability_check", [])]
+        top_stable_factors[block["strategy"]] = _top_stable_factor_lines(srows)
+    full["top_stable_factors"] = top_stable_factors
     txt = render_factor_report_txt(full)
     return full, txt
 
