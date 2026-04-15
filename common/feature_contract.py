@@ -55,6 +55,11 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     "liq_short_usd_1m",
     "liq_long_count_1m",
     "liq_long_usd_1m",
+    # Real USD liquidation values (qty * price, not just qty)
+    "liq_short_usd_30s_real",
+    "liq_long_usd_30s_real",
+    "liq_short_usd_1m_real",
+    "liq_long_usd_1m_real",
     # volume
     "volume_1m",
     "volume_5m",
