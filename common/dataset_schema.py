@@ -26,6 +26,8 @@ EVENT_FIELDS_V2 = [
     "delta_ratio_1m",
     "cvd_delta_ratio_30s",
     "cvd_delta_ratio_1m",
+    "cvd_abs_5m",
+    "cvd_ratio_5m",
     "oi_change_5m_pct",
     "oi_change_1m_pct",
     "oi_change_fast_pct",
