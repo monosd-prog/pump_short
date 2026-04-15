@@ -38,6 +38,7 @@ from short_pump.liquidations import (
     get_liq_debug_state,
     get_liq_health,
     get_liq_stats,
+    get_liq_stats_usd,
     register_symbol,
     unregister_symbol,
 )
@@ -989,7 +990,7 @@ def run_watch_for_symbol(
 
                         # Liquidation stats (unified with fast0)
                         now_ts = time.time()
-                        liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats)
+                        liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats, get_liq_stats_usd=get_liq_stats_usd)
                         liq_short_count_30s = liq["liq_short_count_30s"]
                         liq_short_usd_30s = liq["liq_short_usd_30s"]
                         liq_short_count_1m = liq["liq_short_count_1m"]
@@ -1232,7 +1233,7 @@ def run_watch_for_symbol(
 
                     # Liquidation stats (unified with fast0)
                     now_ts = time.time()
-                    liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats)
+                    liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats, get_liq_stats_usd=get_liq_stats_usd)
                     liq_short_count_30s = liq["liq_short_count_30s"]
                     liq_short_usd_30s = liq["liq_short_usd_30s"]
                     liq_short_count_1m = liq["liq_short_count_1m"]

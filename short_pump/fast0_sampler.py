@@ -27,7 +27,7 @@ from short_pump.bybit_api import (
 )
 from short_pump.config import Config
 from short_pump.context5m import StructureState, build_dbg5, compute_context_score_5m
-from short_pump.liquidations import get_liq_stats, register_symbol, unregister_symbol
+from short_pump.liquidations import get_liq_stats, get_liq_stats_usd, register_symbol, unregister_symbol
 from short_pump.logging_utils import get_logger, log_exception, log_info
 from common.io_dataset import (
     _live_outcome_duplicate,
@@ -946,7 +946,7 @@ def run_fast0_for_symbol(
                 )
 
                 # Liquidations via unified adapter
-                liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats)
+                liq = liquidation_features(symbol=cfg.symbol, now_ts=now_ts, get_liq_stats=get_liq_stats, get_liq_stats_usd=get_liq_stats_usd)
 
                 # Orderbook (optional; keep same flag behavior)
                 ob_imbalance, spread_bps = (None, None)
