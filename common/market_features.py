@@ -262,6 +262,49 @@ def cvd_delta_ratio(trades: pd.DataFrame, since_ts: pd.Timestamp) -> Optional[fl
     return float((buy - sell) / total)
 
 
+def cvd_5m(
+    trades: pd.DataFrame, now_ts_utc: pd.Timestamp
+) -> tuple[Optional[float], Optional[float]]:
+    """
+    True Cumulative Volume Delta over last 5 minutes.
+    Groups trades into 1m bars, computes per-bar delta (buy_qty - sell_qty),
+    returns (cvd_abs, cvd_ratio) where:
+    - cvd_abs  = cumsum of bar deltas (in base asset qty)
+    - cvd_ratio = cvd_abs / total_volume, normalized to [-1, 1]
+    Returns (None, None) if insufficient data.
+    """
+    if trades is None or trades.empty:
+        return None, None
+    required = {"ts", "side", "qty"}
+    if not required.issubset(set(trades.columns)):
+        return None, None
+    since_5m = now_ts_utc - pd.Timedelta(minutes=5)
+    x = trades[trades["ts"] >= since_5m]
+    if x is None or x.empty:
+        return None, None
+    try:
+        x = x.copy()
+        x["qty"] = x["qty"].astype(float)
+        side_lower = x["side"].astype(str).str.lower()
+        x["_buy"] = x["qty"].where(side_lower == "buy", 0.0)
+        x["_sell"] = x["qty"].where(side_lower == "sell", 0.0)
+        ts_col = x["ts"]
+        if ts_col.dt.tz is None:
+            ts_col = ts_col.dt.tz_localize("UTC")
+        x["_bar"] = ts_col.dt.floor("1min")
+        bars = x.groupby("_bar").agg(
+            bar_buy=("_buy", "sum"),
+            bar_sell=("_sell", "sum"),
+        )
+        bars["bar_delta"] = bars["bar_buy"] - bars["bar_sell"]
+        cvd_abs = float(bars["bar_delta"].sum())
+        total_volume = float((bars["bar_buy"] + bars["bar_sell"]).sum())
+        cvd_ratio = float(cvd_abs / total_volume) if total_volume > 0 else None
+        return cvd_abs, cvd_ratio
+    except Exception:
+        return None, None
+
+
 def oi_change_pct(oi_df: pd.DataFrame, lookback_minutes: int) -> Optional[float]:
     if oi_df is None or oi_df.empty:
         return None
@@ -513,6 +556,7 @@ def market_features_snapshot(
     dr1m = delta_ratio(trades_df, since_1m)
     cvd30 = cvd_delta_ratio(trades_df, since_30s)
     cvd1m = cvd_delta_ratio(trades_df, since_1m)
+    cvd_abs_5m, cvd_ratio_5m_val = cvd_5m(trades_df, now_ts_utc)
 
     oi_fast = oi_change_pct(oi, lookback_minutes=3) if oi is not None else None
     oi_1m = oi_change_pct(oi, lookback_minutes=1) if oi is not None else None
@@ -557,6 +601,8 @@ def market_features_snapshot(
         "delta_ratio_1m": dr1m,
         "cvd_delta_ratio_30s": cvd30,
         "cvd_delta_ratio_1m": cvd1m,
+        "cvd_abs_5m": cvd_abs_5m,
+        "cvd_ratio_5m": cvd_ratio_5m_val,
         "oi_change_fast_pct": oi_fast,
         "oi_change_1m_pct": oi_1m,
         "oi_change_5m_pct": oi_5m,
