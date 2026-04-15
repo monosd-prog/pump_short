@@ -503,6 +503,17 @@ def update_guard_state_from_metrics(
     new_state: Dict[str, GuardEntry] = {}
     for mode_name, met in metrics_by_mode.items():
         prev = current_state.get(mode_name) or GuardEntry(mode_name=mode_name)
+        # Skip auto-update for manually locked modes
+        current_reason = prev.reason if prev else ""
+        if current_reason and "MANUAL" in str(current_reason).upper():
+            new_state[mode_name] = prev
+            logger.info(
+                "GUARD_MANUAL_LOCK | mode=%s state=%s reason=%s",
+                mode_name,
+                prev.current_state,
+                current_reason,
+            )
+            continue
         new_state[mode_name] = next_state(prev, met)
     _dump_state_raw(new_state)
     return new_state
