@@ -166,8 +166,7 @@ def get_risk_profile(
             and 7.5 <= dist_val < 10.0
             and ctx_val is not None
             and 0.4 <= ctx_val < 0.6
-            and liq_val is not None
-            and liq_val == 0.0
+            and (liq_val is None or liq_val < 100.0)
         ):
             profile = "short_pump_deep"
             mult = _float_env("SHORT_PUMP_DEEP_RISK_MULT", 0.7)
