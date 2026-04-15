@@ -547,6 +547,104 @@ def liquidation_features(
     return result
 
 
+def footprint_features(
+    trades: pd.DataFrame,
+    *,
+    now_ts_utc: pd.Timestamp,
+    last_price: float,
+    lookback_bars: int = 3,
+    n_bins: int = 20,
+) -> dict:
+    """
+    Compute Footprint features from recent trades.
+    Groups trades into price bins over last lookback_bars minutes.
+    Returns delta and imbalance metrics at entry price level.
+    """
+    _none: dict = {
+        "fp_delta_at_entry": None,
+        "fp_imbalance_at_entry": None,
+        "fp_total_delta": None,
+        "fp_total_delta_ratio": None,
+        "fp_sell_bins_ratio": None,
+        "fp_max_sell_bin_price": None,
+        "fp_max_buy_bin_price": None,
+    }
+    try:
+        if trades is None or trades.empty:
+            return _none
+        required = {"ts", "side", "qty", "price"}
+        if not required.issubset(set(trades.columns)):
+            return _none
+
+        since = now_ts_utc - pd.Timedelta(minutes=lookback_bars)
+        x = trades[trades["ts"] >= since]
+        if x is None or x.empty:
+            return _none
+
+        x = x.copy()
+        x["qty"] = pd.to_numeric(x["qty"], errors="coerce")
+        x["price"] = pd.to_numeric(x["price"], errors="coerce")
+        x = x.dropna(subset=["qty", "price"])
+        if x.empty:
+            return _none
+
+        side_lower = x["side"].astype(str).str.lower()
+        x["is_buy"] = side_lower == "buy"
+
+        price_low = float(x["price"].min())
+        price_high = float(x["price"].max())
+        if price_high <= price_low:
+            return _none
+
+        bin_size = (price_high - price_low) / n_bins
+        x["bin"] = ((x["price"] - price_low) / bin_size).astype(int).clip(lower=0, upper=n_bins - 1)
+
+        grouped = x.groupby("bin").apply(
+            lambda g: pd.Series({
+                "buy_vol": float(g.loc[g["is_buy"], "qty"].sum()),
+                "sell_vol": float(g.loc[~g["is_buy"], "qty"].sum()),
+            })
+        )
+        if grouped.empty:
+            return _none
+
+        grouped["delta"] = grouped["buy_vol"] - grouped["sell_vol"]
+        grouped["total"] = grouped["buy_vol"] + grouped["sell_vol"]
+        grouped["imbalance"] = grouped["delta"] / grouped["total"].clip(lower=1e-10)
+        grouped["bin_price"] = price_low + (grouped.index.astype(float) + 0.5) * bin_size
+
+        # Metrics at entry price level
+        entry_bin = int((last_price - price_low) / bin_size)
+        entry_bin = max(0, min(n_bins - 1, entry_bin))
+        if entry_bin in grouped.index:
+            fp_delta_at_entry = float(grouped.loc[entry_bin, "delta"])
+            fp_imbalance_at_entry = float(grouped.loc[entry_bin, "imbalance"])
+        else:
+            fp_delta_at_entry = None
+            fp_imbalance_at_entry = None
+
+        # Global metrics across all bins
+        fp_total_delta = float(grouped["delta"].sum())
+        fp_sell_bins_ratio = float((grouped["delta"] < 0).sum() / len(grouped))
+        fp_max_sell_bin_price = float(grouped.loc[grouped["delta"].idxmin(), "bin_price"])
+        fp_max_buy_bin_price = float(grouped.loc[grouped["delta"].idxmax(), "bin_price"])
+
+        total_vol = float(grouped["total"].sum())
+        fp_total_delta_ratio = float(fp_total_delta / total_vol) if total_vol > 0 else None
+
+        return {
+            "fp_delta_at_entry": fp_delta_at_entry,
+            "fp_imbalance_at_entry": fp_imbalance_at_entry,
+            "fp_total_delta": fp_total_delta,
+            "fp_total_delta_ratio": fp_total_delta_ratio,
+            "fp_sell_bins_ratio": fp_sell_bins_ratio,
+            "fp_max_sell_bin_price": fp_max_sell_bin_price,
+            "fp_max_buy_bin_price": fp_max_buy_bin_price,
+        }
+    except Exception:
+        return _none
+
+
 def volume_profile(
     candles: pd.DataFrame,
     *,
@@ -731,6 +829,12 @@ def market_features_snapshot(
     tlife = time_life_features(now_ts_utc=now_ts_utc, candles_5m=candles_5m, pump_ts_utc=pump_ts_utc)
     price_struct = price_structure_features_1m(candles_1m)
     vp = volume_profile(candles_1m) if candles_1m is not None else {}
+    last_close_price = (
+        float(candles_1m["close"].iloc[-1])
+        if candles_1m is not None and not candles_1m.empty and "close" in candles_1m.columns
+        else 0.0
+    )
+    fp = footprint_features(trades_df, now_ts_utc=now_ts_utc, last_price=last_close_price)
 
     return {
         "delta_ratio_30s": dr30,
@@ -758,5 +862,6 @@ def market_features_snapshot(
         **tlife,
         **price_struct,
         **vp,
+        **fp,
     }
 

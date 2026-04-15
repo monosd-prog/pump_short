@@ -39,6 +39,13 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     "vp_poc_dist_pct",
     "vp_vah_dist_pct",
     "vp_val_dist_pct",
+    "fp_delta_at_entry",
+    "fp_imbalance_at_entry",
+    "fp_total_delta",
+    "fp_total_delta_ratio",
+    "fp_sell_bins_ratio",
+    "fp_max_sell_bin_price",
+    "fp_max_buy_bin_price",
     # oi
     "oi_change_fast_pct",
     "oi_change_1m_pct",
