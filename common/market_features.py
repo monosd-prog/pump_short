@@ -547,6 +547,125 @@ def liquidation_features(
     return result
 
 
+def volume_profile(
+    candles: pd.DataFrame,
+    *,
+    lookback: int = 30,
+    n_bins: int = 50,
+    value_area_pct: float = 0.70,
+) -> dict:
+    """
+    Compute Volume Profile (Market Profile) from 1m candles.
+    Returns POC, VAH, VAL, and distances from last close.
+
+    - POC (Point of Control): price level with highest volume
+    - VAH (Value Area High): upper bound of 70% volume zone
+    - VAL (Value Area Low): lower bound of 70% volume zone
+    - poc_dist_pct: distance from last close to POC in %
+    """
+    _none: dict = {
+        "vp_poc": None,
+        "vp_vah": None,
+        "vp_val": None,
+        "vp_poc_dist_pct": None,
+        "vp_vah_dist_pct": None,
+        "vp_val_dist_pct": None,
+    }
+    try:
+        if candles is None or candles.empty:
+            return _none
+        required = {"low", "high", "close", "volume"}
+        if not required.issubset(set(candles.columns)):
+            return _none
+        df = candles.tail(lookback).copy()
+        if len(df) < 5:
+            return _none
+
+        lows = df["low"].astype(float)
+        highs = df["high"].astype(float)
+        volumes = df["volume"].astype(float)
+
+        price_low = float(lows.min())
+        price_high = float(highs.max())
+        if price_high <= price_low:
+            return _none
+
+        bin_size = (price_high - price_low) / n_bins
+        # bin boundaries: n_bins+1 edges, n_bins midpoints
+        bin_edges = [price_low + i * bin_size for i in range(n_bins + 1)]
+        bin_volumes = [0.0] * n_bins
+
+        for i in df.index:
+            c_low = float(lows[i])
+            c_high = float(highs[i])
+            c_vol = float(volumes[i])
+            # find bins overlapping [c_low, c_high]
+            overlapping = []
+            for b in range(n_bins):
+                b_lo = bin_edges[b]
+                b_hi = bin_edges[b + 1]
+                if b_hi > c_low and b_lo < c_high:
+                    overlapping.append(b)
+            if not overlapping:
+                continue
+            vol_per_bin = c_vol / len(overlapping)
+            for b in overlapping:
+                bin_volumes[b] += vol_per_bin
+
+        # POC = bin with max volume
+        poc_idx = int(max(range(n_bins), key=lambda b: bin_volumes[b]))
+        poc_price = bin_edges[poc_idx] + bin_size * 0.5
+
+        # Value Area: expand from POC until accumulated >= target
+        total_volume = sum(bin_volumes)
+        if total_volume <= 0:
+            return _none
+        target = total_volume * value_area_pct
+
+        va_bins = {poc_idx}
+        accumulated = bin_volumes[poc_idx]
+        lo_idx = poc_idx
+        hi_idx = poc_idx
+
+        while accumulated < target:
+            # candidate below
+            next_lo = lo_idx - 1
+            # candidate above
+            next_hi = hi_idx + 1
+            vol_lo = bin_volumes[next_lo] if next_lo >= 0 else -1.0
+            vol_hi = bin_volumes[next_hi] if next_hi < n_bins else -1.0
+
+            if vol_lo < 0 and vol_hi < 0:
+                break
+            if vol_hi >= vol_lo:
+                hi_idx = next_hi
+                va_bins.add(hi_idx)
+                accumulated += bin_volumes[hi_idx]
+            else:
+                lo_idx = next_lo
+                va_bins.add(lo_idx)
+                accumulated += bin_volumes[lo_idx]
+
+        vah = bin_edges[hi_idx + 1]  # upper edge of highest VA bin
+        val = bin_edges[lo_idx]      # lower edge of lowest VA bin
+
+        last_close = float(df["close"].iloc[-1])
+        poc_dist_pct = (last_close - poc_price) / last_close * 100.0
+        vah_dist_pct = (last_close - vah) / last_close * 100.0
+        val_dist_pct = (last_close - val) / last_close * 100.0
+
+        return {
+            "vp_poc": poc_price,
+            "vp_vah": vah,
+            "vp_val": val,
+            "vp_poc_dist_pct": poc_dist_pct,
+            "vp_vah_dist_pct": vah_dist_pct,
+            "vp_val_dist_pct": val_dist_pct,
+        }
+    except Exception:
+        return _none
+
+
 def market_features_snapshot(
     *,
     trades: Optional[pd.DataFrame],
@@ -611,6 +730,7 @@ def market_features_snapshot(
     )
     tlife = time_life_features(now_ts_utc=now_ts_utc, candles_5m=candles_5m, pump_ts_utc=pump_ts_utc)
     price_struct = price_structure_features_1m(candles_1m)
+    vp = volume_profile(candles_1m) if candles_1m is not None else {}
 
     return {
         "delta_ratio_30s": dr30,
@@ -637,5 +757,6 @@ def market_features_snapshot(
         **rel_vol,
         **tlife,
         **price_struct,
+        **vp,
     }
 

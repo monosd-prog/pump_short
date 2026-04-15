@@ -33,6 +33,12 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     "cvd_delta_ratio_1m",
     "cvd_abs_5m",
     "cvd_ratio_5m",
+    "vp_poc",
+    "vp_vah",
+    "vp_val",
+    "vp_poc_dist_pct",
+    "vp_vah_dist_pct",
+    "vp_val_dist_pct",
     # oi
     "oi_change_fast_pct",
     "oi_change_1m_pct",
