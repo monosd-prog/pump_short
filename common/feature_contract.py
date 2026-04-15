@@ -46,6 +46,11 @@ CANONICAL_EVENT_FIELDS: list[str] = [
     "fp_sell_bins_ratio",
     "fp_max_sell_bin_price",
     "fp_max_buy_bin_price",
+    "liq_long_accel",
+    "liq_short_accel",
+    "cvd_momentum",
+    "cvd_accel",
+    "vol_accel",
     # oi
     "oi_change_fast_pct",
     "oi_change_1m_pct",

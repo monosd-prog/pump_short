@@ -81,6 +81,37 @@ def _sanitize_dist_to_peak(val: object) -> float:
     return v
 
 
+def _compute_derived_deltas(payload: dict) -> dict:
+    """Compute derived delta metrics from merged snap+liq payload."""
+    # Liquidation acceleration
+    liq_long_30s = payload.get("liq_long_usd_30s_real") or 0.0
+    liq_long_1m = payload.get("liq_long_usd_1m_real") or 0.0
+    liq_short_30s = payload.get("liq_short_usd_30s_real") or 0.0
+    liq_short_1m = payload.get("liq_short_usd_1m_real") or 0.0
+    liq_long_accel = (liq_long_30s * 2.0) / liq_long_1m if liq_long_1m > 0 else None
+    liq_short_accel = (liq_short_30s * 2.0) / liq_short_1m if liq_short_1m > 0 else None
+
+    # CVD momentum and acceleration
+    cvd30 = payload.get("cvd_delta_ratio_30s")
+    cvd1m = payload.get("cvd_delta_ratio_1m")
+    cvd5m = payload.get("cvd_ratio_5m")
+    cvd_momentum = (cvd30 - cvd5m) if (cvd30 is not None and cvd5m is not None) else None
+    cvd_accel = (cvd30 - cvd1m) if (cvd30 is not None and cvd1m is not None) else None
+
+    # Volume acceleration
+    vol_1m = payload.get("volume_1m")
+    vol_sma = payload.get("volume_sma_20")
+    vol_accel = (vol_1m / vol_sma) if (vol_1m and vol_sma and vol_sma > 0) else None
+
+    return {
+        "liq_long_accel": liq_long_accel,
+        "liq_short_accel": liq_short_accel,
+        "cvd_momentum": cvd_momentum,
+        "cvd_accel": cvd_accel,
+        "vol_accel": vol_accel,
+    }
+
+
 TG_OUTCOME_TG_SEND_RETRY_MAX = int(os.getenv("TG_OUTCOME_TG_SEND_RETRY_MAX", "3").replace(",", "."))
 TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC = float(os.getenv("TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC", "2").replace(",", "."))
 ENABLE_ORDERBOOK = os.getenv("ENABLE_ORDERBOOK", "0").strip().lower() in ("1", "true", "yes", "y", "on")
@@ -1106,6 +1137,7 @@ def run_watch_for_symbol(
                                 "spread_bps": spread_bps,
                             }
                         )
+                        decision_1m_payload.update(_compute_derived_deltas(decision_1m_payload))
                         now_decision_ts = time.time()
                         if entry_candidate_active and now_decision_ts > entry_candidate_expires_ts:
                             entry_candidate_active = False
@@ -1356,6 +1388,7 @@ def run_watch_for_symbol(
                             "spread_bps": spread_bps,
                         }
                     )
+                    payload_fast.update(_compute_derived_deltas(payload_fast))
                     now_decision_ts = time.time()
                     if entry_candidate_active and now_decision_ts > entry_candidate_expires_ts:
                         entry_candidate_active = False

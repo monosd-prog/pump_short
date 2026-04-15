@@ -836,6 +836,31 @@ def market_features_snapshot(
     )
     fp = footprint_features(trades_df, now_ts_utc=now_ts_utc, last_price=last_close_price)
 
+    # --- Derived deltas ---
+    # Liquidation acceleration placeholders: liquidation metrics are computed in
+    # liquidation_features(), not in this snapshot function.
+    liq_long_30s_real = None
+    liq_long_1m_real = None
+    liq_short_30s_real = None
+    liq_short_1m_real = None
+    liq_long_accel = (
+        (float(liq_long_30s_real) * 2.0) / float(liq_long_1m_real)
+        if (liq_long_30s_real is not None and liq_long_1m_real is not None and float(liq_long_1m_real) > 0)
+        else None
+    )
+    liq_short_accel = (
+        (float(liq_short_30s_real) * 2.0) / float(liq_short_1m_real)
+        if (liq_short_30s_real is not None and liq_short_1m_real is not None and float(liq_short_1m_real) > 0)
+        else None
+    )
+
+    # CVD momentum/acceleration from already computed CVD metrics.
+    cvd_momentum = (cvd30 - cvd_ratio_5m_val) if (cvd30 is not None and cvd_ratio_5m_val is not None) else None
+    cvd_accel = (cvd30 - cvd1m) if (cvd30 is not None and cvd1m is not None) else None
+
+    # Volume acceleration: current 1m vs 1m SMA.
+    vol_accel = (v1 / vsma) if (v1 is not None and vsma is not None and vsma > 0) else None
+
     return {
         "delta_ratio_30s": dr30,
         "delta_ratio_1m": dr1m,
@@ -863,5 +888,10 @@ def market_features_snapshot(
         **price_struct,
         **vp,
         **fp,
+        "liq_long_accel": liq_long_accel,
+        "liq_short_accel": liq_short_accel,
+        "cvd_momentum": cvd_momentum,
+        "cvd_accel": cvd_accel,
+        "vol_accel": vol_accel,
     }
 
