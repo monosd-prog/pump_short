@@ -77,9 +77,16 @@ def build_short_pump_signal(
     ctx_parts: Any = None,
     liq_short_usd_30s: Any = None,
     liq_long_usd_30s: Any = None,
+    funding_rate_abs: Any = None,
     oi_change_fast_pct: Any = None,
     cvd_delta_ratio_30s: Any = None,
     cvd_delta_ratio_1m: Any = None,
+    cvd_ratio_5m: Any = None,
+    cvd_momentum: Any = None,
+    vp_poc_dist_pct: Any = None,
+    fp_imbalance_at_entry: Any = None,
+    liq_short_usd_30s_real: Any = None,
+    liq_long_usd_30s_real: Any = None,
     dist_to_peak_pct: Any = None,
     stage: int | None = None,
     debug_payload: Any = None,
@@ -110,6 +117,14 @@ def build_short_pump_signal(
         cvd_1m=float(cvd_delta_ratio_1m) if cvd_delta_ratio_1m is not None else None,
         liq_long_usd_30s=float(liq_long_usd_30s) if liq_long_usd_30s is not None else None,
         liq_short_usd_30s=float(liq_short_usd_30s) if liq_short_usd_30s is not None else None,
+        funding_rate_abs=float(funding_rate_abs) if funding_rate_abs is not None else None,
+        oi_change_fast_pct=float(oi_change_fast_pct) if oi_change_fast_pct is not None else None,
+        cvd_ratio_5m=float(cvd_ratio_5m) if cvd_ratio_5m is not None else None,
+        cvd_momentum=float(cvd_momentum) if cvd_momentum is not None else None,
+        vp_poc_dist_pct=float(vp_poc_dist_pct) if vp_poc_dist_pct is not None else None,
+        fp_imbalance_at_entry=float(fp_imbalance_at_entry) if fp_imbalance_at_entry is not None else None,
+        liq_short_usd_30s_real=float(liq_short_usd_30s_real) if liq_short_usd_30s_real is not None else None,
+        liq_long_usd_30s_real=float(liq_long_usd_30s_real) if liq_long_usd_30s_real is not None else None,
         extras=extras,
     )
 
@@ -180,9 +195,16 @@ def format_entry_ok(
     ctx_parts: Any = None,
     liq_short_usd_30s: Any = None,
     liq_long_usd_30s: Any = None,
+    funding_rate_abs: Any = None,
     oi_change_fast_pct: Any = None,
     cvd_delta_ratio_30s: Any = None,
     cvd_delta_ratio_1m: Any = None,
+    cvd_ratio_5m: Any = None,
+    cvd_momentum: Any = None,
+    vp_poc_dist_pct: Any = None,
+    fp_imbalance_at_entry: Any = None,
+    liq_short_usd_30s_real: Any = None,
+    liq_long_usd_30s_real: Any = None,
     dist_to_peak_pct: Any = None,
     stage: int | None = None,
     debug_payload: Any = None,
@@ -205,9 +227,16 @@ def format_entry_ok(
         ctx_parts=ctx_parts,
         liq_short_usd_30s=liq_short_usd_30s,
         liq_long_usd_30s=liq_long_usd_30s,
+        funding_rate_abs=funding_rate_abs,
         oi_change_fast_pct=oi_change_fast_pct,
         cvd_delta_ratio_30s=cvd_delta_ratio_30s,
         cvd_delta_ratio_1m=cvd_delta_ratio_1m,
+        cvd_ratio_5m=cvd_ratio_5m,
+        cvd_momentum=cvd_momentum,
+        vp_poc_dist_pct=vp_poc_dist_pct,
+        fp_imbalance_at_entry=fp_imbalance_at_entry,
+        liq_short_usd_30s_real=liq_short_usd_30s_real,
+        liq_long_usd_30s_real=liq_long_usd_30s_real,
         dist_to_peak_pct=dist_to_peak_pct,
         stage=stage,
         debug_payload=debug_payload,
@@ -388,39 +417,71 @@ def format_outcome(
     hold_seconds: Any = None,
     mae_pct: Any = None,
     mfe_pct: Any = None,
+    cvd_ratio_5m: Any = None,
+    vp_poc_dist_pct: Any = None,
+    fp_imbalance_at_entry: Any = None,
+    funding_rate_abs: Any = None,
+    liq_short_usd_30s_real: Any = None,
+    liq_long_usd_30s_real: Any = None,
     debug_payload: Any = None,
     risk_profile: str | None = None,
     notional_usd: float | None = None,
     leverage: int | None = None,
     margin_mode: str | None = None,
 ) -> str:
-    header = f"{_emoji(side)} {side.upper()} | {strategy} | OUTCOME | res={outcome} | sym={symbol}"
+    # Result header with dedicated outcome emoji.
+    outcome_emoji = "✅" if outcome == "TP_hit" else "❌" if outcome == "SL_hit" else "⏱"
+    header = f"{outcome_emoji} {side.upper()} | {strategy} | OUTCOME | res={outcome} | sym={symbol}"
     lines = [
         header,
-        f"run_id={run_id} eid={_short_eid(event_id)}",
-        f"entry={_fmt_num(entry_price)} tp={_fmt_num(tp_price)} ({_fmt_pct(tp_pct)}) sl={_fmt_num(sl_price)} ({_fmt_pct(sl_pct)})",
+        f"🆔 run_id={run_id} eid={_short_eid(event_id)}",
+        f"💰 entry={_fmt_num(entry_price)} tp={_fmt_num(tp_price)} ({_fmt_pct(tp_pct)}) sl={_fmt_num(sl_price)} ({_fmt_pct(sl_pct)})",
     ]
+
+    # PnL + hold + MAE/MFE
     metrics = []
     if pnl_pct is not None:
-        metrics.append(f"pnl={_fmt_pct(pnl_pct)}")
+        pnl_emoji = "📈" if float(pnl_pct) > 0 else "📉"
+        metrics.append(f"{pnl_emoji} pnl={_fmt_pct(pnl_pct)}")
     if hold_seconds is not None:
-        metrics.append(f"hold={_fmt_num(hold_seconds)}s")
+        metrics.append(f"⏱ hold={_fmt_num(hold_seconds)}s")
     if mae_pct is not None:
-        metrics.append(f"mae={_fmt_pct(mae_pct)}")
+        metrics.append(f"↘ mae={_fmt_pct(mae_pct)}")
     if mfe_pct is not None:
-        metrics.append(f"mfe={_fmt_pct(mfe_pct)}")
+        metrics.append(f"↗ mfe={_fmt_pct(mfe_pct)}")
     if metrics:
         lines.append(" | ".join(metrics))
+
+    # Risk profile
     if risk_profile:
-        extra = [f"risk_profile={risk_profile}"]
+        extra = [f"🎯 {risk_profile}"]
         if notional_usd is not None and notional_usd > 0:
-            extra.append(f"notional={notional_usd:.0f} USD")
+            extra.append(f"{notional_usd:.0f} USD")
         if leverage is not None:
-            extra.append(f"lev=x{leverage}")
+            extra.append(f"x{leverage}")
         if margin_mode:
-            extra.append(f"margin={margin_mode}")
-        if extra:
-            lines.append(" | ".join(extra))
+            extra.append(margin_mode)
+        lines.append(" | ".join(extra))
+
+    # CVD + VP/FP + funding (when available)
+    market_parts = []
+    if cvd_ratio_5m is not None:
+        market_parts.append(f"cvd5m={_fmt_num(cvd_ratio_5m, 3)}")
+    if vp_poc_dist_pct is not None:
+        market_parts.append(f"poc_dist={_fmt_pct(vp_poc_dist_pct)}")
+    if fp_imbalance_at_entry is not None:
+        market_parts.append(f"fp_imb={_fmt_num(fp_imbalance_at_entry, 3)}")
+    if funding_rate_abs is not None:
+        market_parts.append(f"fund={_fmt_num(funding_rate_abs, 4)}")
+    if market_parts:
+        lines.append("📊 " + " | ".join(market_parts))
+
+    # Liquidations real USD
+    liq_long = liq_long_usd_30s_real
+    liq_short = liq_short_usd_30s_real
+    if liq_long is not None or liq_short is not None:
+        lines.append(f"💧 liqL={_fmt_num(liq_long, 0)}$ | liqS={_fmt_num(liq_short, 0)}$")
+
     dbg = _maybe_debug_json("outcome", debug_payload)
     if dbg:
         lines.append(dbg)

@@ -27,6 +27,14 @@ class Signal:
     volume_1m: Optional[float] = None
     volume_sma_20: Optional[float] = None
     volume_zscore_20: Optional[float] = None
+    funding_rate_abs: Optional[float] = None
+    oi_change_fast_pct: Optional[float] = None
+    cvd_ratio_5m: Optional[float] = None
+    cvd_momentum: Optional[float] = None
+    vp_poc_dist_pct: Optional[float] = None
+    fp_imbalance_at_entry: Optional[float] = None
+    liq_short_usd_30s_real: Optional[float] = None
+    liq_long_usd_30s_real: Optional[float] = None
     extras: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -118,20 +126,48 @@ def format_tg(signal: Signal) -> str:
                 f"tp={_fmt_num(signal.tp_price)} ({_fmt_pct(signal.tp_pct)}) "
                 f"sl={_fmt_num(signal.sl_price)} ({_fmt_pct(signal.sl_pct)})"
             )
-        metrics: list[str] = []
-        if signal.liq_short_usd_30s is not None or signal.liq_long_usd_30s is not None:
-            metrics.append(
-                f"liqS30s={_fmt_num(signal.liq_short_usd_30s, 0)} "
-                f"liqL30s={_fmt_num(signal.liq_long_usd_30s, 0)}"
+        # Line 1: Liquidations (real USD if available, else qty)
+        liq_long = signal.liq_long_usd_30s_real or signal.liq_long_usd_30s
+        liq_short = signal.liq_short_usd_30s_real or signal.liq_short_usd_30s
+        if liq_long is not None or liq_short is not None:
+            lines.append(
+                f"💧 liqL={_fmt_num(liq_long, 0)}$ | liqS={_fmt_num(liq_short, 0)}$"
             )
+
+        # Line 2: CVD block
+        cvd_parts = []
         if signal.cvd_30s is not None:
-            metrics.append(f"cvd30s={_fmt_num(signal.cvd_30s, 3)}")
+            cvd_parts.append(f"cvd30s={_fmt_num(signal.cvd_30s, 3)}")
         if signal.cvd_1m is not None:
-            metrics.append(f"cvd1m={_fmt_num(signal.cvd_1m, 3)}")
+            cvd_parts.append(f"cvd1m={_fmt_num(signal.cvd_1m, 3)}")
+        if signal.cvd_ratio_5m is not None:
+            cvd_parts.append(f"cvd5m={_fmt_num(signal.cvd_ratio_5m, 3)}")
+        if signal.cvd_momentum is not None:
+            cvd_parts.append(f"cvd_mom={_fmt_num(signal.cvd_momentum, 3)}")
+        if cvd_parts:
+            lines.append("📊 " + " | ".join(cvd_parts))
+
+        # Line 3: OI + Funding
+        oi_fund = []
+        if signal.oi_change_fast_pct is not None:
+            oi_fund.append(f"oi={_fmt_pct(signal.oi_change_fast_pct)}")
+        if signal.funding_rate_abs is not None:
+            oi_fund.append(f"fund={_fmt_num(signal.funding_rate_abs, 4)}")
+        if oi_fund:
+            lines.append("📈 " + " | ".join(oi_fund))
+
+        # Line 4: Volume Profile + Footprint
+        vp_fp = []
+        if signal.vp_poc_dist_pct is not None:
+            vp_fp.append(f"poc_dist={_fmt_pct(signal.vp_poc_dist_pct)}")
+        if signal.fp_imbalance_at_entry is not None:
+            vp_fp.append(f"fp_imb={_fmt_num(signal.fp_imbalance_at_entry, 3)}")
+        if vp_fp:
+            lines.append("🏔 " + " | ".join(vp_fp))
+
+        # Context score
         if signal.context_score is not None:
-            metrics.append(f"cs={_fmt_num(signal.context_score)}")
-        if metrics:
-            lines.append(" | ".join(metrics))
+            lines.append(f"🎯 cs={_fmt_num(signal.context_score)}")
 
     ctx_line = signal.extras.get("ctx_line")
     if ctx_line:
