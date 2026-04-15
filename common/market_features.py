@@ -514,12 +514,14 @@ def liquidation_features(
     symbol: str,
     now_ts: float,
     get_liq_stats: Callable[[str, float, int, str], Tuple[int, float]],
+    get_liq_stats_usd: Optional[Callable[[str, float, int, str], Tuple[int, float]]] = None,
 ) -> Dict[str, Any]:
     sc30, su30 = get_liq_stats(symbol, now_ts, 30, "short")
     sc60, su60 = get_liq_stats(symbol, now_ts, 60, "short")
     lc30, lu30 = get_liq_stats(symbol, now_ts, 30, "long")
     lc60, lu60 = get_liq_stats(symbol, now_ts, 60, "long")
-    return {
+    
+    result = {
         "liq_short_count_30s": sc30,
         "liq_short_usd_30s": su30,
         "liq_long_count_30s": lc30,
@@ -529,6 +531,20 @@ def liquidation_features(
         "liq_long_count_1m": lc60,
         "liq_long_usd_1m": lu60,
     }
+    
+    if get_liq_stats_usd is not None:
+        sc30_usd, su30_usd = get_liq_stats_usd(symbol, now_ts, 30, "short")
+        sc60_usd, su60_usd = get_liq_stats_usd(symbol, now_ts, 60, "short")
+        lc30_usd, lu30_usd = get_liq_stats_usd(symbol, now_ts, 30, "long")
+        lc60_usd, lu60_usd = get_liq_stats_usd(symbol, now_ts, 60, "long")
+        result.update({
+            "liq_short_usd_30s_real": su30_usd,
+            "liq_long_usd_30s_real": lu30_usd,
+            "liq_short_usd_1m_real": su60_usd,
+            "liq_long_usd_1m_real": lu60_usd,
+        })
+    
+    return result
 
 
 def market_features_snapshot(

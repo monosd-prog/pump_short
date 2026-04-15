@@ -157,6 +157,33 @@ def get_liq_stats(symbol: str, now_ts: float, window_seconds: int, side: str = "
                 )
                 _last_liq_zero_window_log_ts[sym] = now_wall
         return count, float(qty_sum)
+
+
+def get_liq_stats_usd(symbol: str, now_ts: float, window_seconds: int, side: str = "short") -> Tuple[int, float]:
+    """
+    Same as get_liq_stats() but returns (count, usd_sum) where
+    usd_sum = sum(qty * price) for each liquidation event in window.
+    """
+    sym = _normalize_symbol(symbol)
+    if now_ts < 10**11:
+        now_ms = int(now_ts * 1000)
+    else:
+        now_ms = int(now_ts)
+    with _lock:
+        _purge_locked(sym, now=now_ms)
+        q = _events_short.get(sym) if side == "short" else _events_long.get(sym)
+        if not q:
+            return 0, 0.0
+        cutoff_ms = now_ms - int(window_seconds * 1000)
+        count = 0
+        usd_sum = 0.0
+        for ts_ms, qty, price in q:
+            if ts_ms >= cutoff_ms:
+                count += 1
+                usd_sum += qty * price
+        return count, float(usd_sum)
+
+
 def get_liq_health() -> Dict[str, Optional[int]]:
     with _lock:
         xrp_short = _events_short.get("XRPUSDT")
