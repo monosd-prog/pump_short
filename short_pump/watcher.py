@@ -1102,6 +1102,8 @@ def run_watch_for_symbol(
                                 "funding_rate": funding_rate,
                                 "funding_rate_ts_utc": funding_rate_ts_utc,
                                 "funding_rate_abs": funding_rate_abs,
+                                "orderbook_imbalance_10": ob_imbalance,
+                                "spread_bps": spread_bps,
                             }
                         )
                         now_decision_ts = time.time()
@@ -1350,6 +1352,8 @@ def run_watch_for_symbol(
                             "funding_rate": funding_rate,
                             "funding_rate_ts_utc": funding_rate_ts_utc,
                             "funding_rate_abs": funding_rate_abs,
+                            "orderbook_imbalance_10": ob_imbalance,
+                            "spread_bps": spread_bps,
                         }
                     )
                     now_decision_ts = time.time()
