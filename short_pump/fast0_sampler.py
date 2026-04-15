@@ -728,7 +728,7 @@ def _run_fast0_outcome_watcher(
                                 leverage=_lev_fb,
                                 margin_mode=_mm_fb,
                             )
-                            send_text_fb = f"[NO LIQ] liq=0 fallback\n{msg_fb}"
+                            send_text_fb = msg_fb
                             deliver_outcome_tg(
                                 logger=logger,
                                 delivery_strategy=strategy_name,
@@ -1108,6 +1108,13 @@ def run_fast0_for_symbol(
                         volume_sma_20=volume_sma_20,
                         volume_zscore_20=volume_zscore_20,
                     )
+                    sig.cvd_ratio_5m = float(payload.get("cvd_ratio_5m")) if payload.get("cvd_ratio_5m") is not None else None
+                    sig.cvd_momentum = float(payload.get("cvd_momentum")) if payload.get("cvd_momentum") is not None else None
+                    sig.vp_poc_dist_pct = float(payload.get("vp_poc_dist_pct")) if payload.get("vp_poc_dist_pct") is not None else None
+                    sig.fp_imbalance_at_entry = float(payload.get("fp_imbalance_at_entry")) if payload.get("fp_imbalance_at_entry") is not None else None
+                    sig.funding_rate_abs = float(payload.get("funding_rate_abs")) if payload.get("funding_rate_abs") is not None else None
+                    sig.liq_short_usd_30s_real = float(payload.get("liq_short_usd_30s_real")) if payload.get("liq_short_usd_30s_real") is not None else None
+                    sig.liq_long_usd_30s_real = float(payload.get("liq_long_usd_30s_real")) if payload.get("liq_long_usd_30s_real") is not None else None
                     if FAST0_TG_ENTRY_ENABLE:
                         tg_allowed, tg_reason = is_fast0_tg_entry_allowed_with_reason(payload)
                         if not tg_allowed:

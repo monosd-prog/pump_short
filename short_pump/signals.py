@@ -47,6 +47,31 @@ def _fmt_num(val: Any, digits: int = 2, empty: str = "n/a") -> str:
         return empty
 
 
+def _fmt_price(val: Any, empty: str = "n/a") -> str:
+    """Smart price formatting: uses enough decimal places to show 4 significant digits."""
+    if val is None or val == "":
+        return empty
+    try:
+        f = float(val)
+        if f == 0:
+            return "0"
+        if f >= 100:
+            decimals = 2
+        elif f >= 10:
+            decimals = 3
+        elif f >= 1:
+            decimals = 4
+        elif f >= 0.1:
+            decimals = 5
+        elif f >= 0.01:
+            decimals = 6
+        else:
+            decimals = 8
+        return f"{f:.{decimals}f}"
+    except (TypeError, ValueError):
+        return empty
+
+
 def _fmt_pct(val: Any, digits: int = 2) -> str:
     return f"{_fmt_num(val, digits)}%"
 
@@ -102,9 +127,9 @@ def format_tg(signal: Signal) -> str:
 
         if signal.entry_price is not None:
             lines.append(
-                f"entry={_fmt_num(signal.entry_price)} "
-                f"tp={_fmt_num(signal.tp_price)} ({_fmt_pct(signal.tp_pct)}) "
-                f"sl={_fmt_num(signal.sl_price)} ({_fmt_pct(signal.sl_pct)})"
+                f"entry={_fmt_price(signal.entry_price)} "
+                f"tp={_fmt_price(signal.tp_price)} ({_fmt_pct(signal.tp_pct)}) "
+                f"sl={_fmt_price(signal.sl_price)} ({_fmt_pct(signal.sl_pct)})"
             )
     else:
         stage_str = str(signal.stage) if signal.stage is not None else "n/a"
@@ -122,9 +147,9 @@ def format_tg(signal: Signal) -> str:
         )
         if signal.entry_price is not None:
             lines.append(
-                f"entry={_fmt_num(signal.entry_price)} "
-                f"tp={_fmt_num(signal.tp_price)} ({_fmt_pct(signal.tp_pct)}) "
-                f"sl={_fmt_num(signal.sl_price)} ({_fmt_pct(signal.sl_pct)})"
+                f"entry={_fmt_price(signal.entry_price)} "
+                f"tp={_fmt_price(signal.tp_price)} ({_fmt_pct(signal.tp_pct)}) "
+                f"sl={_fmt_price(signal.sl_price)} ({_fmt_pct(signal.sl_pct)})"
             )
         # Line 1: Liquidations (real USD if available, else qty)
         liq_long = signal.liq_long_usd_30s_real or signal.liq_long_usd_30s

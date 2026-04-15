@@ -24,6 +24,31 @@ def _fmt_num(val: Any, digits: int = 2, empty: str = "n/a") -> str:
         return empty
 
 
+def _fmt_price(val: Any, empty: str = "n/a") -> str:
+    """Smart price formatting: uses enough decimal places to show 4 significant digits."""
+    if val is None or val == "":
+        return empty
+    try:
+        f = float(val)
+        if f == 0:
+            return "0"
+        if f >= 100:
+            decimals = 2
+        elif f >= 10:
+            decimals = 3
+        elif f >= 1:
+            decimals = 4
+        elif f >= 0.1:
+            decimals = 5
+        elif f >= 0.01:
+            decimals = 6
+        else:
+            decimals = 8
+        return f"{f:.{decimals}f}"
+    except (TypeError, ValueError):
+        return empty
+
+
 def _fmt_pct(val: Any, digits: int = 2) -> str:
     return f"{_fmt_num(val, digits)}%"
 
@@ -435,7 +460,7 @@ def format_outcome(
     lines = [
         header,
         f"🆔 run_id={run_id} eid={_short_eid(event_id)}",
-        f"💰 entry={_fmt_num(entry_price)} tp={_fmt_num(tp_price)} ({_fmt_pct(tp_pct)}) sl={_fmt_num(sl_price)} ({_fmt_pct(sl_pct)})",
+        f"💰 entry={_fmt_price(entry_price)} tp={_fmt_price(tp_price)} ({_fmt_pct(tp_pct)}) sl={_fmt_price(sl_price)} ({_fmt_pct(sl_pct)})",
     ]
 
     # PnL + hold + MAE/MFE
