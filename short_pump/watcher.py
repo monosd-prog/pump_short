@@ -18,6 +18,7 @@ from short_pump.bybit_api import (
     get_recent_trades,
     get_funding_rate,
     get_ls_ratio,
+    get_orderbook,
 )
 from short_pump.config import Config
 from short_pump.context5m import (
@@ -50,7 +51,7 @@ from notifications.tg_format import build_short_pump_signal, format_armed_short,
 from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.runtime import wall_time_utc
 from common.feature_contract import normalize_event_feature_row
-from common.market_features import liquidation_features, market_features_snapshot
+from common.market_features import liquidation_features, market_features_snapshot, orderbook_imbalance_and_spread
 
 logger = get_logger(__name__)
 
@@ -82,6 +83,7 @@ def _sanitize_dist_to_peak(val: object) -> float:
 
 TG_OUTCOME_TG_SEND_RETRY_MAX = int(os.getenv("TG_OUTCOME_TG_SEND_RETRY_MAX", "3").replace(",", "."))
 TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC = float(os.getenv("TG_OUTCOME_TG_SEND_RETRY_BACKOFF_SEC", "2").replace(",", "."))
+ENABLE_ORDERBOOK = os.getenv("ENABLE_ORDERBOOK", "0").strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 def _send_telegram_with_retry(
@@ -999,6 +1001,11 @@ def run_watch_for_symbol(
                         liq_long_usd_30s = liq["liq_long_usd_30s"]
                         liq_long_count_1m = liq["liq_long_count_1m"]
                         liq_long_usd_1m = liq["liq_long_usd_1m"]
+                        # Orderbook (optional)
+                        ob_imbalance, spread_bps = (None, None)
+                        if ENABLE_ORDERBOOK:
+                            ob = get_orderbook(cfg.category, cfg.symbol, limit=10)
+                            ob_imbalance, spread_bps = orderbook_imbalance_and_spread(ob, levels=10)
                         dbg = get_liq_debug_state(cfg.symbol)
                         log_info(
                             logger,
@@ -1242,6 +1249,11 @@ def run_watch_for_symbol(
                     liq_long_usd_30s = liq["liq_long_usd_30s"]
                     liq_long_count_1m = liq["liq_long_count_1m"]
                     liq_long_usd_1m = liq["liq_long_usd_1m"]
+                    # Orderbook (optional)
+                    ob_imbalance, spread_bps = (None, None)
+                    if ENABLE_ORDERBOOK:
+                        ob = get_orderbook(cfg.category, cfg.symbol, limit=10)
+                        ob_imbalance, spread_bps = orderbook_imbalance_and_spread(ob, levels=10)
                     dbg = get_liq_debug_state(cfg.symbol)
                     log_info(
                         logger,
