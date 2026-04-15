@@ -941,6 +941,26 @@ def build_factor_report_for_strategy(
         "ema_20_1m",
         "dist_to_ma20_pct",
         "dist_to_ema20_pct",
+        # CVD true 5m
+        "cvd_abs_5m",
+        "cvd_ratio_5m",
+        # Volume Profile
+        "vp_poc_dist_pct",
+        "vp_vah_dist_pct",
+        "vp_val_dist_pct",
+        # Footprint
+        "fp_delta_at_entry",
+        "fp_imbalance_at_entry",
+        "fp_total_delta_ratio",
+        "fp_sell_bins_ratio",
+        # Liquidations real USD
+        "liq_short_usd_30s_real",
+        "liq_long_usd_30s_real",
+        "liq_short_usd_1m_real",
+        "liq_long_usd_1m_real",
+        # Orderbook
+        "orderbook_imbalance_10",
+        "spread_bps",
     ]
 
     factors: Dict[str, Any] = {}
@@ -975,6 +995,13 @@ def build_factor_report_for_strategy(
             "wick_body_ratio_last",
             "volume_ratio_1m_20",
             "symbol",
+            "cvd_ratio_5m",
+            "vp_poc_dist_pct",
+            "fp_imbalance_at_entry",
+            "fp_sell_bins_ratio",
+            "liq_long_usd_30s_real",
+            "orderbook_imbalance_10",
+            "funding_rate_abs",
         ]
         if factor_blocks.get(f, FactorBlock("", False, [])).tracked
         and factor_blocks.get(f, FactorBlock("", False, [])).coverage_pct >= MIN_FACTOR_COVERAGE_PCT
