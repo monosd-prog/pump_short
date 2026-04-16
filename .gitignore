@@ -24,9 +24,11 @@ reports/
 # IDE
 .vscode/
 .cursor/
+.cursor*
 
 # Continue
 .continue/
+.continue*
 
 # temp
 *.log
