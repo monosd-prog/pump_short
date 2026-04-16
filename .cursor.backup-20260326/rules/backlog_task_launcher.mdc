@@ -1,0 +1,65 @@
+---
+description: Workflow for handling backlog tasks from project_ops
+globs: project_ops/tasks/**
+  project_ops/**
+alwaysApply: true
+---
+# Backlog Task Launcher
+
+Если пользователь ссылается на задачу из backlog / project_ops (например: B46, B53, TASK_Bxx, "возьми следующую задачу", "сформулируй задачу"), работать так:
+
+1. Сначала определить, это:
+- existing task
+- new task
+- bug task
+- rollout / product / analytics task
+
+2. Если это existing task:
+- найти её в project_ops/tasks или backlog
+- кратко пересказать:
+  - цель
+  - текущий статус
+  - blockers
+  - что именно делать сейчас
+- дальше оставаться в PLAN MODE, пока пользователь явно не подтвердит реализацию
+
+3. Если это new task:
+- создать draft task spec в стиле TASK_TEMPLATE:
+  - Context
+  - Problem
+  - Root Cause (если баг)
+  - Scope
+  - Non-scope
+  - Acceptance Criteria
+  - Validation Plan
+  - Risks
+- код не писать
+
+4. Если это bug task:
+- обязательно сначала построить lineage
+- указать exact break point
+- только потом предлагать fix
+
+5. Если пользователь просит "что делать дальше":
+- предложить top 3 next tasks
+- для каждой:
+  - why now
+  - value
+  - risk
+  - effort
+- выбрать одну recommended next task
+
+6. Если пользователь явно пишет:
+- "делай"
+- "AGENT"
+- "пиши код"
+только тогда можно переходить к реализации
+
+Формат ответа:
+1. Verdict
+2. Task / candidate task
+3. Plan
+4. Next step
+
+Не прыгать сразу в код.
+Не придумывать новый большой scope без опоры на backlog.

@@ -1,0 +1,119 @@
+---
+description: Strict project ops task execution workflow rules
+globs: project_ops/**
+alwaysApply: true
+---
+
+# Project Ops Task Execution Rule
+
+## Main Principle
+NO CODE WITHOUT A TASK.
+
+## Mandatory Workflow
+All work must follow strict stages:
+1. PLAN
+2. APPROVAL (user confirms)
+3. AGENT (implementation)
+
+No PLAN → no transition to code.
+
+## PLAN MODE (default)
+For any request:
+- First analyze the task
+- DO NOT write code
+- DO NOT propose diffs immediately
+
+You must:
+1. Formulate the task
+2. Describe:
+   - Context
+   - Problem
+   - Root Cause (if bug)
+   - Proposed Solution (high-level)
+   - Risks
+3. Add Acceptance Criteria
+4. Add Validation Plan (how to verify)
+
+Format should follow TASK_TEMPLATE.md closely.
+
+## Before AGENT MODE (must have)
+- Clear Scope
+- File list
+- What exactly changes
+- What DOES NOT change
+
+## AGENT MODE (only after approval)
+Allowed:
+- Write code
+- Create diffs
+- Modify files
+
+Forbidden:
+- Deviate from TASK
+- Make "side improvements"
+- Touch unrelated modules
+
+## POST-FIX WORKFLOW (MANDATORY)
+After AGENT fix:
+1. Execute:
+   - `py_compile` для affected files
+   - `git status` review (verify no unintended changes)
+2. Commit changes (NO fix is complete without commit)
+3. Push to remote
+4. If runtime files (e.g., `*.py`, `configs/`) are modified:
+   - Deploy/restart affected services
+5. Post-deploy smoke test / evidence collection (NO task is DONE without validation)
+
+## BUG TASKS (special rule)
+For bug tasks, first MANDATORY:
+1. Build lineage:
+   ENTRY → runner → state → outcome → delivery
+2. Find:
+   - exact break point
+   - why system produced current result
+3. Only then propose fix
+
+Forbidden:
+- Fix "by symptoms"
+- Propose refactoring instead of fixing
+
+## DATA-CRITICAL PATH
+When touching:
+- outcomes
+- trading_closes
+- guard
+- telegram delivery
+
+You must:
+- Check datasets
+- Check state
+- Check logs
+
+## ACCEPTANCE CRITERIA
+Every task must have:
+- Clear PASS/FAIL
+- Verification via:
+  - Logs
+  - CSV
+  - State
+  - TG messages
+
+## MODEL USAGE
+- PLAN → high
+- Complex bugs → high
+- Simple changes → medium
+- Task generation → medium
+
+## OUTPUT STYLE
+Always:
+1. Verdict
+2. Root cause
+3. Plan
+4. Only then (if approved) - code
+
+No fluff.
+No jumping straight to implementation.
+
+## CRITICAL RULE
+If user didn't say "do it"/"AGENT"/"write code":
+→ Stay in PLAN MODE

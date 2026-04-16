@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from short_pump.config import Config
 from short_pump.liquidations import start_liquidation_listener
 from short_pump.logging_utils import get_logger, log_exception
-from short_pump.watcher import run_watch_for_symbol
+from short_pump.watcher import run_watch_for_symbol, start_false_pump_webhook_task
 
 logger = get_logger(__name__)
 
@@ -29,12 +29,18 @@ class Runtime:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.sem = asyncio.Semaphore(cfg.max_concurrent)
+        self.false_pump_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self.false_pump_task: asyncio.Task | None = None
 
         # Start liquidation listener (non-blocking)
         try:
             start_liquidation_listener(cfg.category)
         except Exception as e:
             log_exception(logger, "Failed to start liquidation listener", step="LIQ_WS")
+        try:
+            self.false_pump_task = start_false_pump_webhook_task(cfg, self.false_pump_queue)
+        except Exception:
+            log_exception(logger, "Failed to start false_pump webhook", step="FALSE_PUMP")
 
         self.active: Dict[str, Job] = {}
         self.last_started: Dict[str, float] = {}

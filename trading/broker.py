@@ -172,6 +172,8 @@ def allow_entry(signal: Any) -> Tuple[bool, str]:
     strategy = (getattr(signal, "strategy", None) or "").strip()
     if strategy == "short_pump":
         return allow_entry_short_pump(signal)
+    if strategy == "false_pump":
+        return allow_entry_short_pump(signal)
     if strategy == "short_pump_filtered":
         return allow_entry_short_pump_filtered(signal)
     if strategy == "short_pump_fast0":

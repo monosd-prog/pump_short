@@ -1,7 +1,8 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
+from short_pump.false_pump.config import FalsePumpConfig
 from short_pump.logging_utils import get_logger, log_exception, log_info, log_warning
 
 logger = get_logger(__name__)
@@ -128,6 +129,7 @@ class Config:
     cvd_delta_ratio_30s_max: float = -0.12
     cvd_delta_ratio_1m_max: float = -0.05
     cvd_weight: float = 0.2
+    false_pump: FalsePumpConfig = field(default_factory=FalsePumpConfig)
 
     @classmethod
     def from_env(cls) -> "Config":

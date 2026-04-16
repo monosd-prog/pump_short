@@ -170,9 +170,9 @@ def _dedupe_key(signal: Signal) -> str:
 
 def _get_allowed_strategies() -> List[str]:
     """Runtime list from STRATEGIES env (so CLI --strategies can override)."""
-    raw = os.getenv("STRATEGIES", "short_pump,short_pump_filtered,short_pump_fast0,short_pump_fast0_filtered").strip()
+    raw = os.getenv("STRATEGIES", "short_pump,false_pump,short_pump_filtered,short_pump_fast0,short_pump_fast0_filtered").strip()
     out = [s.strip() for s in raw.split(",") if s.strip()]
-    return out if out else ["short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"]
+    return out if out else ["short_pump", "false_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"]
 
 
 # Priority for multi-strategy selection: lower index = higher priority
@@ -181,6 +181,7 @@ _STRATEGY_PRIORITY: dict[str, int] = {
     "short_pump_fast0": 1,
     "short_pump_filtered": 2,
     "short_pump": 3,
+    "false_pump": 4,
 }
 
 

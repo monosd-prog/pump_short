@@ -1,6 +1,7 @@
 # short_pump/watcher.py
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -28,6 +29,7 @@ from short_pump.context5m import (
     update_structure,
 )
 from short_pump.entry import decide_entry_fast, decide_entry_1m
+from short_pump.false_pump.webhook import start_webhook_server
 from short_pump.features import normalize_funding, oi_change_pct
 from short_pump.rollout import (
     SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX,
@@ -54,6 +56,10 @@ from common.feature_contract import normalize_event_feature_row
 from common.market_features import liquidation_features, market_features_snapshot, orderbook_imbalance_and_spread
 
 logger = get_logger(__name__)
+
+
+def start_false_pump_webhook_task(cfg: Config, queue: Any) -> asyncio.Task:
+    return asyncio.create_task(start_webhook_server(cfg.false_pump, queue))
 
 
 def _utc_now_str() -> str:
