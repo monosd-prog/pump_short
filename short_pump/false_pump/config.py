@@ -5,13 +5,13 @@ from dataclasses import dataclass
 
 @dataclass
 class FalsePumpConfig:
-    trigger_min_oi_pct: float = 20.0
-    trigger_min_price_pct: float = 5.0
-    monitor_timeout_sec: int = 600
+    trigger_min_oi_pct: float = 2.0
+    trigger_min_price_pct: float = 0.5
+    monitor_timeout_sec: int = 1200
     poll_interval_sec: int = 10
     trigger_cooldown_sec: int = 300
-    pump_price_pct: float = 3.0
-    pump_candles_count: int = 5
+    pump_price_pct: float = 0.8
+    pump_candles_count: int = 3
     pump_lookback_candles: int = 20
     oi_max_reaction_pct: float = 0.8
     near_top_pct: float = 5.0

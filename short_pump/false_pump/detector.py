@@ -91,6 +91,22 @@ def detect_false_pump(
 
     pump_detected, pump_pct = detect_pump(candles_1m, cfg)
     oi_weak = detect_oi_weak(oi_1m, cfg)
+    oi_change_short_term = None
+    if oi_1m is not None and not oi_1m.empty and "openInterest" in oi_1m.columns:
+        x = oi_1m.tail(max(2, int(cfg.pump_candles_count) + 1)).copy()
+        x["openInterest"] = pd.to_numeric(x["openInterest"], errors="coerce")
+        x = x.dropna(subset=["openInterest"])
+        if len(x) >= 2 and float(x["openInterest"].iloc[0]) > 0:
+            oi_change_short_term = (
+                (float(x["openInterest"].iloc[-1]) - float(x["openInterest"].iloc[0]))
+                / float(x["openInterest"].iloc[0])
+                * 100.0
+            )
+    if not oi_weak:
+        logger.debug(
+            f"[false_pump.detector] oi_weak=False {symbol if 'symbol' in dir() else ''} "
+            f"oi_chg={float(oi_change_short_term or 0.0):.3f}% threshold={cfg.oi_max_reaction_pct}%"
+        )
 
     dist_to_peak_pct = 0.0
     if peak_price_5m and peak_price_5m > 0:
@@ -119,18 +135,6 @@ def detect_false_pump(
 
     mandatory_ok = bool(pump_detected and oi_weak and near_top)
     signal_ok = mandatory_ok and (flags_hit >= int(cfg.min_flags_required))
-
-    oi_change_short_term = None
-    if oi_1m is not None and not oi_1m.empty and "openInterest" in oi_1m.columns:
-        x = oi_1m.tail(max(2, int(cfg.pump_candles_count) + 1)).copy()
-        x["openInterest"] = pd.to_numeric(x["openInterest"], errors="coerce")
-        x = x.dropna(subset=["openInterest"])
-        if len(x) >= 2 and float(x["openInterest"].iloc[0]) > 0:
-            oi_change_short_term = (
-                (float(x["openInterest"].iloc[-1]) - float(x["openInterest"].iloc[0]))
-                / float(x["openInterest"].iloc[0])
-                * 100.0
-            )
 
     details: Dict[str, Any] = {
         "price": current_price,

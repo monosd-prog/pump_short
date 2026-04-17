@@ -127,10 +127,15 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                 )
 
                 flags_dict = details.get("flags", {}) if details else {}
+                pump_pct_val = float(details.get("pump_price_pct", 0.0)) if details else 0.0
+                oi_chg_val = float(details.get("oi_change_pct", 0.0)) if details else 0.0
                 logger.info(
                     f"[false_pump.watcher] TICK {symbol} "
                     f"signal_ok={signal_ok} "
                     f"pump={flags_dict.get('pump_detected')} "
+                    f"pump_pct={pump_pct_val:.2f}% "
+                    f"oi_chg={oi_chg_val:.3f}% "
+                    f"oi_thr={cfg.oi_max_reaction_pct}% "
                     f"oi_weak={flags_dict.get('oi_weak')} "
                     f"near_top={flags_dict.get('near_top')} "
                     f"funding={funding_rate:.4f} "
