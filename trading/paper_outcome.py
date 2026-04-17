@@ -301,6 +301,101 @@ def close_from_outcome(
         }
     )
     _touch_guard_refresh_flag(None)
+    if strategy == "false_pump":
+        try:
+            from notifications.tg_format import format_outcome
+            from short_pump.telegram import TG_SEND_OUTCOME
+            from trading.outcome_delivery import deliver_outcome_tg
+
+            side_up = (side or "SHORT").strip().upper()
+            if entry > 0 and tp > 0:
+                if side_up in ("SHORT", "SELL"):
+                    tp_pct = max(0.0, (entry - tp) / entry * 100.0)
+                else:
+                    tp_pct = max(0.0, (tp - entry) / entry * 100.0)
+            else:
+                tp_pct = 0.0
+            if entry > 0 and sl > 0:
+                if side_up in ("SHORT", "SELL"):
+                    sl_pct = max(0.0, (sl - entry) / entry * 100.0)
+                else:
+                    sl_pct = max(0.0, (entry - sl) / entry * 100.0)
+            else:
+                sl_pct = 0.0
+
+            opened = _parse_dt(str(pos.get("opened_ts") or ""))
+            closed = _parse_dt(ts_utc or _now_iso())
+            hold_seconds = 0.0
+            if opened and closed:
+                hold_seconds = max(0.0, (closed - opened).total_seconds())
+
+            tg_text = format_outcome(
+                strategy=strategy,
+                side=side_up,
+                symbol=symbol,
+                run_id=run_id,
+                event_id=str(event_id or ""),
+                outcome=res_norm or "UNKNOWN",
+                entry_price=entry,
+                tp_price=tp,
+                sl_price=sl,
+                tp_pct=tp_pct,
+                sl_pct=sl_pct,
+                pnl_pct=pnl_pct_f,
+                hold_seconds=hold_seconds,
+                mae_pct=mae_pct_f if mae_pct_f != "" else None,
+                mfe_pct=mfe_pct_f if mfe_pct_f != "" else None,
+                risk_profile=risk_profile or None,
+                notional_usd=notional_usd if notional_usd > 0 else None,
+                leverage=leverage if leverage > 0 else None,
+                margin_mode=str(pos.get("margin_mode") or "") or None,
+            )
+            deliver_outcome_tg(
+                logger=logger,
+                delivery_strategy=strategy,
+                run_id=run_id or "",
+                event_id=str(event_id or ""),
+                symbol=symbol,
+                res=res_norm or "UNKNOWN",
+                send_text=tg_text,
+                tg_send_enabled=bool(TG_SEND_OUTCOME),
+                delivery_reason="paper_false_pump_outcome",
+                delivery_mode="paper_outcome",
+                stage=None,
+                step="OUTCOME_TG",
+                send_telegram_kwargs={
+                    "strategy": strategy,
+                    "side": side_up,
+                    "mode": "PAPER",
+                    "event_id": str(event_id or ""),
+                    "context_score": None,
+                    "entry_ok": True,
+                    "skip_reasons": None,
+                    "formatted": True,
+                    "meta": {
+                        "kind": "OUTCOME",
+                        "exec_mode": "paper",
+                        "risk_profile": risk_profile,
+                        "symbol": symbol,
+                        "entry_price": entry,
+                        "tp_price": tp,
+                        "sl_price": sl,
+                        "exit_price": float(exit_price or 0),
+                        "pnl_pct": pnl_pct_f,
+                        "notional_usd": notional_usd if notional_usd > 0 else None,
+                        "leverage": leverage if leverage > 0 else None,
+                        "margin_mode": str(pos.get("margin_mode") or "") or None,
+                    },
+                },
+            )
+        except Exception:
+            logger.exception(
+                "FALSE_PUMP_OUTCOME_TG_FAILED | strategy=%s symbol=%s run_id=%s event_id=%s",
+                strategy,
+                symbol,
+                run_id,
+                str(event_id or ""),
+            )
     return True
 
 

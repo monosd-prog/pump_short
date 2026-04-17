@@ -10,7 +10,7 @@ import aiohttp
 import pandas as pd
 
 from common.market_features import liquidation_features
-from notifications.tg_format import build_short_pump_signal
+from notifications.tg_format import build_short_pump_signal, format_false_pump_entry
 from short_pump.bybit_api import (
     get_funding_rate,
     get_klines_1m,
@@ -20,6 +20,7 @@ from short_pump.bybit_api import (
 )
 from short_pump.false_pump.config import FalsePumpConfig
 from short_pump.false_pump.detector import detect_false_pump
+from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID, send_telegram
 from short_pump.liquidations import get_liq_stats, get_liq_stats_usd
 from trading.queue import enqueue_signal
 
@@ -200,6 +201,36 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                         },
                     )
                     await asyncio.to_thread(enqueue_signal, sig)
+                    if TG_BOT_TOKEN and TG_CHAT_ID:
+                        try:
+                            text = format_false_pump_entry(
+                                symbol=symbol,
+                                event_id=event_id,
+                                entry_price=entry_price,
+                                tp_price=tp_price,
+                                sl_price=sl_price,
+                                tp_pct=float(cfg.tp_pct),
+                                sl_pct=float(cfg.sl_pct),
+                                funding_rate=funding_rate,
+                                oi_change_pct=oi_change_pct,
+                                oi_bot_oi_pct=signal.get("oi_change_pct"),
+                                oi_bot_price_pct=signal.get("price_change_pct"),
+                                context_score=details.get("context_score"),
+                                pump_pct=details.get("pump_price_pct"),
+                            )
+                            send_telegram(
+                                text,
+                                strategy="false_pump",
+                                side="SHORT",
+                                mode="paper",
+                                event_id=event_id,
+                                context_score=details.get("context_score"),
+                                entry_ok=True,
+                                formatted=True,
+                            )
+                            logger.info(f"[false_pump.watcher] TG entry sent: {symbol}")
+                        except Exception:
+                            logger.exception(f"[false_pump.watcher] TG entry send failed: {symbol}")
                     break
             except Exception:
                 logger.exception(f"[false_pump.watcher] TICK ERROR {symbol}")

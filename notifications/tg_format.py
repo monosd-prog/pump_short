@@ -83,6 +83,36 @@ def format_armed_short(*, symbol: str, run_id: str, event_id: str, time_utc: str
     return "\n".join(lines)
 
 
+def format_false_pump_entry(
+    *,
+    symbol: str,
+    event_id: str,
+    entry_price: Any,
+    tp_price: Any,
+    sl_price: Any,
+    tp_pct: Any,
+    sl_pct: Any,
+    funding_rate: Any = None,
+    oi_change_pct: Any = None,
+    oi_bot_oi_pct: Any = None,
+    oi_bot_price_pct: Any = None,
+    context_score: Any = None,
+    pump_pct: Any = None,
+) -> str:
+    header = f"🟥 SHORT | false_pump | ENTRY | sym={symbol}"
+    lines = [
+        header,
+        f"eid={_short_eid(event_id)}",
+        f"entry={_fmt_price(entry_price)} tp={_fmt_price(tp_price)} ({_fmt_pct(tp_pct)}) sl={_fmt_price(sl_price)} ({_fmt_pct(sl_pct)})",
+        f"OI-бот: oi={_fmt_pct(oi_bot_oi_pct)} price={_fmt_pct(oi_bot_price_pct)} window=90m",
+        f"pump_pct={_fmt_pct(pump_pct)} oi_chg={_fmt_pct(oi_change_pct)} funding={_fmt_num(funding_rate, 4)}",
+    ]
+    if context_score is not None:
+        lines.append(f"context_score={_fmt_num(context_score)}")
+    lines.append("#false_pump #SHORT")
+    return "\n".join(lines)
+
+
 def build_short_pump_signal(
     *,
     strategy: str,

@@ -22,5 +22,5 @@ class FalsePumpConfig:
     webhook_host: str = "0.0.0.0"
     webhook_port: int = 8441
     signal_name: str = "false_pump"
-    sl_pct: float = 3.0
-    tp_pct: float = 5.0
+    sl_pct: float = 7.0
+    tp_pct: float = 15.0
