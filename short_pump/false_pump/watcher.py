@@ -94,6 +94,29 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
         return
     logger.info(f"[false_pump.watcher] START monitoring {symbol}")
 
+    if TG_BOT_TOKEN and TG_CHAT_ID:
+        try:
+            text = (
+                f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
+                f"sym={symbol}\n"
+                f"OI-бот: oi={float(signal.get('oi_change_pct') or 0):.1f}% "
+                f"price={float(signal.get('price_change_pct') or 0):.1f}% window=90m\n"
+                f"Мониторинг до {int(cfg.monitor_timeout_sec / 3600)}ч\n"
+                f"#false_pump #WATCH"
+            )
+            send_telegram(
+                text,
+                strategy="false_pump",
+                side="SHORT",
+                mode="paper",
+                event_id=f"watch_{symbol}_{int(time.time())}",
+                context_score=None,
+                entry_ok=True,
+                formatted=True,
+            )
+        except Exception:
+            logger.exception(f"[false_pump.watcher] TG watch start failed: {symbol}")
+
     _active_symbols[symbol] = {"started_ts": time.time()}
     try:
         peak_price_5m = await asyncio.to_thread(_peak_price_5m, symbol)
@@ -237,6 +260,26 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
             await asyncio.sleep(max(1, int(cfg.poll_interval_sec)))
         else:
             logging.warning("false_pump: timeout %s", symbol)
+            if TG_BOT_TOKEN and TG_CHAT_ID:
+                try:
+                    text = (
+                        f"⏱ false_pump | МОНИТОРИНГ ЗАВЕРШЁН (таймаут)\n"
+                        f"sym={symbol}\n"
+                        f"Лже-памп не обнаружен за {int(cfg.monitor_timeout_sec / 3600)}ч\n"
+                        f"#false_pump #TIMEOUT"
+                    )
+                    send_telegram(
+                        text,
+                        strategy="false_pump",
+                        side="SHORT",
+                        mode="paper",
+                        event_id=f"timeout_{symbol}_{int(time.time())}",
+                        context_score=None,
+                        entry_ok=False,
+                        formatted=True,
+                    )
+                except Exception:
+                    logger.exception(f"[false_pump.watcher] TG timeout failed: {symbol}")
     finally:
         await asyncio.sleep(max(1, int(cfg.trigger_cooldown_sec)))
         _active_symbols.pop(symbol, None)
