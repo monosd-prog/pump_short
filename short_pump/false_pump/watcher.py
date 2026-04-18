@@ -280,8 +280,15 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                         except Exception:
                             logger.exception(f"[false_pump.watcher] TG entry send failed: {symbol}")
                     break
-            except Exception:
-                logger.exception(f"[false_pump.watcher] TICK ERROR {symbol}")
+            except Exception as e:
+                err_str = str(e)
+                if "10006" in err_str or "Rate Limit" in err_str or "Too many visits" in err_str:
+                    logger.warning(f"[false_pump.watcher] RATE LIMIT {symbol} — sleep 30s")
+                    await asyncio.sleep(30)
+                else:
+                    logger.exception(f"[false_pump.watcher] TICK ERROR {symbol}")
+                await asyncio.sleep(max(1, int(cfg.poll_interval_sec)))
+                continue
             await asyncio.sleep(max(1, int(cfg.poll_interval_sec)))
         else:
             logging.warning("false_pump: timeout %s", symbol)
