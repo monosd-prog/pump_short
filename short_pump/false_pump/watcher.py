@@ -201,6 +201,9 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     entry_price = float(details.get("price") or 0.0)
                     if entry_price <= 0:
                         break
+                    logger.info(
+                        f"[false_pump.watcher] SIGNAL_OK {symbol} entry_price={entry_price}"
+                    )
                     sl_price = entry_price * (1.0 + float(cfg.sl_pct) / 100.0)
                     tp_price = entry_price * (1.0 - float(cfg.tp_pct) / 100.0)
                     event_id = str(int(time.time() * 1000))
@@ -248,7 +251,13 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                             },
                         },
                     )
+                    logger.info(
+                        f"[false_pump.watcher] ENQUEUE_START {symbol} event_id={event_id}"
+                    )
                     await asyncio.to_thread(enqueue_signal, sig)
+                    logger.info(
+                        f"[false_pump.watcher] ENQUEUE_DONE {symbol} event_id={event_id}"
+                    )
                     if TG_BOT_TOKEN and TG_CHAT_ID:
                         try:
                             text = format_false_pump_entry(
