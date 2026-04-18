@@ -5,7 +5,7 @@ import logging
 from aiohttp import web
 
 from short_pump.false_pump.config import FalsePumpConfig
-from short_pump.false_pump.watcher import _active_symbols, run_watcher
+from short_pump.false_pump.watcher import _active_symbols, _cancel_flags, run_watcher
 
 _CTX = {"cfg": None, "queue": None}
 logger = logging.getLogger("false_pump.webhook")
@@ -41,7 +41,8 @@ async def handle_oi_signal(request) -> web.Response:
     if oi_change_pct < float(cfg.trigger_min_oi_pct):
         return web.json_response({"status": "accepted", "action": "ignored"})
     if symbol in _active_symbols:
-        return web.json_response({"status": "accepted", "action": "cooldown"})
+        _cancel_flags[symbol] = True
+        logger.info(f"[false_pump.webhook] RESET monitoring {symbol} — новый сигнал")
 
     asyncio.create_task(run_watcher(signal, cfg, queue))
     return web.json_response({"status": "accepted", "action": "monitoring_started"})

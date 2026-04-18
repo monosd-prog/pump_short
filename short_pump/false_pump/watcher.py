@@ -27,6 +27,7 @@ from trading.queue import enqueue_signal
 logger = logging.getLogger(__name__)
 
 _active_symbols: dict = {}
+_cancel_flags: dict = {}
 FALSE_PUMP_WEBHOOK_URL = os.getenv(
     "FALSE_PUMP_WEBHOOK_URL",
     "http://localhost:8441/api/oi_signal",
@@ -94,14 +95,24 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
         return
     logger.info(f"[false_pump.watcher] START monitoring {symbol}")
 
+    funding_payload_start = await asyncio.to_thread(get_funding_rate, "linear", symbol)
+    funding_rate_start = _funding_rate_value(funding_payload_start)
+
     if TG_BOT_TOKEN and TG_CHAT_ID:
         try:
+            funding_warn = ""
+            if funding_rate_start < -0.005:
+                funding_warn = (
+                    f"\n⚠️ funding={funding_rate_start:.4f} "
+                    f"(отрицательный — вход заблокирован)"
+                )
             text = (
                 f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
                 f"sym={symbol}\n"
                 f"OI-бот: oi={float(signal.get('oi_change_pct') or 0):.1f}% "
                 f"price={float(signal.get('price_change_pct') or 0):.1f}% window=90m\n"
-                f"Мониторинг до {int(cfg.monitor_timeout_sec / 3600)}ч\n"
+                f"Мониторинг до {int(cfg.monitor_timeout_sec / 3600)}ч"
+                f"{funding_warn}\n"
                 f"#false_pump #WATCH"
             )
             send_telegram(
@@ -117,12 +128,25 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
         except Exception:
             logger.exception(f"[false_pump.watcher] TG watch start failed: {symbol}")
 
-    _active_symbols[symbol] = {"started_ts": time.time()}
+    session_ts = time.time()
+    _active_symbols[symbol] = {"started_ts": session_ts}
     try:
         peak_price_5m = await asyncio.to_thread(_peak_price_5m, symbol)
         started = time.time()
+        first_tick = True
 
         while (time.time() - started) < int(cfg.monitor_timeout_sec):
+            if not first_tick:
+                cur_sym = _active_symbols.get(symbol)
+                if cur_sym and cur_sym.get("started_ts") != session_ts:
+                    _cancel_flags.pop(symbol, None)
+                    logger.info(f"[false_pump.watcher] CANCELLED {symbol} — новый сигнал")
+                    break
+                if _cancel_flags.get(symbol):
+                    logger.info(f"[false_pump.watcher] CANCELLED {symbol} — новый сигнал")
+                    _cancel_flags.pop(symbol, None)
+                    break
+            first_tick = False
             try:
                 candles_1m = await asyncio.to_thread(get_klines_1m, "linear", symbol, 120)
                 oi_1m = await asyncio.to_thread(get_open_interest, "linear", symbol, 80)
@@ -148,6 +172,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     funding_rate=funding_rate,
                     peak_price_5m=peak_price_5m,
                     cfg=cfg,
+                    symbol=symbol,
                 )
 
                 flags_dict = details.get("flags", {}) if details else {}
@@ -282,4 +307,6 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     logger.exception(f"[false_pump.watcher] TG timeout failed: {symbol}")
     finally:
         await asyncio.sleep(max(1, int(cfg.trigger_cooldown_sec)))
-        _active_symbols.pop(symbol, None)
+        cur = _active_symbols.get(symbol)
+        if cur and cur.get("started_ts") == session_ts:
+            _active_symbols.pop(symbol, None)

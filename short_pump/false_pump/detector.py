@@ -75,11 +75,14 @@ def detect_false_pump(
     funding_rate: float,
     peak_price_5m: float,
     cfg: FalsePumpConfig,
+    symbol: str = "",
 ) -> Tuple[bool, Dict[str, Any]]:
     if funding_rate < float(cfg.funding_min_threshold):
-        logger.warning(
-            f"[false_pump.detector] BLOCKED by negative funding "
-            f"funding={funding_rate:.4f} threshold={cfg.funding_min_threshold}"
+        sym = symbol.strip() if symbol else ""
+        sym_part = f"{sym} " if sym else ""
+        logger.info(
+            f"[false_pump.detector] FUNDING BLOCK {sym_part}"
+            f"funding={funding_rate:.4f} < threshold={cfg.funding_min_threshold}"
         )
         return False, {}
     if candles_1m is None or candles_1m.empty:
