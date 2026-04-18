@@ -77,6 +77,28 @@ def allow_entry_short_pump(signal: Any) -> Tuple[bool, str]:
     return True, ""
 
 
+def allow_entry_false_pump(signal: Any) -> Tuple[bool, str]:
+    """
+    false_pump — allow if stage==4.
+    dist_to_peak_pct не проверяем жёстко т.к. стратегия ищет лже-памп
+    У ВЕРШИНЫ (near_top=True), поэтому dist может быть < 3.5%.
+    Достаточно stage==4 и dist_to_peak_pct не None.
+    """
+    stage = getattr(signal, "stage", None)
+    if stage is None:
+        return False, "missing stage"
+    try:
+        stage_i = int(stage)
+    except (TypeError, ValueError):
+        return False, f"invalid stage={stage!r}"
+    if stage_i != 4:
+        return False, f"stage={stage_i} (require 4)"
+    dist = getattr(signal, "dist_to_peak_pct", None)
+    if dist is None:
+        return False, "missing dist_to_peak_pct"
+    return True, "ok"
+
+
 def allow_entry_short_pump_filtered(signal: Any) -> Tuple[bool, str]:
     """short_pump_filtered — allow only if enabled, stage==4 and dist_to_peak_pct <= threshold."""
     from short_pump.rollout import SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX, SHORT_PUMP_FILTERED_ENABLE
@@ -173,7 +195,7 @@ def allow_entry(signal: Any) -> Tuple[bool, str]:
     if strategy == "short_pump":
         return allow_entry_short_pump(signal)
     if strategy == "false_pump":
-        return allow_entry_short_pump(signal)
+        return allow_entry_false_pump(signal)
     if strategy == "short_pump_filtered":
         return allow_entry_short_pump_filtered(signal)
     if strategy == "short_pump_fast0":
