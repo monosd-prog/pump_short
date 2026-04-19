@@ -15,7 +15,7 @@ class FalsePumpConfig:
     pump_lookback_candles: int = 20
     oi_max_reaction_pct: float = 0.8
     near_top_pct: float = 5.0
-    funding_min_threshold: float = -0.01
+    funding_min_threshold: float = -0.015
     liq_window_sec: int = 300
     liq_min_usd: float = 30000.0
     min_flags_required: int = 2
