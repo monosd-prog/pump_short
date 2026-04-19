@@ -61,7 +61,7 @@ from analytics.fast0_blocks import (
     _add_fast0_whatif_tp_block,
 )
 from analytics.short_pump_blocks import filter_active_trades
-from analytics.executive_report import build_executive_compact_report
+from analytics.executive_report import _fast0_operational_mask, build_executive_compact_report
 from telegram.send_helpers import send_document as _send_document_file
 
 # Canonical guard refresh window — independent of report display window.
@@ -1712,6 +1712,123 @@ def _load_events_union_for_strategy(
     return combined
 
 
+def _load_outcomes_union_for_strategy(
+    base_dir: Path,
+    strategy: str,
+    days: int,
+) -> pd.DataFrame:
+    """Load outcomes from live + paper, concat [live, paper], dedupe by trade_id (live wins)."""
+    live = load_outcomes(
+        base_dir=base_dir,
+        strategy=strategy,
+        mode="live",
+        days=days,
+        include_test=False,
+        return_file_count=False,
+    )
+    paper = load_outcomes(
+        base_dir=base_dir,
+        strategy=strategy,
+        mode="paper",
+        days=days,
+        include_test=False,
+        return_file_count=False,
+    )
+    n_live = len(live) if not live.empty else 0
+    n_paper = len(paper) if not paper.empty else 0
+    if live.empty and paper.empty:
+        if os.getenv("DEBUG") == "1":
+            print(
+                f"outcomes union {strategy}: live={n_live}, paper={n_paper}, after_dedup=0",
+                file=sys.stderr,
+            )
+        return pd.DataFrame()
+    if live.empty:
+        combined = paper
+    elif paper.empty:
+        combined = live
+    else:
+        combined = pd.concat([live, paper], ignore_index=True)
+    if "trade_id" in combined.columns:
+        combined = combined.drop_duplicates(subset=["trade_id"], keep="first")
+    n_dedup = len(combined)
+    if os.getenv("DEBUG") == "1":
+        print(
+            f"outcomes union {strategy}: live={n_live}, paper={n_paper}, after_dedup={n_dedup}",
+            file=sys.stderr,
+        )
+    return combined
+
+
+def compute_ml_readiness_core_counts_union(
+    base_dir: Path,
+    days: int,
+    tg_dist_min: float,
+) -> Dict[str, int]:
+    """
+    ML READINESS core counts: same definitions as build_executive_compact_report ml_cores,
+    but on union(live+paper) outcomes (+ union events enrichment per strategy).
+    """
+    out: Dict[str, int] = {
+        "short_pump": 0,
+        "short_pump_filtered": 0,
+        "fast0": 0,
+        "premium": 0,
+        "wick": 0,
+    }
+    specs: List[Tuple[str, str]] = [
+        ("short_pump", "short_pump"),
+        ("short_pump_filtered", "short_pump_filtered"),
+        ("short_pump_fast0", "fast0"),
+        ("short_pump_premium", "premium"),
+        ("short_pump_wick", "wick"),
+    ]
+    for strat, key in specs:
+        df_union = _load_outcomes_union_for_strategy(base_dir, strat, days)
+        if df_union.empty:
+            continue
+        ev_union = _load_events_union_for_strategy(base_dir, strat, days)
+        df_u = _ensure_stage_column(df_union.copy())
+        df_e = _enrich_core_with_events(
+            df_u,
+            ev_union if not ev_union.empty else None,
+            debug=False,
+        )
+        if df_e is None or df_e.empty:
+            continue
+        if strat == "short_pump":
+            if "stage" in df_e.columns and "dist_to_peak_pct" in df_e.columns:
+                _, df_active_core, _, _ = filter_active_trades(df_e, "short_pump", tg_dist_min)
+                if df_active_core is not None and not df_active_core.empty:
+                    out["short_pump"] = len(df_active_core)
+        elif strat == "short_pump_filtered":
+            if "outcome" in df_e.columns:
+                out_spf = df_e["outcome"].apply(_normalize_outcome_raw)
+                df_spf_core = df_e[out_spf.isin(["TP_hit", "SL_hit"])].copy()
+                if not df_spf_core.empty:
+                    out["short_pump_filtered"] = len(df_spf_core)
+        elif strat == "short_pump_fast0":
+            op_mask = _fast0_operational_mask(df_e)
+            df_f0_op = df_e[op_mask].copy()
+            core_f0 = _core_mask(df_f0_op["outcome"])
+            df_f0_op_core = df_f0_op[core_f0].copy()
+            if not df_f0_op_core.empty:
+                out["fast0"] = len(df_f0_op_core)
+        elif strat == "short_pump_premium":
+            if "outcome" in df_e.columns:
+                oc = df_e["outcome"].apply(_normalize_outcome_raw)
+                sub = df_e[oc.isin(["TP_hit", "SL_hit"])].copy()
+                if not sub.empty:
+                    out["premium"] = len(sub)
+        elif strat == "short_pump_wick":
+            if "outcome" in df_e.columns:
+                oc = df_e["outcome"].apply(_normalize_outcome_raw)
+                sub = df_e[oc.isin(["TP_hit", "SL_hit"])].copy()
+                if not sub.empty:
+                    out["wick"] = len(sub)
+    return out
+
+
 def generate_compact_autotrading_report(
     days: int,
     data_dir: Optional[Union[str, Path]] = None,
@@ -1899,6 +2016,7 @@ def generate_compact_autotrading_report(
     df_short_pump_paper = res_sp_paper[0] if isinstance(res_sp_paper, tuple) else res_sp_paper
     df_short_pump_filtered_paper = res_spf_paper[0] if isinstance(res_spf_paper, tuple) else res_spf_paper
 
+    ml_core_counts = compute_ml_readiness_core_counts_union(base_dir, days, tg_dist_min)
     exec_report = build_executive_compact_report(
         df_sp_e if (df_sp_e is not None and not df_sp_e.empty) else None,
         df_spf_e if (df_spf_e is not None and not df_spf_e.empty) else None,
@@ -1915,6 +2033,7 @@ def generate_compact_autotrading_report(
         df_short_pump_wick=df_wk_e if (df_wk_e is not None and not df_wk_e.empty) else None,
         df_false_pump=df_fp_e if (df_fp_e is not None and not df_fp_e.empty) else None,
         report_window_days=days,
+        ml_core_counts=ml_core_counts,
     )
     return exec_report
 
@@ -2346,6 +2465,7 @@ def main() -> None:
             df_short_pump_paper = res_sp_paper[0] if isinstance(res_sp_paper, tuple) else res_sp_paper
             df_short_pump_filtered_paper = res_spf_paper[0] if isinstance(res_spf_paper, tuple) else res_spf_paper
 
+            ml_core_counts = compute_ml_readiness_core_counts_union(data_dir, args.days, tg_dist_min)
             exec_report = build_executive_compact_report(
                 df_sp_e if (df_sp_e is not None and not df_sp_e.empty) else None,
                 df_spf_e if (df_spf_e is not None and not df_spf_e.empty) else None,
@@ -2362,6 +2482,7 @@ def main() -> None:
                 df_short_pump_wick=df_wk_e if (df_wk_e is not None and not df_wk_e.empty) else None,
                 df_false_pump=df_fp_e if (df_fp_e is not None and not df_fp_e.empty) else None,
                 report_window_days=args.days,
+                ml_core_counts=ml_core_counts,
             )
             investor_lines = exec_report.split("\n")
             report = exec_report  # compact mode: executive report only (self-contained)

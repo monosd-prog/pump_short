@@ -1128,10 +1128,13 @@ def build_executive_compact_report(
     df_short_pump_wick: Optional[pd.DataFrame] = None,
     df_false_pump: Optional[pd.DataFrame] = None,
     report_window_days: Optional[int] = None,
+    ml_core_counts: Optional[Dict[str, int]] = None,
 ) -> str:
     """
     Компактный lifecycle-отчёт для TG (/report): guard-блоки, ML, data health.
     df_short_pump, df_fast0 — обогащённые outcomes (live); premium/wick — отдельные стратегии live.
+    ml_core_counts: если задан, блок ML READINESS использует эти числа (например union live+paper);
+    иначе считаются из переданных live-only df (обратная совместимость).
     """
     start, end = date_range
     days = _calendar_days(date_range)
@@ -1379,13 +1382,16 @@ def build_executive_compact_report(
         if d is not None and not d.empty:
             parts_out.append(d)
     df_all_outcomes = pd.concat(parts_out, ignore_index=True) if parts_out else pd.DataFrame()
-    ml_cores = {
-        "short_pump": len(df_active_core) if df_active_core is not None and not df_active_core.empty else 0,
-        "short_pump_filtered": len(df_spf_core) if df_spf_core is not None and not df_spf_core.empty else 0,
-        "fast0": len(df_f0_op_core) if df_f0_op_core is not None and not df_f0_op_core.empty else 0,
-        "premium": len(df_pr_core) if df_pr_core is not None and not df_pr_core.empty else 0,
-        "wick": len(df_wk_core) if df_wk_core is not None and not df_wk_core.empty else 0,
-    }
+    if ml_core_counts is not None:
+        ml_cores = ml_core_counts
+    else:
+        ml_cores = {
+            "short_pump": len(df_active_core) if df_active_core is not None and not df_active_core.empty else 0,
+            "short_pump_filtered": len(df_spf_core) if df_spf_core is not None and not df_spf_core.empty else 0,
+            "fast0": len(df_f0_op_core) if df_f0_op_core is not None and not df_f0_op_core.empty else 0,
+            "premium": len(df_pr_core) if df_pr_core is not None and not df_pr_core.empty else 0,
+            "wick": len(df_wk_core) if df_wk_core is not None and not df_wk_core.empty else 0,
+        }
     rw = report_window_days if report_window_days is not None else days
     return _render_autotrading_lifecycle_report(
         report_window_days=rw,
