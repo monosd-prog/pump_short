@@ -117,7 +117,49 @@ def get_risk_profile(
     if s == "short_pump_fast0_filtered":
         s = "short_pump_fast0"
     if s == "short_pump_premium":
-        s = "short_pump"
+        stage_i = None
+        try:
+            stage_i = int(stage) if stage is not None else None
+        except (TypeError, ValueError):
+            pass
+        dist_val = None
+        try:
+            dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else None
+        except (TypeError, ValueError):
+            pass
+        if stage_i == 4 and dist_val is not None and dist_val >= SHORT_PUMP_AUTO_DIST_MIN:
+            profile = "short_pump_premium_1R"
+            mult = 1.0
+            logger.info(
+                "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s liq=N/A "
+                "selected_profile=%s risk_mult=%.1f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+                strategy, symbol, event_id, trade_id, profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+            )
+            return profile, mult, mult
+        return ("", 0.0, 0.0)
+
+    if s == "short_pump_wick":
+        stage_i = None
+        try:
+            stage_i = int(stage) if stage is not None else None
+        except (TypeError, ValueError):
+            pass
+        dist_val = None
+        try:
+            dist_val = float(dist_to_peak_pct) if dist_to_peak_pct is not None else None
+        except (TypeError, ValueError):
+            pass
+        if stage_i == 4 and dist_val is not None and dist_val >= SHORT_PUMP_AUTO_DIST_MIN:
+            profile = "short_pump_wick_1R"
+            mult = 1.0
+            logger.info(
+                "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s liq=N/A "
+                "selected_profile=%s risk_mult=%.1f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+                strategy, symbol, event_id, trade_id, profile, mult, LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+            )
+            return profile, mult, mult
+        return ("", 0.0, 0.0)
+
     if s == "short_pump_filtered":
         stage_i = None
         try:

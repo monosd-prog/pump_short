@@ -1,0 +1,9 @@
+# Example systemd drop-in (e.g. copy to /etc/systemd/system/<your-pump-short-service>.service.d/override.conf)
+# Then: sudo systemctl daemon-reload && sudo systemctl restart <service>
+#
+# Paper rollout: enable premium (and optionally wick). Live orders stay blocked until
+# short_pump_premium_1R / short_pump_wick_1R pass guard (WATCH→ACTIVE); profiles are not in live whitelist.
+
+[Service]
+Environment=SHORT_PUMP_PREMIUM_ENABLE=1
+# Environment=SHORT_PUMP_WICK_ENABLE=1

@@ -80,6 +80,8 @@ def build_guard_metrics_by_mode(
     df_short_pump_filtered_enriched: Optional[pd.DataFrame],
     df_fast0_enriched: Optional[pd.DataFrame],
     *,
+    df_short_pump_premium_enriched: Optional[pd.DataFrame] = None,
+    df_short_pump_wick_enriched: Optional[pd.DataFrame] = None,
     rolling_n: int = 20,
     tg_dist_min: float = 3.5,
 ) -> Dict[str, GuardModeMetrics]:
@@ -175,6 +177,22 @@ def build_guard_metrics_by_mode(
         # No FAST0 data: still populate keys with empty metrics for safety
         for mode_name in ("fast0_base_1R", "fast0_1p5R", "fast0_2R", "fast0_selective"):
             metrics[mode_name] = _metrics_for_subset(pd.DataFrame(), rolling_n)
+
+    df_pr = df_short_pump_premium_enriched
+    if df_pr is not None and not df_pr.empty and "outcome" in df_pr.columns:
+        out_pr = df_pr["outcome"].apply(_normalize_outcome_raw)
+        df_pr_core = df_pr[out_pr.isin(["TP_hit", "SL_hit"])].copy()
+        metrics["short_pump_premium_1R"] = _metrics_for_subset(df_pr_core, rolling_n)
+    else:
+        metrics["short_pump_premium_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
+
+    df_wk = df_short_pump_wick_enriched
+    if df_wk is not None and not df_wk.empty and "outcome" in df_wk.columns:
+        out_wk = df_wk["outcome"].apply(_normalize_outcome_raw)
+        df_wk_core = df_wk[out_wk.isin(["TP_hit", "SL_hit"])].copy()
+        metrics["short_pump_wick_1R"] = _metrics_for_subset(df_wk_core, rolling_n)
+    else:
+        metrics["short_pump_wick_1R"] = _metrics_for_subset(pd.DataFrame(), rolling_n)
 
     return metrics
 

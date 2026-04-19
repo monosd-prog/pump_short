@@ -37,6 +37,9 @@ STATE_WATCH = "WATCH"
 STATE_DISABLED = "DISABLED"
 STATE_RECOVERY = "RECOVERY"
 
+# New paper-first submodes: synthetic GuardEntry defaults to WATCH until metrics/bootstrap promote.
+_MODES_DEFAULT_WATCH = frozenset({"short_pump_premium_1R", "short_pump_wick_1R"})
+
 
 @dataclass
 class GuardMetrics:
@@ -143,12 +146,13 @@ def load_guard_state() -> Dict[str, GuardEntry]:
 def get_mode_state(mode_name: str) -> GuardEntry:
     """
     Return GuardEntry for mode_name.
-    If no persisted entry yet, return ACTIVE-by-default synthetic entry.
+    If no persisted entry yet, return synthetic entry (WATCH for paper-rollout submodes).
     """
     state = load_guard_state()
     entry = state.get(mode_name)
     if entry is None:
-        entry = GuardEntry(mode_name=mode_name, current_state=STATE_ACTIVE)
+        init_state = STATE_WATCH if mode_name in _MODES_DEFAULT_WATCH else STATE_ACTIVE
+        entry = GuardEntry(mode_name=mode_name, current_state=init_state)
     return entry
 
 
@@ -166,12 +170,16 @@ def _mode_name_for_signal_and_profile(signal: Any, risk_profile_name: str) -> Op
     s = (getattr(signal, "strategy", None) or "").strip()
     if not risk_profile_name:
         return None
-    if s in {"short_pump", "short_pump_premium"} and risk_profile_name in {
+    if s == "short_pump" and risk_profile_name in {
         "short_pump_active_1R",
         "short_pump_mid",
         "short_pump_deep",
     }:
         return risk_profile_name
+    if s == "short_pump_premium" and risk_profile_name == "short_pump_premium_1R":
+        return "short_pump_premium_1R"
+    if s == "short_pump_wick" and risk_profile_name == "short_pump_wick_1R":
+        return "short_pump_wick_1R"
     if s == "short_pump_filtered" and risk_profile_name in {
         "short_pump_filtered_1R",
     }:
@@ -281,6 +289,8 @@ def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:
         "short_pump_mid",
         "short_pump_deep",
         "short_pump_filtered_1R",
+        "short_pump_premium_1R",
+        "short_pump_wick_1R",
         "fast0_selective",
     }
 

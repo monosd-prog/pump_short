@@ -183,7 +183,13 @@ def _watcher_should_skip_outcome_live(
     try:
         from trading.state import load_state, outcome_tg_sent, make_position_id
         state = load_state()
-        for strat in ("short_pump", "short_pump_premium", "short_pump_filtered", "short_pump_fast0"):
+        for strat in (
+            "short_pump",
+            "short_pump_premium",
+            "short_pump_wick",
+            "short_pump_filtered",
+            "short_pump_fast0",
+        ):
             key = make_position_id(strat, run_id or "", str(event_id or ""), symbol)
             if outcome_tg_sent(state, key):
                 return True, "already_finalized"
@@ -1654,6 +1660,7 @@ def run_watch_for_symbol(
                     entry_payload.get("dist_to_peak_pct"),
                     funding_rate_abs=entry_payload.get("funding_rate_abs"),
                     delta_ratio_30s=entry_payload.get("delta_ratio_30s"),
+                    wick_body_ratio_last=entry_payload.get("wick_body_ratio_last"),
                 )
                 route_strategy = route_meta["route_strategy"]
                 trade_id = make_position_id(route_strategy, run_id or "", str(event_id or ""), cfg.symbol)

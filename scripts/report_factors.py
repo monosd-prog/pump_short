@@ -45,7 +45,7 @@ def main() -> None:
         type=str,
         nargs="*",
         default=None,
-        help="Strategies to include (default: short_pump, short_pump_fast0)",
+        help="Strategies to include (default: short_pump, short_pump_fast0, short_pump_premium, short_pump_wick)",
     )
     parser.add_argument(
         "--mode",

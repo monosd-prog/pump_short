@@ -200,6 +200,8 @@ def allow_entry(signal: Any) -> Tuple[bool, str]:
         return allow_entry_short_pump_filtered(signal)
     if strategy == "short_pump_premium":
         return allow_entry_short_pump(signal)
+    if strategy == "short_pump_wick":
+        return allow_entry_short_pump(signal)
     if strategy == "short_pump_fast0":
         return allow_entry_short_pump_fast0(signal)
     if strategy == "short_pump_fast0_filtered":

@@ -31,6 +31,12 @@ SHORT_PUMP_PREMIUM_FUNDING_MAX = _get_float("SHORT_PUMP_PREMIUM_FUNDING_MAX", 0.
 SHORT_PUMP_PREMIUM_DELTA_RATIO_MAX = _get_float("SHORT_PUMP_PREMIUM_DELTA_RATIO_MAX", 0.0)
 SHORT_PUMP_PREMIUM_DELTA_RATIO_MIN = _get_float("SHORT_PUMP_PREMIUM_DELTA_RATIO_MIN", -0.5)
 
+SHORT_PUMP_WICK_ENABLE = _get_bool("SHORT_PUMP_WICK_ENABLE", False)
+SHORT_PUMP_WICK_DELTA_MIN = _get_float("SHORT_PUMP_WICK_DELTA_MIN", -0.5)
+SHORT_PUMP_WICK_DELTA_MAX = _get_float("SHORT_PUMP_WICK_DELTA_MAX", 0.0)
+SHORT_PUMP_WICK_RATIO_MIN = _get_float("SHORT_PUMP_WICK_RATIO_MIN", 2.0)
+SHORT_PUMP_WICK_RATIO_MAX = _get_float("SHORT_PUMP_WICK_RATIO_MAX", 4.0)
+
 
 def _coerce_dist(dist_to_peak_pct: Any) -> float | None:
     try:
@@ -67,15 +73,31 @@ def _premium_funding_delta_match(funding_rate_abs: Any, delta_ratio_30s: Any) ->
     return True
 
 
+def _wick_delta_wick_match(delta_ratio_30s: Any, wick_body_ratio_last: Any) -> bool:
+    """delta_ratio_30s + wick_body_ratio_last bands (after premium; lower EV than premium)."""
+    if not SHORT_PUMP_WICK_ENABLE:
+        return False
+    d = _coerce_float_optional(delta_ratio_30s)
+    w = _coerce_float_optional(wick_body_ratio_last)
+    if d is None or w is None:
+        return False
+    if not (SHORT_PUMP_WICK_DELTA_MIN <= d < SHORT_PUMP_WICK_DELTA_MAX):
+        return False
+    if not (SHORT_PUMP_WICK_RATIO_MIN <= w < SHORT_PUMP_WICK_RATIO_MAX):
+        return False
+    return True
+
+
 def resolve_short_pump_route(
     dist_to_peak_pct: Any,
     *,
     funding_rate_abs: Any = None,
     delta_ratio_30s: Any = None,
+    wick_body_ratio_last: Any = None,
 ) -> dict[str, Any]:
     """
     Decide whether a short_pump entry should stay on the baseline path, route to
-    short_pump_premium, or short_pump_filtered.
+    short_pump_premium, short_pump_wick, or short_pump_filtered.
 
     Returns a dict with:
     - route_strategy
@@ -93,6 +115,15 @@ def resolve_short_pump_route(
             "would_pass_dist_filter": would_pass,
             "filter_reason": "premium_funding_delta",
             "strategy_candidate": "short_pump_premium",
+            "dist_to_peak_pct": dist_val,
+        }
+
+    if _wick_delta_wick_match(delta_ratio_30s, wick_body_ratio_last):
+        return {
+            "route_strategy": "short_pump_wick",
+            "would_pass_dist_filter": would_pass,
+            "filter_reason": "wick_delta_wick",
+            "strategy_candidate": "short_pump_wick",
             "dist_to_peak_pct": dist_val,
         }
 

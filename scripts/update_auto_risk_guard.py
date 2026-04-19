@@ -136,11 +136,27 @@ def _enrich_core_with_events(
     return _coalesce_event_columns(merged)
 
 
-def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, pd.DataFrame | None, pd.DataFrame | None, tuple[str, str]]:
-    """Load and enrich outcomes for short_pump, short_pump_filtered and fast0 strategies (same as daily_tg_report)."""
+def _load_enriched_dfs(
+    base_dir: Path, days: int
+) -> tuple[
+    pd.DataFrame | None,
+    pd.DataFrame | None,
+    pd.DataFrame | None,
+    pd.DataFrame | None,
+    pd.DataFrame | None,
+    tuple[str, str],
+]:
+    """Load and enrich outcomes for short_pump family + fast0 (same as daily_tg_report)."""
     # Outcomes
     all_outcomes: list[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
+    for strategy in (
+        "short_pump",
+        "short_pump_premium",
+        "short_pump_wick",
+        "short_pump_filtered",
+        "short_pump_fast0",
+        "short_pump_fast0_filtered",
+    ):
         result = load_outcomes(
             base_dir=base_dir,
             strategy=strategy,
@@ -154,9 +170,22 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
             all_outcomes.append(df_part)
     df = pd.concat(all_outcomes, ignore_index=True) if all_outcomes else pd.DataFrame()
 
+    ds_range = get_datasets_date_range(base_dir, days=days)
+    date_range = ds_range if ds_range is not None else ("unknown", "unknown")
+
+    if df.empty:
+        return None, None, None, None, None, date_range
+
     # Events for enrichment
     all_events: list[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
+    for strategy in (
+        "short_pump",
+        "short_pump_premium",
+        "short_pump_wick",
+        "short_pump_filtered",
+        "short_pump_fast0",
+        "short_pump_fast0_filtered",
+    ):
         result = load_events_v2(
             data_dir=base_dir,
             strategy=strategy,
@@ -169,13 +198,6 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
         if not ev.empty:
             all_events.append(ev)
     events_raw = pd.concat(all_events, ignore_index=True) if all_events else pd.DataFrame()
-
-    if df.empty:
-        date_range = ("unknown", "unknown")
-        return None, None, None, date_range
-
-    ds_range = get_datasets_date_range(base_dir, days=days)
-    date_range = ds_range if ds_range is not None else ("unknown", "unknown")
 
     df_sorted = _sort_outcomes_for_series(df)
     has_strat = "strategy" in df_sorted.columns
@@ -191,6 +213,16 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
     )
     df_f0 = (
         df_sorted[df_sorted["strategy"].astype(str).isin(["short_pump_fast0", "short_pump_fast0_filtered"])]
+        if has_strat
+        else pd.DataFrame()
+    )
+    df_pr = (
+        df_sorted[df_sorted["strategy"].astype(str) == "short_pump_premium"]
+        if has_strat
+        else pd.DataFrame()
+    )
+    df_wk = (
+        df_sorted[df_sorted["strategy"].astype(str) == "short_pump_wick"]
         if has_strat
         else pd.DataFrame()
     )
@@ -211,20 +243,38 @@ def _load_enriched_dfs(base_dir: Path, days: int) -> tuple[pd.DataFrame | None, 
         if has_ev_strat
         else pd.DataFrame()
     )
+    ev_pr = (
+        all_ev[all_ev["strategy"].astype(str) == "short_pump_premium"]
+        if has_ev_strat
+        else pd.DataFrame()
+    )
+    ev_wk = (
+        all_ev[all_ev["strategy"].astype(str) == "short_pump_wick"]
+        if has_ev_strat
+        else pd.DataFrame()
+    )
     df_sp_e = _ensure_stage_column(df_sp.copy()) if not df_sp.empty else None
     df_spf_e = _ensure_stage_column(df_spf.copy()) if not df_spf.empty else None
     df_f0_e = _ensure_stage_column(df_f0.copy()) if not df_f0.empty else None
+    df_pr_e = _ensure_stage_column(df_pr.copy()) if not df_pr.empty else None
+    df_wk_e = _ensure_stage_column(df_wk.copy()) if not df_wk.empty else None
     if df_sp_e is not None and not df_sp_e.empty:
         df_sp_e = _enrich_core_with_events(df_sp_e, ev_sp if not ev_sp.empty else None, debug=False)
     if df_spf_e is not None and not df_spf_e.empty:
         df_spf_e = _enrich_core_with_events(df_spf_e, ev_spf if not ev_spf.empty else None, debug=False)
     if df_f0_e is not None and not df_f0_e.empty:
         df_f0_e = _enrich_core_with_events(df_f0_e, ev_f0 if not ev_f0.empty else None, debug=False)
+    if df_pr_e is not None and not df_pr_e.empty:
+        df_pr_e = _enrich_core_with_events(df_pr_e, ev_pr if not ev_pr.empty else None, debug=False)
+    if df_wk_e is not None and not df_wk_e.empty:
+        df_wk_e = _enrich_core_with_events(df_wk_e, ev_wk if not ev_wk.empty else None, debug=False)
 
     return (
         df_sp_e if df_sp_e is not None and not df_sp_e.empty else None,
         df_spf_e if df_spf_e is not None and not df_spf_e.empty else None,
         df_f0_e if df_f0_e is not None and not df_f0_e.empty else None,
+        df_pr_e if df_pr_e is not None and not df_pr_e.empty else None,
+        df_wk_e if df_wk_e is not None and not df_wk_e.empty else None,
         date_range,
     )
 
@@ -257,12 +307,14 @@ def main() -> None:
     args = parser.parse_args()
 
     base_dir = Path(args.data_dir)
-    df_sp_e, df_spf_e, df_f0_e, _ = _load_enriched_dfs(base_dir, days=args.days)
+    df_sp_e, df_spf_e, df_f0_e, df_pr_e, df_wk_e, _ = _load_enriched_dfs(base_dir, days=args.days)
 
     metrics_local: Dict[str, GuardModeMetrics] = build_guard_metrics_by_mode(
         df_sp_e,
         df_spf_e,
         df_f0_e,
+        df_short_pump_premium_enriched=df_pr_e,
+        df_short_pump_wick_enriched=df_wk_e,
         rolling_n=args.rolling,
         tg_dist_min=float(sys.argv and 0 or 3.5),  # actual tg_dist_min is handled inside filter_active_trades env
     )

@@ -1144,7 +1144,7 @@ def render_factor_report_txt(report: Dict[str, Any]) -> str:
         f"Thresholds: min_n>={MIN_N_BUCKET}, factor_coverage>={MIN_FACTOR_COVERAGE_PCT:.0f}% in 30d and 90d, NaN excluded"
     )
     top_map = report.get("top_stable_factors", {})
-    for strategy in ["short_pump", "short_pump_fast0"]:
+    for strategy in ["short_pump", "short_pump_fast0", "short_pump_premium", "short_pump_wick"]:
         lines.append(f"{strategy}:")
         for line in top_map.get(strategy, ["  no stable factors passing thresholds"]):
             lines.append(line)
@@ -1172,7 +1172,7 @@ def build_factor_report(
     from datetime import datetime, timezone, timedelta
 
     if strategies is None or not strategies:
-        strategies = ["short_pump", "short_pump_fast0"]
+        strategies = ["short_pump", "short_pump_fast0", "short_pump_premium", "short_pump_wick"]
     base_dir = Path(base_dir)
 
     if min_date is not None:
