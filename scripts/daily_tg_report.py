@@ -1654,6 +1654,64 @@ def _send_photo(token: str, chat_id: str, photo_path: Union[str, Path], caption:
         raise
 
 
+def _load_events_union_for_strategy(
+    data_dir: Path,
+    strategy: str,
+    days: int,
+    *,
+    raw: bool = True,
+) -> pd.DataFrame:
+    """
+    Load events from live + paper partitions, concat, dedupe by event_id (live rows win).
+
+    Used for short_pump_fast0 enrichment: live outcomes may reference event rows stored
+    only under mode=paper in datasets layout.
+    """
+    res_live = load_events_v2(
+        data_dir=data_dir,
+        strategy=strategy,
+        mode="live",
+        days=days,
+        raw=raw,
+        return_file_count=False,
+    )
+    live_ev = res_live[0] if isinstance(res_live, tuple) else res_live
+    res_paper = load_events_v2(
+        data_dir=data_dir,
+        strategy=strategy,
+        mode="paper",
+        days=days,
+        raw=raw,
+        return_file_count=False,
+    )
+    paper_ev = res_paper[0] if isinstance(res_paper, tuple) else res_paper
+    n_live = len(live_ev)
+    n_paper = len(paper_ev)
+    combined = pd.concat([live_ev, paper_ev], ignore_index=True)
+    if combined.empty:
+        if os.getenv("DEBUG") == "1":
+            print(
+                f"fast0 events union: live={n_live}, paper={n_paper}, after_dedup=0",
+                file=sys.stderr,
+            )
+        return combined
+    if "event_id" not in combined.columns:
+        if os.getenv("DEBUG") == "1":
+            print(
+                f"fast0 events union: live={n_live}, paper={n_paper}, after_dedup={len(combined)} (no event_id, skip dedup)",
+                file=sys.stderr,
+            )
+        return combined
+    combined = combined.drop_duplicates(subset=["event_id"], keep="first")
+    n_dedup = len(combined)
+    if os.getenv("DEBUG") == "1":
+        print(
+            f"fast0 events union: live={n_live}, paper={n_paper}, after_dedup={n_dedup}",
+            file=sys.stderr,
+        )
+    return combined
+
+
 def generate_compact_autotrading_report(
     days: int,
     data_dir: Optional[Union[str, Path]] = None,
@@ -1706,15 +1764,18 @@ def generate_compact_autotrading_report(
         "short_pump_wick",
         "false_pump",
     ):
-        result = load_events_v2(
-            data_dir=base_dir,
-            strategy=strategy,
-            mode="live",
-            days=days,
-            raw=True,
-            return_file_count=False,
-        )
-        ev = result[0] if isinstance(result, tuple) else result
+        if strategy == "short_pump_fast0":
+            ev = _load_events_union_for_strategy(base_dir, strategy, days, raw=True)
+        else:
+            result = load_events_v2(
+                data_dir=base_dir,
+                strategy=strategy,
+                mode="live",
+                days=days,
+                raw=True,
+                return_file_count=False,
+            )
+            ev = result[0] if isinstance(result, tuple) else result
         if not ev.empty:
             all_events.append(ev)
     events_raw = pd.concat(all_events, ignore_index=True) if all_events else pd.DataFrame()
@@ -1967,20 +2028,26 @@ def main() -> None:
         "long_pullback",
     ]
     for strategy in strategies_to_load:
-        result = load_events_v2(
-            data_dir=data_dir,
-            strategy=strategy,
-            mode="live",
-            days=args.days,
-            raw=True,
-            return_file_count=debug,
-        )
-        if isinstance(result, tuple):
-            ev, n = result
+        if strategy == "short_pump_fast0":
+            ev = _load_events_union_for_strategy(data_dir, strategy, args.days, raw=True)
             if debug:
-                n_events_files += n
+                # Union uses two underlying loads; file count not tracked here
+                pass
         else:
-            ev = result
+            result = load_events_v2(
+                data_dir=data_dir,
+                strategy=strategy,
+                mode="live",
+                days=args.days,
+                raw=True,
+                return_file_count=debug,
+            )
+            if isinstance(result, tuple):
+                ev, n = result
+                if debug:
+                    n_events_files += n
+            else:
+                ev = result
         if not ev.empty:
             all_events.append(ev)
     events_raw = pd.concat(all_events, ignore_index=True) if all_events else pd.DataFrame()
