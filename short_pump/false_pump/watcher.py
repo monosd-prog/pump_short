@@ -33,8 +33,8 @@ FALSE_PUMP_WEBHOOK_URL = os.getenv(
     "http://localhost:8441/api/oi_signal",
 )
 
-_tg_start_sent: dict = {}  # symbol -> timestamp последнего TG о старте
-TG_START_COOLDOWN_SEC = 1800  # 30 минут
+_tg_start_sent: dict = {}
+TG_START_COOLDOWN_SEC = 3600  # 1 час
 
 
 def _funding_rate_value(payload: dict | None) -> float:
@@ -103,10 +103,10 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
 
     if TG_BOT_TOKEN and TG_CHAT_ID:
         try:
-            now = time.time()
-            last_tg = _tg_start_sent.get(symbol, 0)
-            if now - last_tg >= TG_START_COOLDOWN_SEC:
-                _tg_start_sent[symbol] = now
+            now_ts = time.time()
+            last_tg_start = _tg_start_sent.get(symbol, 0)
+            if now_ts - last_tg_start >= TG_START_COOLDOWN_SEC:
+                _tg_start_sent[symbol] = now_ts
                 funding_warn = ""
                 if funding_rate_start < -0.005:
                     funding_warn = (
@@ -135,7 +135,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
             else:
                 logger.info(
                     f"[false_pump.watcher] TG start cooldown {symbol} "
-                    f"last={int(now - last_tg)}s ago, skip"
+                    f"last={int(now_ts - last_tg_start)}s ago, skip"
                 )
         except Exception:
             logger.exception(f"[false_pump.watcher] TG watch start failed: {symbol}")
@@ -174,10 +174,10 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     )
                     if TG_BOT_TOKEN and TG_CHAT_ID:
                         try:
-                            now = time.time()
-                            last_tg = _tg_start_sent.get(symbol, 0)
-                            if now - last_tg >= TG_START_COOLDOWN_SEC:
-                                _tg_start_sent[symbol] = now
+                            now_ts = time.time()
+                            last_tg_start = _tg_start_sent.get(symbol, 0)
+                            if now_ts - last_tg_start >= TG_START_COOLDOWN_SEC:
+                                _tg_start_sent[symbol] = now_ts
                                 text = (
                                     f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
                                     f"sym={symbol}\n"
@@ -197,7 +197,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                             else:
                                 logger.info(
                                     f"[false_pump.watcher] TG start cooldown {symbol} "
-                                    f"last={int(now - last_tg)}s ago, skip"
+                                    f"last={int(now_ts - last_tg_start)}s ago, skip"
                                 )
                         except Exception:
                             logger.exception(
