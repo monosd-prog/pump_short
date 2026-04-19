@@ -7,7 +7,10 @@
 set -euo pipefail
 
 STRATEGY_ROOT="${STRATEGY_ROOT:-/root/pump_short}"
-SERVICES="pump-short.service pump-short-live-auto.service pump-short-report-bot.service"
+# Long-running daemons (reload code / connections on restart)
+LONG_RUN_SERVICES="pump-short.service pump-short-report-bot.service"
+# Timer units: restart reschedules triggers; oneshot *.service units are started by these timers
+TIMER_UNITS="pump-trading-runner.timer pump-short-live-auto.timer"
 RUN_SMOKE=false
 
 for arg in "$@"; do
@@ -44,10 +47,16 @@ else
     echo "[2/3] Skipping smoke (use --smoke to enable)"
 fi
 
-# --- 3. Restart services ---
+# --- 3. Reload systemd and restart all pump units ---
 echo ""
-echo "[3/3] Restarting services: $SERVICES"
-for svc in $SERVICES; do
+echo "[3/3] systemctl daemon-reload + restart services + timers"
+if ! sudo systemctl daemon-reload; then
+    echo "ERROR: daemon-reload failed"
+    exit 1
+fi
+
+echo "  Long-running services: $LONG_RUN_SERVICES"
+for svc in $LONG_RUN_SERVICES; do
     if systemctl is-enabled "$svc" &>/dev/null; then
         echo "  Restarting $svc..."
         if ! sudo systemctl restart "$svc"; then
@@ -59,12 +68,34 @@ for svc in $SERVICES; do
     fi
 done
 
+echo "  Timers: $TIMER_UNITS"
+for t in $TIMER_UNITS; do
+    if systemctl is-enabled "$t" &>/dev/null; then
+        echo "  Restarting $t..."
+        if ! sudo systemctl restart "$t"; then
+            echo "ERROR: restart $t failed"
+            exit 1
+        fi
+    else
+        echo "  Skipping $t (not enabled)"
+    fi
+done
+
 echo ""
 echo "Service status"
-for svc in $SERVICES; do
+for svc in $LONG_RUN_SERVICES; do
     if systemctl is-enabled "$svc" &>/dev/null; then
         echo "--- $svc ---"
         systemctl status --no-pager -l "$svc" 2>/dev/null | head -5 || true
+    fi
+done
+
+echo ""
+echo "Timer status"
+for t in $TIMER_UNITS; do
+    if systemctl is-enabled "$t" &>/dev/null; then
+        echo "--- $t ---"
+        systemctl status --no-pager -l "$t" 2>/dev/null | head -6 || true
     fi
 done
 
