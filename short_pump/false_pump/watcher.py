@@ -134,6 +134,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
         peak_price_5m = await asyncio.to_thread(_peak_price_5m, symbol)
         started = time.time()
         first_tick = True
+        funding_at_signal: float | None = None
 
         while (time.time() - started) < int(cfg.monitor_timeout_sec):
             if not first_tick:
@@ -153,6 +154,42 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                 trades = await asyncio.to_thread(get_recent_trades, "linear", symbol, 1000)
                 funding_payload = await asyncio.to_thread(get_funding_rate, "linear", symbol)
                 funding_rate = _funding_rate_value(funding_payload)
+                if funding_at_signal is None:
+                    funding_at_signal = funding_rate
+                    logger.info(
+                        f"[false_pump.watcher] FUNDING_BASELINE {symbol} "
+                        f"funding_at_signal={funding_at_signal:.4f}"
+                    )
+                    if TG_BOT_TOKEN and TG_CHAT_ID:
+                        try:
+                            text = (
+                                f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
+                                f"sym={symbol}\n"
+                                f"funding_baseline={funding_at_signal:.4f} (зафиксирован на старте)\n"
+                                f"#false_pump #WATCH"
+                            )
+                            send_telegram(
+                                text,
+                                strategy="false_pump",
+                                side="SHORT",
+                                mode="paper",
+                                event_id=f"watch_baseline_{symbol}_{int(time.time())}",
+                                context_score=None,
+                                entry_ok=True,
+                                formatted=True,
+                            )
+                        except Exception:
+                            logger.exception(
+                                f"[false_pump.watcher] TG watch baseline failed: {symbol}"
+                            )
+                funding_delta = (
+                    funding_rate - funding_at_signal if funding_at_signal is not None else 0.0
+                )
+                funding_improving = (
+                    funding_at_signal is not None
+                    and funding_at_signal < -0.005
+                    and funding_delta > 0.002
+                )
                 now_ts = time.time()
                 liq = liquidation_features(
                     symbol=symbol,
@@ -173,6 +210,9 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     peak_price_5m=peak_price_5m,
                     cfg=cfg,
                     symbol=symbol,
+                    funding_improving=funding_improving,
+                    funding_at_signal=funding_at_signal,
+                    funding_delta=funding_delta,
                 )
 
                 flags_dict = details.get("flags", {}) if details else {}
@@ -188,6 +228,9 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     f"oi_weak={flags_dict.get('oi_weak')} "
                     f"near_top={flags_dict.get('near_top')} "
                     f"funding={funding_rate:.4f} "
+                    f"f_base={funding_at_signal:.4f} "
+                    f"f_delta={funding_delta:+.4f} "
+                    f"f_impr={funding_improving} "
                     f"liq={flags_dict.get('liq_present')} "
                     f"delta={flags_dict.get('delta_ok')}"
                 )
@@ -235,6 +278,9 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                             "strategy": "false_pump",
                             "peak_price_5m": details.get("peak_price_5m"),
                             "pump_price_pct": details.get("pump_price_pct"),
+                            "funding_improving": details.get("funding_improving"),
+                            "funding_at_signal": details.get("funding_at_signal"),
+                            "funding_delta": details.get("funding_delta"),
                             "oi_bot_trigger": {
                                 "oi_change_pct": signal.get("oi_change_pct"),
                                 "price_change_pct": signal.get("price_change_pct"),

@@ -76,6 +76,10 @@ def detect_false_pump(
     peak_price_5m: float,
     cfg: FalsePumpConfig,
     symbol: str = "",
+    *,
+    funding_improving: bool = False,
+    funding_at_signal: float | None = None,
+    funding_delta: float = 0.0,
 ) -> Tuple[bool, Dict[str, Any]]:
     if funding_rate < float(cfg.funding_min_threshold):
         sym = symbol.strip() if symbol else ""
@@ -146,6 +150,9 @@ def detect_false_pump(
         "pump_price_pct": float(pump_pct),
         "oi_change_pct": oi_change_short_term,
         "funding_rate": float(funding_rate),
+        "funding_improving": bool(funding_improving),
+        "funding_at_signal": funding_at_signal,
+        "funding_delta": float(funding_delta),
         "delta_ratio_1m": float(dr),
         "flags": {
             "pump_detected": bool(pump_detected),
