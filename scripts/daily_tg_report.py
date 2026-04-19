@@ -1671,7 +1671,14 @@ def generate_compact_autotrading_report(
 
     # Load outcomes for short_pump, short_pump_filtered and fast0 variants (live only)
     all_outcomes: List[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
+    for strategy in (
+        "short_pump",
+        "short_pump_filtered",
+        "short_pump_fast0",
+        "short_pump_fast0_filtered",
+        "short_pump_premium",
+        "short_pump_wick",
+    ):
         result = load_outcomes(
             base_dir=base_dir,
             strategy=strategy,
@@ -1689,7 +1696,14 @@ def generate_compact_autotrading_report(
 
     # Load events for same strategies (for ACTIVE / stage / dist enrichment)
     all_events: List[pd.DataFrame] = []
-    for strategy in ("short_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"):
+    for strategy in (
+        "short_pump",
+        "short_pump_filtered",
+        "short_pump_fast0",
+        "short_pump_fast0_filtered",
+        "short_pump_premium",
+        "short_pump_wick",
+    ):
         result = load_events_v2(
             data_dir=base_dir,
             strategy=strategy,
@@ -1746,15 +1760,41 @@ def generate_compact_autotrading_report(
         if has_ev_strat
         else pd.DataFrame()
     )
+    df_pr = (
+        df_sorted[df_sorted["strategy"].astype(str) == "short_pump_premium"]
+        if has_strat
+        else pd.DataFrame()
+    )
+    df_wk = (
+        df_sorted[df_sorted["strategy"].astype(str) == "short_pump_wick"]
+        if has_strat
+        else pd.DataFrame()
+    )
+    ev_pr = (
+        all_ev[all_ev["strategy"].astype(str) == "short_pump_premium"]
+        if has_ev_strat
+        else pd.DataFrame()
+    )
+    ev_wk = (
+        all_ev[all_ev["strategy"].astype(str) == "short_pump_wick"]
+        if has_ev_strat
+        else pd.DataFrame()
+    )
     df_sp_e = _ensure_stage_column(df_sp.copy()) if not df_sp.empty else None
     df_spf_e = _ensure_stage_column(df_spf.copy()) if not df_spf.empty else None
     df_f0_e = _ensure_stage_column(df_f0.copy()) if not df_f0.empty else None
+    df_pr_e = _ensure_stage_column(df_pr.copy()) if not df_pr.empty else None
+    df_wk_e = _ensure_stage_column(df_wk.copy()) if not df_wk.empty else None
     if df_sp_e is not None and not df_sp_e.empty:
         df_sp_e = _enrich_core_with_events(df_sp_e, ev_sp if not ev_sp.empty else None, debug=False)
     if df_spf_e is not None and not df_spf_e.empty:
         df_spf_e = _enrich_core_with_events(df_spf_e, ev_spf if not ev_spf.empty else None, debug=False)
     if df_f0_e is not None and not df_f0_e.empty:
         df_f0_e = _enrich_core_with_events(df_f0_e, ev_f0 if not ev_f0.empty else None, debug=False)
+    if df_pr_e is not None and not df_pr_e.empty:
+        df_pr_e = _enrich_core_with_events(df_pr_e, ev_pr if not ev_pr.empty else None, debug=False)
+    if df_wk_e is not None and not df_wk_e.empty:
+        df_wk_e = _enrich_core_with_events(df_wk_e, ev_wk if not ev_wk.empty else None, debug=False)
 
     # Ensure guard state is fresh before loading (report reads latest outcomes → guard must match)
     _run_guard_update(base_dir, days, rolling=rolling)
@@ -1795,6 +1835,9 @@ def generate_compact_autotrading_report(
         df_fast0_filtered_paper=df_fast0_filtered_paper if not df_fast0_filtered_paper.empty else None,
         df_short_pump_paper=df_short_pump_paper if not df_short_pump_paper.empty else None,
         df_short_pump_filtered_paper=df_short_pump_filtered_paper if not df_short_pump_filtered_paper.empty else None,
+        df_short_pump_premium=df_pr_e if (df_pr_e is not None and not df_pr_e.empty) else None,
+        df_short_pump_wick=df_wk_e if (df_wk_e is not None and not df_wk_e.empty) else None,
+        report_window_days=days,
     )
     return exec_report
 
@@ -2143,20 +2186,30 @@ def main() -> None:
             df_sp = df_sorted[df_sorted["strategy"].astype(str) == "short_pump"] if has_strat else (df_sorted if report_strategy == "short_pump" else pd.DataFrame())
             df_spf = df_sorted[df_sorted["strategy"].astype(str) == "short_pump_filtered"] if has_strat else pd.DataFrame()
             df_f0 = df_sorted[df_sorted["strategy"].astype(str) == "short_pump_fast0"] if has_strat else (df_sorted if report_strategy == "short_pump_fast0" else pd.DataFrame())
+            df_pr = df_sorted[df_sorted["strategy"].astype(str) == "short_pump_premium"] if has_strat else pd.DataFrame()
+            df_wk = df_sorted[df_sorted["strategy"].astype(str) == "short_pump_wick"] if has_strat else pd.DataFrame()
             all_ev = events_raw if events_raw is not None and not events_raw.empty else pd.DataFrame()
             has_ev_strat = "strategy" in all_ev.columns
             ev_sp = all_ev[all_ev["strategy"].astype(str) == "short_pump"] if has_ev_strat else all_ev
             ev_spf = all_ev[all_ev["strategy"].astype(str) == "short_pump_filtered"] if has_ev_strat else pd.DataFrame()
             ev_f0 = all_ev[all_ev["strategy"].astype(str) == "short_pump_fast0"] if has_ev_strat else pd.DataFrame()
+            ev_pr = all_ev[all_ev["strategy"].astype(str) == "short_pump_premium"] if has_ev_strat else pd.DataFrame()
+            ev_wk = all_ev[all_ev["strategy"].astype(str) == "short_pump_wick"] if has_ev_strat else pd.DataFrame()
             df_sp_e = _ensure_stage_column(df_sp.copy()) if not df_sp.empty else None
             df_spf_e = _ensure_stage_column(df_spf.copy()) if not df_spf.empty else None
             df_f0_e = _ensure_stage_column(df_f0.copy()) if not df_f0.empty else None
+            df_pr_e = _ensure_stage_column(df_pr.copy()) if not df_pr.empty else None
+            df_wk_e = _ensure_stage_column(df_wk.copy()) if not df_wk.empty else None
             if df_sp_e is not None and not df_sp_e.empty:
                 df_sp_e = _enrich_core_with_events(df_sp_e, ev_sp if not ev_sp.empty else None, debug=debug)
             if df_spf_e is not None and not df_spf_e.empty:
                 df_spf_e = _enrich_core_with_events(df_spf_e, ev_spf if not ev_spf.empty else None, debug=debug)
             if df_f0_e is not None and not df_f0_e.empty:
                 df_f0_e = _enrich_core_with_events(df_f0_e, ev_f0 if not ev_f0.empty else None, debug=debug)
+            if df_pr_e is not None and not df_pr_e.empty:
+                df_pr_e = _enrich_core_with_events(df_pr_e, ev_pr if not ev_pr.empty else None, debug=debug)
+            if df_wk_e is not None and not df_wk_e.empty:
+                df_wk_e = _enrich_core_with_events(df_wk_e, ev_wk if not ev_wk.empty else None, debug=debug)
 
             # Ensure guard state is fresh before loading (report reads latest outcomes → guard must match)
             _run_guard_update(data_dir, args.days, rolling=args.rolling)
@@ -2200,6 +2253,9 @@ def main() -> None:
                 df_fast0_filtered_paper=df_fast0_filtered_paper if not df_fast0_filtered_paper.empty else None,
                 df_short_pump_paper=df_short_pump_paper if not df_short_pump_paper.empty else None,
                 df_short_pump_filtered_paper=df_short_pump_filtered_paper if not df_short_pump_filtered_paper.empty else None,
+                df_short_pump_premium=df_pr_e if (df_pr_e is not None and not df_pr_e.empty) else None,
+                df_short_pump_wick=df_wk_e if (df_wk_e is not None and not df_wk_e.empty) else None,
+                report_window_days=args.days,
             )
             investor_lines = exec_report.split("\n")
             report = exec_report  # compact mode: executive report only (self-contained)
