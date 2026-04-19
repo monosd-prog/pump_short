@@ -724,7 +724,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
         # LIVE PROFILE WHITELIST: only allow explicitly approved profiles in live mode
         if EXECUTION_MODE == "live":
-            allowed_live_profiles = {"short_pump_active_1R", "fast0_selective", "short_pump_filtered_1R"}
+            allowed_live_profiles = {"short_pump_active_1R", "fast0_selective", "short_pump_filtered_1R", "short_pump_mid"}
             if risk_profile_name in allowed_live_profiles:
                 logger.info(
                     "LIVE_PROFILE_ALLOWED | risk_profile=%s strategy=%s symbol=%s",
