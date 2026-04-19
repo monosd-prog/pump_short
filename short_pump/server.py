@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from common.io_dataset import ensure_dataset_files, get_dataset_dir
 from common.runtime import code_version, wall_time_utc
-from short_pump.rollout import SHORT_PUMP_FILTERED_ENABLE
+from short_pump.rollout import SHORT_PUMP_FILTERED_ENABLE, SHORT_PUMP_PREMIUM_ENABLE
 from short_pump.config import Config
 from short_pump.logging_utils import get_logger
 from short_pump.runtime import Runtime
@@ -45,6 +45,8 @@ def _current_exec_mode() -> str:
 
 def _enabled_strategies() -> list[str]:
     strategies = ["short_pump"]
+    if SHORT_PUMP_PREMIUM_ENABLE:
+        strategies.append("short_pump_premium")
     if SHORT_PUMP_FILTERED_ENABLE:
         strategies.append("short_pump_filtered")
     if ENABLE_LONG_PULLBACK:
@@ -66,6 +68,8 @@ async def _log_enabled_strategies() -> None:
         "DATASET_DIR | exec_mode=%s base_dir=%s example=%s",
         exec_mode, base_abs, example_dir,
     )
+    if SHORT_PUMP_PREMIUM_ENABLE:
+        ensure_dataset_files("short_pump_premium", "live", wall_time_utc(), schema_version=3)
     if SHORT_PUMP_FILTERED_ENABLE:
         ensure_dataset_files("short_pump_filtered", "live", wall_time_utc(), schema_version=3)
 

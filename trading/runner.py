@@ -170,9 +170,19 @@ def _dedupe_key(signal: Signal) -> str:
 
 def _get_allowed_strategies() -> List[str]:
     """Runtime list from STRATEGIES env (so CLI --strategies can override)."""
-    raw = os.getenv("STRATEGIES", "short_pump,false_pump,short_pump_filtered,short_pump_fast0,short_pump_fast0_filtered").strip()
+    raw = os.getenv(
+        "STRATEGIES",
+        "short_pump,false_pump,short_pump_premium,short_pump_filtered,short_pump_fast0,short_pump_fast0_filtered",
+    ).strip()
     out = [s.strip() for s in raw.split(",") if s.strip()]
-    return out if out else ["short_pump", "false_pump", "short_pump_filtered", "short_pump_fast0", "short_pump_fast0_filtered"]
+    return out if out else [
+        "short_pump",
+        "false_pump",
+        "short_pump_premium",
+        "short_pump_filtered",
+        "short_pump_fast0",
+        "short_pump_fast0_filtered",
+    ]
 
 
 # Priority for multi-strategy selection: lower index = higher priority
@@ -180,6 +190,7 @@ _STRATEGY_PRIORITY: dict[str, int] = {
     "short_pump_fast0_filtered": 0,
     "short_pump_fast0": 1,
     "short_pump_filtered": 2,
+    "short_pump_premium": 2,
     "short_pump": 3,
     "false_pump": 4,
 }
@@ -579,6 +590,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
         risk_mult = 1.0
         if (signal.strategy or "").strip() in (
             "short_pump",
+            "short_pump_premium",
             "short_pump_filtered",
             "short_pump_fast0",
             "short_pump_fast0_filtered",
@@ -865,7 +877,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                     )
         # For SP-PAPER: A3-lite attach — runner establishes ownership deterministically.
         try:
-            if (signal.strategy or "").strip() in {"short_pump", "short_pump_filtered"} and position.get("mode") == "paper" and pid:
+            if (signal.strategy or "").strip() in {"short_pump", "short_pump_premium", "short_pump_filtered"} and position.get("mode") == "paper" and pid:
                 meta = {
                     "attach_by": "runner",
                     "outcome_watch_minutes": position.get("outcome_watch_minutes"),

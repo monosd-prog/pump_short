@@ -25,6 +25,12 @@ def _get_float(name: str, default: float) -> float:
 SHORT_PUMP_FILTERED_ENABLE = _get_bool("SHORT_PUMP_FILTERED_ENABLE", False)
 SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX = _get_float("SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX", 1.0)
 
+SHORT_PUMP_PREMIUM_ENABLE = _get_bool("SHORT_PUMP_PREMIUM_ENABLE", False)
+SHORT_PUMP_PREMIUM_FUNDING_MIN = _get_float("SHORT_PUMP_PREMIUM_FUNDING_MIN", 0.005)
+SHORT_PUMP_PREMIUM_FUNDING_MAX = _get_float("SHORT_PUMP_PREMIUM_FUNDING_MAX", 0.01)
+SHORT_PUMP_PREMIUM_DELTA_RATIO_MAX = _get_float("SHORT_PUMP_PREMIUM_DELTA_RATIO_MAX", 0.0)
+SHORT_PUMP_PREMIUM_DELTA_RATIO_MIN = _get_float("SHORT_PUMP_PREMIUM_DELTA_RATIO_MIN", -0.5)
+
 
 def _coerce_dist(dist_to_peak_pct: Any) -> float | None:
     try:
@@ -36,10 +42,40 @@ def _coerce_dist(dist_to_peak_pct: Any) -> float | None:
     return value
 
 
-def resolve_short_pump_route(dist_to_peak_pct: Any) -> dict[str, Any]:
+def _coerce_float_optional(val: Any) -> float | None:
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return f
+
+
+def _premium_funding_delta_match(funding_rate_abs: Any, delta_ratio_30s: Any) -> bool:
+    """True when premium sub-mode should route (funding band x delta_ratio_30s band)."""
+    if not SHORT_PUMP_PREMIUM_ENABLE:
+        return False
+    f = _coerce_float_optional(funding_rate_abs)
+    d = _coerce_float_optional(delta_ratio_30s)
+    if f is None or d is None:
+        return False
+    if not (SHORT_PUMP_PREMIUM_FUNDING_MIN <= f < SHORT_PUMP_PREMIUM_FUNDING_MAX):
+        return False
+    if not (SHORT_PUMP_PREMIUM_DELTA_RATIO_MIN <= d < SHORT_PUMP_PREMIUM_DELTA_RATIO_MAX):
+        return False
+    return True
+
+
+def resolve_short_pump_route(
+    dist_to_peak_pct: Any,
+    *,
+    funding_rate_abs: Any = None,
+    delta_ratio_30s: Any = None,
+) -> dict[str, Any]:
     """
-    Decide whether a short_pump entry should stay on the baseline path or route to
-    short_pump_filtered.
+    Decide whether a short_pump entry should stay on the baseline path, route to
+    short_pump_premium, or short_pump_filtered.
 
     Returns a dict with:
     - route_strategy
@@ -50,6 +86,15 @@ def resolve_short_pump_route(dist_to_peak_pct: Any) -> dict[str, Any]:
     """
     dist_val = _coerce_dist(dist_to_peak_pct)
     would_pass = dist_val is not None and dist_val <= SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX
+
+    if _premium_funding_delta_match(funding_rate_abs, delta_ratio_30s):
+        return {
+            "route_strategy": "short_pump_premium",
+            "would_pass_dist_filter": would_pass,
+            "filter_reason": "premium_funding_delta",
+            "strategy_candidate": "short_pump_premium",
+            "dist_to_peak_pct": dist_val,
+        }
 
     if dist_val is None:
         filter_reason = "missing_dist"

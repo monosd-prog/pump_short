@@ -116,6 +116,8 @@ def get_risk_profile(
     s = (strategy or "").strip()
     if s == "short_pump_fast0_filtered":
         s = "short_pump_fast0"
+    if s == "short_pump_premium":
+        s = "short_pump"
     if s == "short_pump_filtered":
         stage_i = None
         try:

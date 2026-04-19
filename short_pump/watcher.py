@@ -183,7 +183,7 @@ def _watcher_should_skip_outcome_live(
     try:
         from trading.state import load_state, outcome_tg_sent, make_position_id
         state = load_state()
-        for strat in ("short_pump", "short_pump_filtered", "short_pump_fast0"):
+        for strat in ("short_pump", "short_pump_premium", "short_pump_filtered", "short_pump_fast0"):
             key = make_position_id(strat, run_id or "", str(event_id or ""), symbol)
             if outcome_tg_sent(state, key):
                 return True, "already_finalized"
@@ -1643,7 +1643,18 @@ def run_watch_for_symbol(
                 from trading.state import make_position_id
                 if not entry_payload.get("dist_to_peak_pct"):
                     entry_payload["dist_to_peak_pct"] = _dist_to_peak_pct(dbg5.get("peak_price"), entry_price)
-                route_meta = resolve_short_pump_route(entry_payload.get("dist_to_peak_pct"))
+                if entry_payload.get("funding_rate_abs") is None:
+                    _fr = entry_payload.get("funding_rate")
+                    if _fr is not None:
+                        try:
+                            entry_payload["funding_rate_abs"] = abs(float(_fr))
+                        except (TypeError, ValueError):
+                            pass
+                route_meta = resolve_short_pump_route(
+                    entry_payload.get("dist_to_peak_pct"),
+                    funding_rate_abs=entry_payload.get("funding_rate_abs"),
+                    delta_ratio_30s=entry_payload.get("delta_ratio_30s"),
+                )
                 route_strategy = route_meta["route_strategy"]
                 trade_id = make_position_id(route_strategy, run_id or "", str(event_id or ""), cfg.symbol)
                 entry_payload.update(

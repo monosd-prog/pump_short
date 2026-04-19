@@ -166,7 +166,7 @@ def _mode_name_for_signal_and_profile(signal: Any, risk_profile_name: str) -> Op
     s = (getattr(signal, "strategy", None) or "").strip()
     if not risk_profile_name:
         return None
-    if s == "short_pump" and risk_profile_name in {
+    if s in {"short_pump", "short_pump_premium"} and risk_profile_name in {
         "short_pump_active_1R",
         "short_pump_mid",
         "short_pump_deep",
