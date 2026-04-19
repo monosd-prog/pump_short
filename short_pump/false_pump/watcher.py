@@ -33,6 +33,9 @@ FALSE_PUMP_WEBHOOK_URL = os.getenv(
     "http://localhost:8441/api/oi_signal",
 )
 
+_tg_start_sent: dict = {}  # symbol -> timestamp последнего TG о старте
+TG_START_COOLDOWN_SEC = 1800  # 30 минут
+
 
 def _funding_rate_value(payload: dict | None) -> float:
     if not payload:
@@ -100,31 +103,40 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
 
     if TG_BOT_TOKEN and TG_CHAT_ID:
         try:
-            funding_warn = ""
-            if funding_rate_start < -0.005:
-                funding_warn = (
-                    f"\n⚠️ funding={funding_rate_start:.4f} "
-                    f"(отрицательный — вход заблокирован)"
+            now = time.time()
+            last_tg = _tg_start_sent.get(symbol, 0)
+            if now - last_tg >= TG_START_COOLDOWN_SEC:
+                _tg_start_sent[symbol] = now
+                funding_warn = ""
+                if funding_rate_start < -0.005:
+                    funding_warn = (
+                        f"\n⚠️ funding={funding_rate_start:.4f} "
+                        f"(отрицательный — вход заблокирован)"
+                    )
+                text = (
+                    f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
+                    f"sym={symbol}\n"
+                    f"OI-бот: oi={float(signal.get('oi_change_pct') or 0):.1f}% "
+                    f"price={float(signal.get('price_change_pct') or 0):.1f}% window=90m\n"
+                    f"Мониторинг до {int(cfg.monitor_timeout_sec / 3600)}ч"
+                    f"{funding_warn}\n"
+                    f"#false_pump #WATCH"
                 )
-            text = (
-                f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
-                f"sym={symbol}\n"
-                f"OI-бот: oi={float(signal.get('oi_change_pct') or 0):.1f}% "
-                f"price={float(signal.get('price_change_pct') or 0):.1f}% window=90m\n"
-                f"Мониторинг до {int(cfg.monitor_timeout_sec / 3600)}ч"
-                f"{funding_warn}\n"
-                f"#false_pump #WATCH"
-            )
-            send_telegram(
-                text,
-                strategy="false_pump",
-                side="SHORT",
-                mode="paper",
-                event_id=f"watch_{symbol}_{int(time.time())}",
-                context_score=None,
-                entry_ok=True,
-                formatted=True,
-            )
+                send_telegram(
+                    text,
+                    strategy="false_pump",
+                    side="SHORT",
+                    mode="paper",
+                    event_id=f"watch_{symbol}_{int(time.time())}",
+                    context_score=None,
+                    entry_ok=True,
+                    formatted=True,
+                )
+            else:
+                logger.info(
+                    f"[false_pump.watcher] TG start cooldown {symbol} "
+                    f"last={int(now - last_tg)}s ago, skip"
+                )
         except Exception:
             logger.exception(f"[false_pump.watcher] TG watch start failed: {symbol}")
 
@@ -162,22 +174,31 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     )
                     if TG_BOT_TOKEN and TG_CHAT_ID:
                         try:
-                            text = (
-                                f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
-                                f"sym={symbol}\n"
-                                f"funding_baseline={funding_at_signal:.4f} (зафиксирован на старте)\n"
-                                f"#false_pump #WATCH"
-                            )
-                            send_telegram(
-                                text,
-                                strategy="false_pump",
-                                side="SHORT",
-                                mode="paper",
-                                event_id=f"watch_baseline_{symbol}_{int(time.time())}",
-                                context_score=None,
-                                entry_ok=True,
-                                formatted=True,
-                            )
+                            now = time.time()
+                            last_tg = _tg_start_sent.get(symbol, 0)
+                            if now - last_tg >= TG_START_COOLDOWN_SEC:
+                                _tg_start_sent[symbol] = now
+                                text = (
+                                    f"👀 false_pump | МОНИТОРИНГ СТАРТ\n"
+                                    f"sym={symbol}\n"
+                                    f"funding_baseline={funding_at_signal:.4f} (зафиксирован на старте)\n"
+                                    f"#false_pump #WATCH"
+                                )
+                                send_telegram(
+                                    text,
+                                    strategy="false_pump",
+                                    side="SHORT",
+                                    mode="paper",
+                                    event_id=f"watch_baseline_{symbol}_{int(time.time())}",
+                                    context_score=None,
+                                    entry_ok=True,
+                                    formatted=True,
+                                )
+                            else:
+                                logger.info(
+                                    f"[false_pump.watcher] TG start cooldown {symbol} "
+                                    f"last={int(now - last_tg)}s ago, skip"
+                                )
                         except Exception:
                             logger.exception(
                                 f"[false_pump.watcher] TG watch baseline failed: {symbol}"
