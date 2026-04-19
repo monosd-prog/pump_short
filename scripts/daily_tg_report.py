@@ -1678,6 +1678,7 @@ def generate_compact_autotrading_report(
         "short_pump_fast0_filtered",
         "short_pump_premium",
         "short_pump_wick",
+        "false_pump",
     ):
         result = load_outcomes(
             base_dir=base_dir,
@@ -1703,6 +1704,7 @@ def generate_compact_autotrading_report(
         "short_pump_fast0_filtered",
         "short_pump_premium",
         "short_pump_wick",
+        "false_pump",
     ):
         result = load_events_v2(
             data_dir=base_dir,
@@ -1780,6 +1782,16 @@ def generate_compact_autotrading_report(
         if has_ev_strat
         else pd.DataFrame()
     )
+    df_fp = (
+        df_sorted[df_sorted["strategy"].astype(str) == "false_pump"]
+        if has_strat
+        else pd.DataFrame()
+    )
+    ev_fp = (
+        all_ev[all_ev["strategy"].astype(str) == "false_pump"]
+        if has_ev_strat
+        else pd.DataFrame()
+    )
     df_sp_e = _ensure_stage_column(df_sp.copy()) if not df_sp.empty else None
     df_spf_e = _ensure_stage_column(df_spf.copy()) if not df_spf.empty else None
     df_f0_e = _ensure_stage_column(df_f0.copy()) if not df_f0.empty else None
@@ -1795,6 +1807,9 @@ def generate_compact_autotrading_report(
         df_pr_e = _enrich_core_with_events(df_pr_e, ev_pr if not ev_pr.empty else None, debug=False)
     if df_wk_e is not None and not df_wk_e.empty:
         df_wk_e = _enrich_core_with_events(df_wk_e, ev_wk if not ev_wk.empty else None, debug=False)
+    df_fp_e = _ensure_stage_column(df_fp.copy()) if not df_fp.empty else None
+    if df_fp_e is not None and not df_fp_e.empty:
+        df_fp_e = _enrich_core_with_events(df_fp_e, ev_fp if not ev_fp.empty else None, debug=False)
 
     # Ensure guard state is fresh before loading (report reads latest outcomes → guard must match)
     _run_guard_update(base_dir, days, rolling=rolling)
@@ -1837,6 +1852,7 @@ def generate_compact_autotrading_report(
         df_short_pump_filtered_paper=df_short_pump_filtered_paper if not df_short_pump_filtered_paper.empty else None,
         df_short_pump_premium=df_pr_e if (df_pr_e is not None and not df_pr_e.empty) else None,
         df_short_pump_wick=df_wk_e if (df_wk_e is not None and not df_wk_e.empty) else None,
+        df_false_pump=df_fp_e if (df_fp_e is not None and not df_fp_e.empty) else None,
         report_window_days=days,
     )
     return exec_report
@@ -2211,6 +2227,28 @@ def main() -> None:
             if df_wk_e is not None and not df_wk_e.empty:
                 df_wk_e = _enrich_core_with_events(df_wk_e, ev_wk if not ev_wk.empty else None, debug=debug)
 
+            res_fp_live = load_outcomes(
+                base_dir=data_dir,
+                strategy="false_pump",
+                mode="live",
+                days=args.days,
+                include_test=False,
+                return_file_count=False,
+            )
+            df_fp_raw = res_fp_live[0] if isinstance(res_fp_live, tuple) else res_fp_live
+            ev_fp_res = load_events_v2(
+                data_dir=data_dir,
+                strategy="false_pump",
+                mode="live",
+                days=args.days,
+                raw=True,
+                return_file_count=False,
+            )
+            ev_fp = ev_fp_res[0] if isinstance(ev_fp_res, tuple) else ev_fp_res
+            df_fp_e = _ensure_stage_column(df_fp_raw.copy()) if not df_fp_raw.empty else None
+            if df_fp_e is not None and not df_fp_e.empty:
+                df_fp_e = _enrich_core_with_events(df_fp_e, ev_fp if not ev_fp.empty else None, debug=debug)
+
             # Ensure guard state is fresh before loading (report reads latest outcomes → guard must match)
             _run_guard_update(data_dir, args.days, rolling=args.rolling)
 
@@ -2255,6 +2293,7 @@ def main() -> None:
                 df_short_pump_filtered_paper=df_short_pump_filtered_paper if not df_short_pump_filtered_paper.empty else None,
                 df_short_pump_premium=df_pr_e if (df_pr_e is not None and not df_pr_e.empty) else None,
                 df_short_pump_wick=df_wk_e if (df_wk_e is not None and not df_wk_e.empty) else None,
+                df_false_pump=df_fp_e if (df_fp_e is not None and not df_fp_e.empty) else None,
                 report_window_days=args.days,
             )
             investor_lines = exec_report.split("\n")

@@ -875,6 +875,8 @@ def _render_autotrading_lifecycle_report(
     df_all_outcomes: pd.DataFrame,
     df_fast0_paper: Optional[pd.DataFrame],
     ml_cores: Dict[str, int],
+    df_false_pump: Optional[pd.DataFrame] = None,
+    rolling_n: int = 20,
 ) -> str:
     """Lifecycle TG report: monospace block, no SYSTEM STATE / EDGE / eligibility table."""
     from analytics.stats import LIGHTGBM_COMFORT, LIGHTGBM_MIN
@@ -1054,6 +1056,24 @@ def _render_autotrading_lifecycle_report(
         lines.append(_r48("(нет)"))
     lines.append("")
 
+    lines.append("🌀 FALSE_PUMP (separate pipeline)")
+    fp_df = df_false_pump if df_false_pump is not None else pd.DataFrame()
+    sub_fp = pd.DataFrame()
+    if not fp_df.empty and "outcome" in fp_df.columns:
+        out_fp = fp_df["outcome"].apply(_normalize_outcome_raw)
+        sub_fp = fp_df[out_fp.isin(["TP_hit", "SL_hit"])].copy()
+    n_fp = len(sub_fp)
+    if n_fp == 0:
+        lines.append("false_pump  N=0  (нет сделок за период)")
+    else:
+        tp_fp = int((sub_fp["outcome"].apply(_normalize_outcome_raw) == "TP_hit").sum())
+        sl_fp = int((sub_fp["outcome"].apply(_normalize_outcome_raw) == "SL_hit").sum())
+        wr_fp = wr_core_from_tp_sl(tp_fp, sl_fp) * 100
+        _, ev20_fp, _ = rolling_wr_ev_core(sub_fp, rolling_n)
+        lines.append(f"false_pump  N={n_fp}  WR={wr_fp:.0f}%  EV20={ev20_fp:+.2f}")
+    lines.append("pipeline: active · no guard · separate from short_pump")
+    lines.append("")
+
     lines.append("🤖 ML READINESS")
     rows_ml = [
         ("sp", ml_cores.get("short_pump", 0)),
@@ -1083,6 +1103,7 @@ def _render_autotrading_lifecycle_report(
     lines.append(
         _r48("WR/EV20/N — метрики core; h — health 0–100; блоки по guard")
     )
+    lines.append("false_pump — отдельный пайплайн, без guard/live whitelist")
     body = "\n".join(lines)
     return f"```\n{body}\n```"
 
@@ -1101,6 +1122,7 @@ def build_executive_compact_report(
     df_short_pump_filtered_paper: Optional[pd.DataFrame] = None,
     df_short_pump_premium: Optional[pd.DataFrame] = None,
     df_short_pump_wick: Optional[pd.DataFrame] = None,
+    df_false_pump: Optional[pd.DataFrame] = None,
     report_window_days: Optional[int] = None,
 ) -> str:
     """
@@ -1349,7 +1371,7 @@ def build_executive_compact_report(
             mode_pnl_r[gk_wk] = 0.0
 
     parts_out = []
-    for d in (df_sp, df_spf, df_f0, df_pr, df_wk):
+    for d in (df_sp, df_spf, df_f0, df_pr, df_wk, df_false_pump):
         if d is not None and not d.empty:
             parts_out.append(d)
     df_all_outcomes = pd.concat(parts_out, ignore_index=True) if parts_out else pd.DataFrame()
@@ -1377,5 +1399,7 @@ def build_executive_compact_report(
         df_all_outcomes=df_all_outcomes,
         df_fast0_paper=df_fast0_paper,
         ml_cores=ml_cores,
+        df_false_pump=df_false_pump,
+        rolling_n=rolling_n,
     )
 
