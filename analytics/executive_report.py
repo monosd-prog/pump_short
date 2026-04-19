@@ -781,18 +781,18 @@ def _paper_fast0_validation_lines(df_fast0_paper: Optional[pd.DataFrame]) -> lis
     return out
 
 
-# --- Lifecycle compact report (Telegram /report): monospace, ≤48 cols ---
-_LIFECYCLE_GK_ORDER: Tuple[Tuple[str, str], ...] = (
-    ("short_pump_mid", "SP MID"),
-    ("short_pump_deep", "SP DEP"),
-    ("short_pump_active_1R", "SP ACT"),
-    ("short_pump_filtered_1R", "SP FLT"),
-    ("short_pump_premium_1R", "SP PRM"),
-    ("short_pump_wick_1R", "SP WCK"),
-    ("fast0_selective", "F0 SEL"),
-    ("fast0_base_1R", "F0 B0"),
-    ("fast0_1p5R", "F0 15"),
-    ("fast0_2R", "F0 2R"),
+# --- Lifecycle compact report (Telegram /report): code block; guard_key order ---
+_LIFECYCLE_GK_ORDER: Tuple[str, ...] = (
+    "short_pump_mid",
+    "short_pump_deep",
+    "short_pump_active_1R",
+    "short_pump_filtered_1R",
+    "short_pump_premium_1R",
+    "short_pump_wick_1R",
+    "fast0_selective",
+    "fast0_base_1R",
+    "fast0_1p5R",
+    "fast0_2R",
 )
 
 _GK_METRIC_LABEL: Dict[str, str] = {
@@ -807,13 +807,6 @@ _GK_METRIC_LABEL: Dict[str, str] = {
     "fast0_1p5R": "FAST0 1.5R",
     "fast0_2R": "FAST0 2R",
 }
-
-
-def _r48(line: str) -> str:
-    s = line.replace("\n", " ").strip()
-    if len(s) <= 48:
-        return s
-    return s[:47].rstrip() + "…"
 
 
 def _fmt_title_date(end_raw: str) -> str:
@@ -878,17 +871,17 @@ def _render_autotrading_lifecycle_report(
     df_false_pump: Optional[pd.DataFrame] = None,
     rolling_n: int = 20,
 ) -> str:
-    """Lifecycle TG report: monospace block, no SYSTEM STATE / EDGE / eligibility table."""
+    """Lifecycle TG report: code block; no SYSTEM STATE / EDGE / eligibility table."""
     from analytics.stats import LIGHTGBM_COMFORT, LIGHTGBM_MIN
 
     _, end = date_range
     lines: List[str] = []
 
-    lines.append(_r48(f"📊 АВТОТОРГОВЛЯ · {report_window_days}д · {_fmt_title_date(end)}"))
+    lines.append(f"📊 АВТОТОРГОВЛЯ · {report_window_days}д · {_fmt_title_date(end)}")
     lines.append("")
     lines.append("⚡ ACTION REQUIRED")
-    actions: List[str] = []
-    for gk, short_name in _LIFECYCLE_GK_ORDER:
+    action_blocks: List[List[str]] = []
+    for gk in _LIFECYCLE_GK_ORDER:
         label = _GK_METRIC_LABEL.get(gk, gk)
         gst = _guard_state_str(guard_state, gk)
         n_c = int(mode_n_core.get(gk, 0))
@@ -906,29 +899,44 @@ def _render_autotrading_lifecycle_report(
         )
         prod = _producer_strategies_for_guard_key(gk)
         strat_ok = bool(prod & strategies_for_live) if prod else False
+        if gk in ("short_pump_premium_1R", "short_pump_wick_1R") and gst == "WATCH":
+            rem = max(0, CORE_DECISION_WINDOW - n_c)
+            action_blocks.append(
+                [
+                    f"{gk} · копит данные (paper)",
+                    f"└ ~{rem} сделок до ACTIVE",
+                ]
+            )
+            continue
+        if ev20 < -0.3 and n_c > 0:
+            action_blocks.append(
+                [
+                    f"{gk} · глубокая просадка, остановить?",
+                    f"└ EV20 {ev20:+.2f}R, health {health}",
+                ]
+            )
+            continue
         if (
             health >= 90
             and gk not in ALLOWED_LIVE_PROFILES_FOR_REPORT
             and strat_ok
             and gst == "ACTIVE"
         ):
-            actions.append(_r48(f"{short_name}: готов к live (h{health})"))
-        if ev20 < -0.3 and n_c > 0:
-            actions.append(_r48(f"{short_name}: deep degr EV20 {ev20:+.2f}R"))
-    for gk in ("short_pump_premium_1R", "short_pump_wick_1R"):
-        gst = _guard_state_str(guard_state, gk)
-        short_name = "SP PRM" if gk == "short_pump_premium_1R" else "SP WCK"
-        if gst == "WATCH":
-            n_c = int(mode_n_core.get(gk, 0))
-            rem = max(0, CORE_DECISION_WINDOW - n_c)
-            actions.append(_r48(f"{short_name} WATCH: ждём ~{rem} сделок"))
-    actions = actions[:5]
-    if actions:
-        for a in actions:
-            lines.append(_r48(a))
+            action_blocks.append(
+                [
+                    f"{gk} · готов к live",
+                    f"└ health {health}, N={n_c}, EV20 {ev20:+.2f}R",
+                ]
+            )
+    action_blocks = action_blocks[:5]
+    if action_blocks:
+        for block in action_blocks:
+            for ln in block:
+                lines.append(ln)
+            lines.append("")
     else:
-        lines.append(_r48("нет срочных действий"))
-    lines.append("")
+        lines.append("нет срочных действий")
+        lines.append("")
 
     sp_h = f0_h = 0
     if "SHORT_PUMP" in mode_ev20 and "SHORT_PUMP" in mode_wr and "SHORT_PUMP" in mode_mdd:
@@ -955,10 +963,8 @@ def _render_autotrading_lifecycle_report(
         )
     lines.append("🎯 AGGREGATES")
     lines.append(
-        _r48(
-            f"SHORT_PUMP {sp_h}/100 {_health_emoji(sp_h)}  "
-            f"FAST0 {f0_h}/100 {_health_emoji(f0_h)}"
-        )
+        f"SHORT_PUMP {sp_h}/100 {_health_emoji(sp_h)}  "
+        f"FAST0 {f0_h}/100 {_health_emoji(f0_h)}"
     )
     lines.append("")
 
@@ -983,77 +989,74 @@ def _render_autotrading_lifecycle_report(
 
     lines.append("🟢 LIVE (on exchange)")
     live_any = False
-    for gk, short_name in _LIFECYCLE_GK_ORDER:
+    for gk in _LIFECYCLE_GK_ORDER:
         _lb, gst, n_c, ev20, wr, mdd, pnl, _h = _mode_metrics(gk)
         if gst != "ACTIVE" or gk not in ALLOWED_LIVE_PROFILES_FOR_REPORT:
             continue
         live_any = True
         fs = _filter_summary_for_gk(gk, tg_dist_min)
-        lines.append(_r48(f"{short_name}  {wr:.0f}%  EV20:{ev20:+.2f}  N={n_c}  🟢 LIVE"))
-        lines.append(_r48(f"  filter: {fs}"))
-        lines.append(_r48(f"  pnl: {pnl:+.1f}R · mdd: {mdd:.1f}R"))
+        lines.append(f"{gk}  {wr:.0f}%  EV20:{ev20:+.2f}  N={n_c}  🟢 LIVE")
+        lines.append(f"  filter: {fs}")
+        lines.append(f"  pnl: {pnl:+.1f}R · mdd: {mdd:.1f}R")
         lines.append("")
     if not live_any:
-        lines.append(_r48("(нет)"))
+        lines.append("(нет)")
         lines.append("")
 
     lines.append("🟡 READY FOR LIVE")
     ready_any = False
-    for gk, short_name in _LIFECYCLE_GK_ORDER:
+    for gk in _LIFECYCLE_GK_ORDER:
         _lb, gst, n_c, ev20, wr, mdd, pnl, health = _mode_metrics(gk)
         if gst != "ACTIVE" or gk in ALLOWED_LIVE_PROFILES_FOR_REPORT:
             continue
         ready_any = True
         fs = _filter_summary_for_gk(gk, tg_dist_min)
-        lines.append(_r48(f"{short_name}  {wr:.0f}%  EV20:{ev20:+.2f}  N={n_c}  🟡"))
-        lines.append(_r48(f"  filter: {fs}"))
-        lines.append(_r48(f"  pnl: {pnl:+.1f}R · mdd: {mdd:.1f}R"))
-        lines.append(_r48(f"  health {health}/100 · до live: в whitelist"))
+        lines.append(f"{gk}  {wr:.0f}%  EV20:{ev20:+.2f}  N={n_c}  🟡")
+        lines.append(f"  filter: {fs}")
+        lines.append(f"  pnl: {pnl:+.1f}R · mdd: {mdd:.1f}R")
+        lines.append(f"  health {health}/100 · до live: в whitelist")
         lines.append("")
     if not ready_any:
-        lines.append(_r48("(нет)"))
+        lines.append("(нет)")
         lines.append("")
 
     lines.append("🔵 PAPER (WATCH)")
     paper_any = False
-    for gk, short_name in _LIFECYCLE_GK_ORDER:
+    for gk in _LIFECYCLE_GK_ORDER:
         _lb, gst, n_c, ev20, wr, mdd, pnl, health = _mode_metrics(gk)
         if gst not in ("WATCH", "RECOVERY"):
             continue
         paper_any = True
         fs = _filter_summary_for_gk(gk, tg_dist_min)
-        new_badge = ""
-        if gk in ("short_pump_premium_1R", "short_pump_wick_1R"):
-            new_badge = " NEW" if n_c < 10 else ""
-        if n_c == 0 and gk in ("short_pump_premium_1R", "short_pump_wick_1R"):
-            lines.append(_r48(f"{short_name}{new_badge}  [{_gst_bucket(gst)}]"))
-            lines.append(_r48(f"  filter: {fs}"))
-            rem = max(0, CORE_DECISION_WINDOW - n_c)
-            lines.append(_r48(f"  до ACTIVE: ~{rem} сделок"))
+        rem_active = max(0, CORE_DECISION_WINDOW - n_c)
+        st = _gst_bucket(gst)
+        is_new = gk in ("short_pump_premium_1R", "short_pump_wick_1R") and n_c < 10
+        tag = f"{st} · NEW" if is_new else st
+        if n_c == 0:
+            lines.append(f"{gk}  [{tag}]")
+            lines.append(f"  filter: {fs}")
+            lines.append(f"  до ACTIVE: ~{rem_active} сделок")
             lines.append("")
             continue
-        lines.append(_r48(f"{short_name}{new_badge}  [{_gst_bucket(gst)}]  N={n_c}"))
-        lines.append(_r48(f"  filter: {fs}"))
-        lines.append(_r48(f"  WR {wr:.0f}% EV20:{ev20:+.2f} health {health}/100"))
+        lines.append(f"{gk}  [{st}]")
+        lines.append(f"  WR {wr:.0f}% · EV20 {ev20:+.2f} · N={n_c}")
+        lines.append(f"  filter: {fs}")
+        lines.append(f"  до ACTIVE: ~{rem_active} сделок")
         lines.append("")
     if not paper_any:
-        lines.append(_r48("(нет)"))
+        lines.append("(нет)")
         lines.append("")
 
     lines.append("🔴 DISABLED")
     dis_any = False
-    for gk, short_name in _LIFECYCLE_GK_ORDER:
+    for gk in _LIFECYCLE_GK_ORDER:
         _lb, gst, n_c, ev20, wr, mdd, _pnl, health = _mode_metrics(gk)
         if gst != "DISABLED":
             continue
         dis_any = True
-        lines.append(
-            _r48(
-                f"{short_name}  {wr:.0f}%  EV20:{ev20:+.2f}  N={n_c}  h{health}"
-            )
-        )
+        lines.append(f"{gk}  {wr:.0f}%  EV20:{ev20:+.2f}  N={n_c}  h{health}")
     if not dis_any:
-        lines.append(_r48("(нет)"))
+        lines.append("(нет)")
     lines.append("")
 
     lines.append("🌀 FALSE_PUMP (separate pipeline)")
@@ -1076,33 +1079,34 @@ def _render_autotrading_lifecycle_report(
 
     lines.append("🤖 ML READINESS")
     rows_ml = [
-        ("sp", ml_cores.get("short_pump", 0)),
-        ("spf", ml_cores.get("short_pump_filtered", 0)),
-        ("f0", ml_cores.get("fast0", 0)),
-        ("prm", ml_cores.get("premium", 0)),
-        ("wck", ml_cores.get("wick", 0)),
+        ("short_pump", ml_cores.get("short_pump", 0)),
+        ("short_pump_filtered", ml_cores.get("short_pump_filtered", 0)),
+        ("fast0", ml_cores.get("fast0", 0)),
+        ("short_pump_premium", ml_cores.get("premium", 0)),
+        ("short_pump_wick", ml_cores.get("wick", 0)),
     ]
     for tag, n_core in rows_ml:
         rem = max(0, LIGHTGBM_MIN - n_core)
         pct = min(100, int(n_core * 100 / max(1, LIGHTGBM_MIN)))
         em = _health_emoji(pct)
         tail = f" +{rem}" if rem > 0 else ""
-        lines.append(_r48(f"  {tag}  {n_core}/{LIGHTGBM_MIN} {em}{tail}"))
-    lines.append(_r48(f"  comfort ~{LIGHTGBM_COMFORT}"))
+        lines.append(f"  {tag}  {n_core}/{LIGHTGBM_MIN} {em}{tail}")
+    lines.append(f"  comfort ~{LIGHTGBM_COMFORT}")
     lines.append("")
 
     n_dup, n_other, n_early, n_conf, quality_ok = _dataset_quality_metrics(df_all_outcomes)
     lines.append("🧱 DATA HEALTH")
-    lines.append(_r48(f"  dups {n_dup}  other {n_other}  early {n_early}"))
-    lines.append(_r48(f"  pair conflicts {n_conf}  {'OK' if quality_ok else 'CHECK'}"))
+    lines.append(f"  dups {n_dup}  other {n_other}  early {n_early}")
+    lines.append(f"  pair conflicts {n_conf}  {'OK' if quality_ok else 'CHECK'}")
     for ln in _paper_fast0_validation_lines(df_fast0_paper):
-        lines.append(_r48(ln.strip()))
+        lines.append(ln.strip())
     lines.append("")
 
     lines.append("ℹ️ Легенда")
-    lines.append(
-        _r48("WR/EV20/N — метрики core; h — health 0–100; блоки по guard")
-    )
+    lines.append("WR — winrate, EV20 — edge последних 20 сделок")
+    lines.append("N — сделки в core (live TP/SL, узкое окно)")
+    lines.append("h — health 0–100 (N, EV20, consistency, stability)")
+    lines.append("🟢 ACTIVE · 🟡 WATCH · 🔴 DISABLED · NEW — недавно добавлен")
     lines.append("false_pump — отдельный пайплайн, без guard/live whitelist")
     body = "\n".join(lines)
     return f"```\n{body}\n```"
