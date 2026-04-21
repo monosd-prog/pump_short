@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import fcntl
+import json
 import logging
 import os
 import subprocess
@@ -73,6 +74,17 @@ from trading.state import (
 from short_pump.attach import attach_outcome_monitor
 
 logger = logging.getLogger(__name__)
+
+_LIVE_PROFILE_WHITELIST = frozenset(
+    {
+        "short_pump_active_1R",
+        "fast0_selective",
+        "short_pump_filtered_1R",
+        "short_pump_mid",
+        "short_pump_premium_1R",
+        "short_pump_wick_1R",
+    }
+)
 
 
 def _ensure_dir(path: str) -> None:
@@ -162,6 +174,30 @@ def _finish_queue_processing(raw_lines: List[str]) -> None:
             os.remove(PROCESSING_PATH)
     except OSError as e:
         logger.warning("_finish_queue_processing: remove processing failed: %s", e)
+
+
+def _find_raw_line_for_signal(raw_lines: List[str], signal: Signal) -> Optional[str]:
+    """Best-effort mapping from picked Signal back to original queue line."""
+    for line in raw_lines:
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if (
+            str(payload.get("strategy") or "").strip() == str(signal.strategy or "").strip()
+            and str(payload.get("run_id") or "").strip() == str(signal.run_id or "").strip()
+            and str(payload.get("event_id") or "").strip() == str(signal.event_id or "").strip()
+            and str(payload.get("symbol") or "").strip() == str(signal.symbol or "").strip()
+        ):
+            return line if line.endswith("\n") else line + "\n"
+    return None
+
+
+def _requeue_signal_line(raw_line: str) -> None:
+    """Return deferred signal back to shared queue for other runner."""
+    _ensure_dir(SIGNALS_QUEUE_PATH)
+    with open(SIGNALS_QUEUE_PATH, "a", encoding="utf-8") as f:
+        f.write(raw_line)
 
 
 def _dedupe_key(signal: Signal) -> str:
@@ -616,6 +652,23 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                     risk_profile_name,
                 )
 
+        # Shared queue protection: paper runner must not consume live-eligible signals.
+        if EXECUTION_MODE == "paper" and risk_profile_name in _LIVE_PROFILE_WHITELIST:
+            deferred = _find_raw_line_for_signal(raw_lines, signal)
+            if deferred:
+                _requeue_signal_line(deferred)
+            logger.info(
+                "SIGNAL_SKIPPED_FOR_LIVE_RUNNER | strategy=%s symbol=%s run_id=%s event_id=%s risk_profile=%s",
+                signal.strategy or "",
+                signal.symbol or "",
+                signal.run_id or "",
+                str(signal.event_id or ""),
+                risk_profile_name,
+            )
+            _finish_queue_processing(raw_lines)
+            save_state(state)
+            return
+
         # Auto Risk Guard: self-healing gate per боевой режим (profile)
         allowed_guard, guard_reason = is_entry_allowed_for_signal(signal, risk_profile_name)
         if not allowed_guard:
@@ -724,20 +777,20 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
         # LIVE PROFILE WHITELIST: only allow explicitly approved profiles in live mode
         if EXECUTION_MODE == "live":
-            allowed_live_profiles = {
-                "short_pump_active_1R",
-                "fast0_selective",
-                "short_pump_filtered_1R",
-                "short_pump_mid",
-                "short_pump_premium_1R",
-                "short_pump_wick_1R",
-            }
-            if risk_profile_name in allowed_live_profiles:
+            if risk_profile_name in _LIVE_PROFILE_WHITELIST:
                 logger.info(
                     "LIVE_PROFILE_ALLOWED | risk_profile=%s strategy=%s symbol=%s",
                     risk_profile_name, signal.strategy, signal.symbol,
                 )
-            if risk_profile_name not in allowed_live_profiles:
+                logger.info(
+                    "SIGNAL_CONSUMED_BY_LIVE_RUNNER | strategy=%s symbol=%s run_id=%s event_id=%s risk_profile=%s",
+                    signal.strategy or "",
+                    signal.symbol or "",
+                    signal.run_id or "",
+                    str(signal.event_id or ""),
+                    risk_profile_name,
+                )
+            if risk_profile_name not in _LIVE_PROFILE_WHITELIST:
                 logger.info(
                     "LIVE_PROFILE_POLICY_BLOCK | strategy=%s symbol=%s run_id=%s profile=%s reason=not_in_live_whitelist",
                     signal.strategy, signal.symbol, signal.run_id or "", risk_profile_name,

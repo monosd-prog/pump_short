@@ -98,7 +98,11 @@ def _get_risk_profile_line(signal: Signal) -> str | None:
         if not profile:
             return None
         notional, leverage, margin_mode = get_notional_and_leverage(risk_mult)
-        return f"risk_profile={profile} | liqL30s={_fmt_num(signal.liq_long_usd_30s, 0)} dist={_fmt_pct(signal.dist_to_peak_pct)} cs={_fmt_num(signal.context_score)} | notional={notional:.0f} USD lev=x{leverage} margin={margin_mode}"
+        return (
+            f"risk_profile={profile} | liqL30s={_fmt_num(signal.liq_long_usd_30s, 0)} "
+            f"dist={_fmt_pct(signal.dist_to_peak_pct)} cs={_fmt_num(signal.context_score)} | "
+            f"notional_preview={notional:.0f} USD lev=x{leverage} margin={margin_mode}"
+        )
     except Exception:
         return None
 
