@@ -160,15 +160,48 @@ def get_latest_signals() -> tuple[List[Signal], List[str]]:
 
 def _finish_queue_processing(raw_lines: List[str]) -> None:
     """After successful processing: append to processed file (audit), remove processing file."""
+    if not Path(PROCESSING_PATH).exists():
+        return
+
+    # Keep false_pump signals in main queue when batch also contains other strategies.
+    # This prevents low-priority false_pump entries from being archived to .processed
+    # before they get a chance to be selected on a later tick.
+    keep_false_pump: List[str] = []
+    has_non_false = False
+    for ln in raw_lines:
+        try:
+            payload = json.loads(ln)
+            strat = str(payload.get("strategy") or "").strip()
+            if strat == "false_pump":
+                keep_false_pump.append(ln if ln.endswith("\n") else ln + "\n")
+            elif strat:
+                has_non_false = True
+        except Exception:
+            continue
+    keep_set = set(keep_false_pump) if has_non_false else set()
+
     _ensure_dir(PROCESSED_PATH)
     if raw_lines:
         try:
             with open(PROCESSED_PATH, "a", encoding="utf-8") as f:
                 for ln in raw_lines:
                     if ln.strip():
+                        norm = ln if ln.endswith("\n") else ln + "\n"
+                        if norm in keep_set:
+                            continue
                         f.write(ln if ln.endswith("\n") else ln + "\n")
         except Exception as e:
             logger.warning("_finish_queue_processing: append to processed failed: %s", e)
+
+    if keep_set:
+        try:
+            _ensure_dir(SIGNALS_QUEUE_PATH)
+            with open(SIGNALS_QUEUE_PATH, "a", encoding="utf-8") as q:
+                for ln in keep_false_pump:
+                    q.write(ln)
+        except Exception as e:
+            logger.warning("_finish_queue_processing: requeue false_pump failed: %s", e)
+
     try:
         if Path(PROCESSING_PATH).exists():
             os.remove(PROCESSING_PATH)
@@ -945,6 +978,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 "short_pump_premium",
                 "short_pump_wick",
                 "short_pump_filtered",
+                "false_pump",
             } and position.get("mode") == "paper" and pid:
                 meta = {
                     "attach_by": "runner",
