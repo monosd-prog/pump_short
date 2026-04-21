@@ -22,6 +22,7 @@ from short_pump.false_pump.config import FalsePumpConfig
 from short_pump.false_pump.detector import detect_false_pump
 from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID, send_telegram
 from short_pump.liquidations import get_liq_stats, get_liq_stats_usd
+from trading.paper_outcome import _append_close_row
 from trading.queue import enqueue_signal
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,8 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
         started = time.time()
         first_tick = True
         funding_at_signal: float | None = None
+        monitor_entry_price: float | None = None
+        monitor_last_price: float | None = None
 
         while (time.time() - started) < int(cfg.monitor_timeout_sec):
             if not first_tick:
@@ -237,6 +240,11 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                 )
 
                 flags_dict = details.get("flags", {}) if details else {}
+                observed_price = float(details.get("price") or 0.0) if details else 0.0
+                if observed_price > 0:
+                    if monitor_entry_price is None:
+                        monitor_entry_price = observed_price
+                    monitor_last_price = observed_price
                 pump_pct_val = float(details.get("pump_price_pct", 0.0)) if details else 0.0
                 oi_chg_val = float(details.get("oi_change_pct", 0.0)) if details else 0.0
                 logger.info(
@@ -368,6 +376,63 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
             await asyncio.sleep(max(1, int(cfg.poll_interval_sec)))
         else:
             logging.warning("false_pump: timeout %s", symbol)
+            timeout_ts = pd.Timestamp.now(tz="UTC").isoformat()
+            timeout_event_id = f"timeout_{symbol}_{int(time.time())}"
+            if monitor_entry_price is not None:
+                timeout_exit_price = (
+                    monitor_last_price if monitor_last_price is not None else monitor_entry_price
+                )
+                try:
+                    _append_close_row(
+                        {
+                            "ts_utc": timeout_ts,
+                            "strategy": "false_pump",
+                            "symbol": symbol,
+                            "run_id": timeout_event_id,
+                            "event_id": timeout_event_id,
+                            "trade_id": f"false_pump:{timeout_event_id}:{symbol}",
+                            "mode": "paper",
+                            "side": "SHORT",
+                            "entry_price": float(monitor_entry_price),
+                            "tp_price": "",
+                            "sl_price": "",
+                            "exit_price": float(timeout_exit_price),
+                            "outcome": "TIMEOUT",
+                            "close_reason": "TIMEOUT",
+                            "pnl_pct": 0.0,
+                            "pnl_r": 0.0,
+                            "pnl_usd": 0.0,
+                            "risk_usd": "",
+                            "notional_usd": "",
+                            "leverage": "",
+                            "risk_profile": "",
+                            "order_id": "",
+                            "position_idx": "",
+                            "outcome_source": "paper",
+                            "mfe_pct": "",
+                            "mae_pct": "",
+                            "mfe_r": "",
+                            "mae_r": "",
+                        }
+                    )
+                    logger.info(
+                        "[false_pump.watcher] TIMEOUT_CSV_RECORDED %s event_id=%s entry=%s exit=%s",
+                        symbol,
+                        timeout_event_id,
+                        monitor_entry_price,
+                        timeout_exit_price,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[false_pump.watcher] TIMEOUT_CSV_RECORD_FAILED %s event_id=%s",
+                        symbol,
+                        timeout_event_id,
+                    )
+            else:
+                logger.warning(
+                    "[false_pump.watcher] TIMEOUT_CSV_SKIPPED_NO_ENTRY_PRICE %s",
+                    symbol,
+                )
             if TG_BOT_TOKEN and TG_CHAT_ID:
                 try:
                     text = (
@@ -381,7 +446,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                         strategy="false_pump",
                         side="SHORT",
                         mode="paper",
-                        event_id=f"timeout_{symbol}_{int(time.time())}",
+                        event_id=timeout_event_id,
                         context_score=None,
                         entry_ok=False,
                         formatted=True,
