@@ -304,7 +304,7 @@ def close_from_outcome(
     if strategy == "false_pump":
         try:
             from notifications.tg_format import format_outcome
-            from short_pump.telegram import TG_SEND_OUTCOME
+            from short_pump.telegram import TG_SEND_OUTCOME, send_telegram
             from trading.outcome_delivery import deliver_outcome_tg
 
             side_up = (side or "SHORT").strip().upper()
@@ -387,6 +387,24 @@ def close_from_outcome(
                         "margin_mode": str(pos.get("margin_mode") or "") or None,
                     },
                 },
+            )
+            first_outcome_alert = (
+                "🎯 FALSE_PUMP | ПЕРВЫЙ OUTCOME ЗАПИСАН\n"
+                f"sym={symbol}\n"
+                f"outcome={res_norm or 'UNKNOWN'}\n"
+                f"pnl_pct={pnl_pct_f:.2f}%\n"
+                f"entry={entry} → exit={float(exit_price or 0)}\n"
+                "#false_pump #paper_outcome"
+            )
+            send_telegram(
+                first_outcome_alert,
+                strategy="false_pump",
+                side=side_up,
+                mode="paper",
+                event_id=str(event_id or ""),
+                context_score=None,
+                entry_ok=True,
+                formatted=False,
             )
         except Exception:
             logger.exception(
