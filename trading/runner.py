@@ -77,10 +77,7 @@ logger = logging.getLogger(__name__)
 
 _LIVE_PROFILE_WHITELIST = frozenset(
     {
-        "short_pump_active_1R",
         "fast0_selective",
-        "short_pump_filtered_1R",
-        "short_pump_mid",
         "short_pump_premium_1R",
         "short_pump_wick_1R",
     }

@@ -226,7 +226,11 @@ def _guard_state_str(guard_state: Optional[Dict[str, Any]], guard_key: str) -> O
 
 # Whitelist for Bybit live execution — must match trading/runner.py (allowed_live_profiles).
 ALLOWED_LIVE_PROFILES_FOR_REPORT = frozenset(
-    {"short_pump_active_1R", "fast0_selective", "short_pump_filtered_1R", "short_pump_mid"}
+    {
+        "fast0_selective",
+        "short_pump_premium_1R",
+        "short_pump_wick_1R",
+    }
 )
 
 _LIVE_ELIGIBILITY_GUARD_KEYS: tuple[str, ...] = (
