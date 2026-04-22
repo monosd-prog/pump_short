@@ -146,6 +146,29 @@
       font-size: 11px;
     }
     .strategy-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .mode-cell {
+      text-align: center !important;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .mode-paper-yes { background: #1a3a1a; }
+    .mode-paper-no { background: #1a1a1a; color: var(--muted); }
+    .mode-live-on { background: #0d2e0d; }
+    .mode-live-ready { background: #2e2a0d; }
+    .mode-live-off { background: #1a1a1a; color: var(--muted); }
+    .mode-live-mismatch { background: #2e1a0d; }
+    .status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+    .status-live-active { background: #1a3a1a; color: #9be9a8; }
+    .status-live-ready { background: #2e2a0d; color: #e3c45f; }
+    .status-paper-only { background: #0d2742; color: #79c0ff; }
+    .status-inactive { background: #1a1a1a; color: #8b949e; }
   </style>
 </head>
 <body>
@@ -171,6 +194,11 @@
   <section>
     <h2>Funnel</h2>
     <div id="funnel"></div>
+  </section>
+
+  <section>
+    <h2>Execution mode matrix</h2>
+    <div id="modeMatrix"></div>
   </section>
 
   <section>
@@ -313,6 +341,57 @@ function renderBreakdown(rows) {
   t.appendChild(tb);
   container.appendChild(t);
 }
+function renderModeMatrix(rows) {
+  const container = document.getElementById('modeMatrix');
+  container.innerHTML = '';
+  if (!rows || !rows.length) {
+    container.innerHTML = '<div class="empty">No data</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Strategy</th><th>PAPER</th><th>LIVE</th><th>STATUS</th>' +
+    '</tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    let paperCls = r.has_paper ? 'mode-paper-yes' : 'mode-paper-no';
+    let paperText = r.has_paper ? (fmtInt(r.paper_count) + ' trades') : '—';
+    let liveCls = 'mode-live-off';
+    let liveText = '—';
+    if (r.has_live && r.in_whitelist) {
+      liveCls = 'mode-live-on';
+      liveText = '✅ ' + fmtInt(r.live_count) + ' trades';
+    } else if (!r.has_live && r.in_whitelist) {
+      liveCls = 'mode-live-ready';
+      liveText = '⏳ в whitelist';
+    } else if (r.has_live && !r.in_whitelist) {
+      liveCls = 'mode-live-mismatch';
+      liveText = '⚠️ не в whitelist (' + fmtInt(r.live_count) + ')';
+    }
+
+    let statusCls = 'status-inactive';
+    let statusLabel = '⚫ INACTIVE';
+    if (r.status === 'live_active') {
+      statusCls = 'status-live-active';
+      statusLabel = '🟢 LIVE';
+    } else if (r.status === 'live_ready') {
+      statusCls = 'status-live-ready';
+      statusLabel = '🟡 READY';
+    } else if (r.status === 'paper_only') {
+      statusCls = 'status-paper-only';
+      statusLabel = '🔵 PAPER';
+    }
+
+    tr.innerHTML = '<td class="strategy-name">' + r.strategy + '</td>' +
+      '<td class="mode-cell ' + paperCls + '">' + paperText + '</td>' +
+      '<td class="mode-cell ' + liveCls + '">' + liveText + '</td>' +
+      '<td><span class="status-badge ' + statusCls + '">' + statusLabel + '</span></td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
 function renderLatency(rows) {
   const container = document.getElementById('latency');
   container.innerHTML = '';
@@ -444,6 +523,7 @@ async function loadData() {
     const data = await r.json();
     renderCards(data.summary || {});
     renderFunnel(data.funnel || []);
+    renderModeMatrix(data.mode_matrix || []);
     renderBreakdown(data.outcomes_breakdown || []);
     renderLatency(data.latency || []);
     renderSkips(data.skip_reasons || []);

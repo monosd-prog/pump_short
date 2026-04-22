@@ -14,6 +14,7 @@ from __future__ import annotations
 import glob
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -423,6 +424,111 @@ def _build_active_positions(
     return {"short": short_list, "fast0": fast0_list}
 
 
+def _extract_live_whitelist(base_dir: Path) -> set[str]:
+    """Extract live profile whitelist literals from trading/runner.py."""
+    runner_path = base_dir / "trading" / "runner.py"
+    if not runner_path.is_file():
+        return set()
+    try:
+        text = runner_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return set()
+
+    # Prefer explicit variable names used in this repo; fallback is empty set.
+    block_match = re.search(
+        r"(?s)(?:_LIVE_PROFILE_WHITELIST|allowed_live_profiles)\s*=\s*(?:frozenset|set)?\s*\((.*?)\)",
+        text,
+    )
+    if not block_match:
+        block_match = re.search(
+            r"(?s)(?:_LIVE_PROFILE_WHITELIST|allowed_live_profiles)\s*=\s*(\{.*?\})",
+            text,
+        )
+    if not block_match:
+        return set()
+
+    literal_block = block_match.group(1)
+    items = re.findall(r'["\']([^"\']+)["\']', literal_block)
+    return {s.strip() for s in items if s.strip()}
+
+
+def build_mode_matrix(
+    base_dir: str | os.PathLike,
+    days: int,
+    closes_df: Optional[pd.DataFrame] = None,
+) -> List[Dict[str, Any]]:
+    """Build execution mode matrix by strategy with whitelist status."""
+    base = Path(base_dir)
+    closes = closes_df if closes_df is not None else _load_trading_closes(base, days)
+    whitelist = _extract_live_whitelist(base)
+
+    events = _load_partitioned(base, days, "events_v3.csv")
+    events_strats: set[str] = set()
+    if not events.empty and "strategy" in events.columns:
+        events_strats = {
+            s for s in _safe_str_series(events, "strategy").tolist() if s
+        }
+
+    close_strats: set[str] = set()
+    if not closes.empty and "strategy" in closes.columns:
+        close_strats = {
+            s for s in _safe_str_series(closes, "strategy").tolist() if s
+        }
+
+    all_strats = set(close_strats)
+    if "false_pump" in events_strats:
+        all_strats.add("false_pump")
+
+    profile_map: Dict[str, List[str]] = {
+        "short_pump": ["short_pump_mid", "short_pump_active_1R"],
+        "short_pump_filtered": ["short_pump_filtered_1R"],
+        "short_pump_fast0": ["fast0_selective"],
+        "short_pump_fast0_filtered": ["short_pump_filtered_1R"],
+    }
+
+    mode_series = (
+        _safe_str_series(closes, "mode") if "mode" in closes.columns else pd.Series([], dtype=str)
+    )
+    strategy_series = (
+        _safe_str_series(closes, "strategy") if "strategy" in closes.columns else pd.Series([], dtype=str)
+    )
+
+    matrix: List[Dict[str, Any]] = []
+    for strategy in sorted(all_strats):
+        strat_mask = strategy_series == strategy
+        paper_mask = strat_mask & (mode_series == "paper")
+        live_mask = strat_mask & (mode_series == "live")
+        paper_count = int(paper_mask.sum())
+        live_count = int(live_mask.sum())
+        has_paper = paper_count > 0
+        has_live = live_count > 0
+
+        mapped_profiles = profile_map.get(strategy, [])
+        in_whitelist = any(p in whitelist for p in mapped_profiles) if mapped_profiles else False
+
+        if in_whitelist and has_live:
+            status = "live_active"
+        elif in_whitelist and not has_live:
+            status = "live_ready"
+        elif (not in_whitelist) and has_paper:
+            status = "paper_only"
+        else:
+            status = "inactive"
+
+        matrix.append(
+            {
+                "strategy": strategy,
+                "in_whitelist": in_whitelist,
+                "has_paper": has_paper,
+                "has_live": has_live,
+                "paper_count": paper_count,
+                "live_count": live_count,
+                "status": status,
+            }
+        )
+    return matrix
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -491,6 +597,12 @@ def build_dashboard_data(
         _logger.warning("dashboard: skip reasons failed: %s", exc)
         skip_reasons = []
 
+    try:
+        mode_matrix = build_mode_matrix(base, days, closes_df=closes)
+    except Exception as exc:
+        _logger.warning("dashboard: mode matrix failed: %s", exc)
+        mode_matrix = []
+
     active_positions = _build_active_positions(active_short, active_fast0)
 
     tp_total = sum(row.get("tp", 0) for row in outcomes_breakdown)
@@ -516,5 +628,6 @@ def build_dashboard_data(
         "latency": latency,
         "timeline": timeline,
         "skip_reasons": skip_reasons,
+        "mode_matrix": mode_matrix,
         "active_positions": active_positions,
     }
