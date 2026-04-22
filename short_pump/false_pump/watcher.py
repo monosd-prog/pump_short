@@ -9,7 +9,11 @@ from typing import Any, Dict
 import aiohttp
 import pandas as pd
 
+from common.feature_contract import normalize_event_feature_row
+from common.io_dataset import write_event_row, write_outcome_row, write_trade_row
 from common.market_features import liquidation_features
+from common.outcome_tracker import build_outcome_row
+from common.runtime import wall_time_utc
 from notifications.tg_format import build_short_pump_signal, format_false_pump_entry
 from short_pump.bybit_api import (
     get_funding_rate,
@@ -22,8 +26,9 @@ from short_pump.false_pump.config import FalsePumpConfig
 from short_pump.false_pump.detector import detect_false_pump
 from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID, send_telegram
 from short_pump.liquidations import get_liq_stats, get_liq_stats_usd
-from trading.paper_outcome import _append_close_row
+from trading.paper_outcome import close_from_outcome
 from trading.queue import enqueue_signal
+from trading.state import make_position_id
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +41,68 @@ FALSE_PUMP_WEBHOOK_URL = os.getenv(
 
 _tg_start_sent: dict = {}
 TG_START_COOLDOWN_SEC = 3600  # 1 час
-FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE = (
-    os.getenv("FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE", "1").strip().lower()
-    in ("1", "true", "yes", "y", "on")
-)
+
+
+def _fp_ds_event(
+    *,
+    run_id: str,
+    event_id: str,
+    symbol: str,
+    stage: int,
+    entry_ok: int,
+    skip_reasons: str,
+    context_score: float | None,
+    payload: Dict[str, Any] | None,
+    extra: Dict[str, Any] | None = None,
+) -> None:
+    """Write a canonical false_pump event row to datasets/strategy=false_pump/mode=paper/events_v3.csv."""
+    pl = payload or {}
+    wall_ts = wall_time_utc()
+    row = normalize_event_feature_row(
+        base={
+            "run_id": run_id,
+            "event_id": event_id,
+            "symbol": symbol,
+            "strategy": "false_pump",
+            "mode": "paper",
+            "source_mode": "paper",
+            "side": "SHORT",
+            "wall_time_utc": wall_ts,
+            "time_utc": pl.get("time_utc", ""),
+            "stage": stage,
+            "entry_ok": int(bool(entry_ok)),
+            "skip_reasons": skip_reasons,
+            "context_score": context_score if context_score is not None else "",
+            "price": pl.get("price", ""),
+            "dist_to_peak_pct": float(pl.get("dist_to_peak_pct") or 0.0),
+            "liq_short_count_30s": pl.get("liq_short_count_30s", 0),
+            "liq_short_usd_30s": pl.get("liq_short_usd_30s", 0),
+            "liq_long_count_30s": pl.get("liq_long_count_30s", 0),
+            "liq_long_usd_30s": pl.get("liq_long_usd_30s", 0),
+            "liq_short_count_1m": pl.get("liq_short_count_1m", 0),
+            "liq_short_usd_1m": pl.get("liq_short_usd_1m", 0),
+            "liq_long_count_1m": pl.get("liq_long_count_1m", 0),
+            "liq_long_usd_1m": pl.get("liq_long_usd_1m", 0),
+            "outcome_label": pl.get("outcome_label", ""),
+        },
+        payload=pl,
+        extra=extra or None,
+    )
+    try:
+        write_event_row(
+            row,
+            strategy="false_pump",
+            mode="paper",
+            wall_time_utc=wall_ts,
+            schema_version=3,
+            path_mode="paper",
+        )
+    except Exception:
+        logger.exception(
+            "[false_pump.watcher] EVENT_WRITE_FAILED symbol=%s event_id=%s",
+            symbol,
+            event_id,
+        )
 
 
 def _funding_rate_value(payload: dict | None) -> float:
@@ -96,6 +159,206 @@ def _peak_price_5m(symbol: str) -> float:
     return float(pd.to_numeric(c1["close"], errors="coerce").dropna().max())
 
 
+async def _track_false_pump_outcome(
+    *,
+    symbol: str,
+    run_id_fp: str,
+    event_id: str,
+    trade_id: str,
+    entry_ts_utc: pd.Timestamp,
+    entry_price: float,
+    tp_price: float,
+    sl_price: float,
+    deadline_ts: float,
+    poll_interval_sec: int,
+    context_score: float | None,
+) -> None:
+    """
+    Inline async outcome poller for false_pump (mirrors track_outcome_short touch-model).
+    Polls 1m klines until TP/SL hit or monitor_timeout_sec deadline.
+    On outcome: close_from_outcome (→ trading_closes.csv + TG) + write_outcome_row (→ outcomes_v3.csv).
+    SHORT convention: SL_hit when high >= sl_price; TP_hit when low <= tp_price.
+    Same-candle conflict: SL first (conservative).
+    """
+    end_reason = "TIMEOUT"
+    exit_price = entry_price
+    hit_ts_utc: str | None = None
+    mfe_pct = 0.0
+    mae_pct = 0.0
+    last_close: float | None = None
+    entry_ms = int(entry_ts_utc.timestamp() * 1000)
+
+    try:
+        while time.time() < deadline_ts:
+            try:
+                kl = await asyncio.to_thread(get_klines_1m, "linear", symbol, 10)
+            except Exception:
+                logger.exception("[false_pump.watcher] OUTCOME_POLL_FETCH_FAIL %s", symbol)
+                await asyncio.sleep(poll_interval_sec)
+                continue
+            if kl is None or kl.empty:
+                await asyncio.sleep(poll_interval_sec)
+                continue
+            try:
+                kdf = kl[kl["ts"] >= pd.Timestamp(entry_ms, unit="ms", tz="UTC")]
+            except Exception:
+                kdf = kl
+            if kdf is None or kdf.empty:
+                await asyncio.sleep(poll_interval_sec)
+                continue
+            hit = False
+            for _, candle in kdf.iterrows():
+                try:
+                    c_high = float(candle["high"])
+                    c_low = float(candle["low"])
+                    c_close = float(candle["close"])
+                    c_ts = candle["ts"]
+                except Exception:
+                    continue
+                last_close = c_close
+                if entry_price > 0:
+                    run_mae = (c_high - entry_price) / entry_price * 100.0
+                    run_mfe = (entry_price - c_low) / entry_price * 100.0
+                    if run_mae > mae_pct:
+                        mae_pct = run_mae
+                    if run_mfe > mfe_pct:
+                        mfe_pct = run_mfe
+                sl_hit = c_high >= sl_price
+                tp_hit = c_low <= tp_price
+                if sl_hit and tp_hit:
+                    end_reason = "SL_hit"
+                    exit_price = sl_price
+                    try:
+                        hit_ts_utc = c_ts.isoformat() if hasattr(c_ts, "isoformat") else str(c_ts)
+                    except Exception:
+                        hit_ts_utc = pd.Timestamp.now(tz="UTC").isoformat()
+                    hit = True
+                    break
+                if sl_hit:
+                    end_reason = "SL_hit"
+                    exit_price = sl_price
+                    try:
+                        hit_ts_utc = c_ts.isoformat() if hasattr(c_ts, "isoformat") else str(c_ts)
+                    except Exception:
+                        hit_ts_utc = pd.Timestamp.now(tz="UTC").isoformat()
+                    hit = True
+                    break
+                if tp_hit:
+                    end_reason = "TP_hit"
+                    exit_price = tp_price
+                    try:
+                        hit_ts_utc = c_ts.isoformat() if hasattr(c_ts, "isoformat") else str(c_ts)
+                    except Exception:
+                        hit_ts_utc = pd.Timestamp.now(tz="UTC").isoformat()
+                    hit = True
+                    break
+            if hit:
+                break
+            await asyncio.sleep(poll_interval_sec)
+        if end_reason == "TIMEOUT":
+            exit_price = last_close if last_close is not None else entry_price
+            hit_ts_utc = pd.Timestamp.now(tz="UTC").isoformat()
+    except Exception:
+        logger.exception("[false_pump.watcher] OUTCOME_POLL_LOOP_ERROR %s", symbol)
+        return
+
+    if entry_price > 0:
+        pnl_pct = (entry_price - float(exit_price)) / entry_price * 100.0
+    else:
+        pnl_pct = 0.0
+
+    outcome_time_utc = hit_ts_utc or pd.Timestamp.now(tz="UTC").isoformat()
+    try:
+        hold_seconds = max(1.0, float((pd.Timestamp.now(tz="UTC") - entry_ts_utc).total_seconds()))
+    except Exception:
+        hold_seconds = 1.0
+
+    try:
+        close_from_outcome(
+            strategy="false_pump",
+            symbol=symbol,
+            run_id=run_id_fp,
+            event_id=str(event_id),
+            res=end_reason,
+            pnl_pct=pnl_pct,
+            ts_utc=outcome_time_utc,
+            outcome_meta={
+                "mfe_pct": float(mfe_pct),
+                "mae_pct": float(mae_pct),
+            },
+        )
+    except Exception:
+        logger.exception(
+            "[false_pump.watcher] CLOSE_FROM_OUTCOME_FAILED symbol=%s event_id=%s",
+            symbol,
+            event_id,
+        )
+
+    summary: Dict[str, Any] = {
+        "end_reason": end_reason,
+        "outcome": end_reason,
+        "pnl_pct": float(pnl_pct),
+        "entry_price": float(entry_price),
+        "tp_price": float(tp_price),
+        "sl_price": float(sl_price),
+        "exit_price": float(exit_price),
+        "mfe_pct": float(mfe_pct),
+        "mae_pct": float(mae_pct),
+        "hold_seconds": float(hold_seconds),
+        "entry_time_utc": entry_ts_utc.isoformat(),
+        "trade_type": "PAPER",
+        "risk_profile": "",
+    }
+    try:
+        outcome_row = build_outcome_row(
+            summary,
+            trade_id=str(trade_id),
+            event_id=str(event_id),
+            run_id=run_id_fp,
+            symbol=symbol,
+            strategy="false_pump",
+            mode="paper",
+            side="SHORT",
+            outcome_time_utc=outcome_time_utc,
+            entry_snapshot={
+                "context_score": context_score,
+                "entry_price": entry_price,
+                "tp_price": tp_price,
+                "sl_price": sl_price,
+            },
+            extra_details={
+                "entry_time_utc": entry_ts_utc.isoformat(),
+                "outcome_time_utc": outcome_time_utc,
+                "hold_seconds": hold_seconds,
+            },
+        )
+        if outcome_row is not None:
+            outcome_row["outcome_source"] = "false_pump_watcher"
+            write_outcome_row(
+                outcome_row,
+                strategy="false_pump",
+                mode="paper",
+                wall_time_utc=outcome_time_utc,
+                schema_version=3,
+                path_mode="paper",
+            )
+    except Exception:
+        logger.exception(
+            "[false_pump.watcher] OUTCOME_WRITE_FAILED symbol=%s event_id=%s",
+            symbol,
+            event_id,
+        )
+
+    logger.info(
+        "[false_pump.watcher] OUTCOME_FINALIZED symbol=%s event_id=%s outcome=%s pnl_pct=%.4f exit=%s",
+        symbol,
+        event_id,
+        end_reason,
+        pnl_pct,
+        exit_price,
+    )
+
+
 async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
     logger = logging.getLogger("false_pump.watcher")
     symbol = str(signal.get("symbol", "")).strip().upper()
@@ -147,6 +410,28 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
 
     session_ts = time.time()
     _active_symbols[symbol] = {"started_ts": session_ts}
+    run_id_fp = f"fp_{symbol}_{int(session_ts)}"
+    try:
+        _fp_ds_event(
+            run_id=run_id_fp,
+            event_id=f"{run_id_fp}_watch_start",
+            symbol=symbol,
+            stage=0,
+            entry_ok=0,
+            skip_reasons="watch_start",
+            context_score=0.0,
+            payload={
+                "time_utc": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M:%S%z"),
+                "price": 0.0,
+                "dist_to_peak_pct": 0.0,
+                "source": "false_pump_webhook",
+                "oi_change_pct": signal.get("oi_change_pct"),
+                "price_change_pct": signal.get("price_change_pct"),
+            },
+            extra=None,
+        )
+    except Exception:
+        logger.exception("[false_pump.watcher] WATCH_START event write failed symbol=%s", symbol)
     try:
         peak_price_5m = await asyncio.to_thread(_peak_price_5m, symbol)
         started = time.time()
@@ -284,11 +569,73 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                     tp_price = entry_price * (1.0 - float(cfg.tp_pct) / 100.0)
                     event_id = str(int(time.time() * 1000))
                     time_utc = pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M:%S%z")
+                    entry_ts_utc = pd.Timestamp.now(tz="UTC")
+                    trade_id = make_position_id("false_pump", run_id_fp, str(event_id), symbol)
+                    entry_payload_row = {
+                        "time_utc": time_utc,
+                        "price": entry_price,
+                        "dist_to_peak_pct": details.get("dist_to_peak_pct") or 0.0,
+                        "liq_short_usd_30s": liq.get("liq_short_usd_30s") or 0.0,
+                        "liq_long_usd_30s": liq.get("liq_long_usd_30s") or 0.0,
+                        "liq_short_count_30s": liq.get("liq_short_count_30s") or 0,
+                        "liq_long_count_30s": liq.get("liq_long_count_30s") or 0,
+                        "liq_short_usd_1m": liq.get("liq_short_usd_1m") or 0.0,
+                        "liq_long_usd_1m": liq.get("liq_long_usd_1m") or 0.0,
+                        "liq_short_count_1m": liq.get("liq_short_count_1m") or 0,
+                        "liq_long_count_1m": liq.get("liq_long_count_1m") or 0,
+                        "funding_rate": funding_rate,
+                        "funding_rate_abs": abs(float(details.get("funding_rate") or 0.0)),
+                        "oi_change_pct": details.get("oi_change_pct"),
+                        "pump_price_pct": details.get("pump_price_pct"),
+                        "flags": flags,
+                        "tp_price": tp_price,
+                        "sl_price": sl_price,
+                        "entry_type": "FALSE_PUMP",
+                    }
+                    _fp_ds_event(
+                        run_id=run_id_fp,
+                        event_id=str(event_id),
+                        symbol=symbol,
+                        stage=4,
+                        entry_ok=1,
+                        skip_reasons="entry_ok_false_pump",
+                        context_score=details.get("context_score"),
+                        payload=entry_payload_row,
+                        extra=None,
+                    )
+                    try:
+                        write_trade_row(
+                            {
+                                "trade_id": trade_id,
+                                "event_id": str(event_id),
+                                "run_id": run_id_fp,
+                                "symbol": symbol,
+                                "strategy": "false_pump",
+                                "mode": "paper",
+                                "side": "SHORT",
+                                "entry_time_utc": entry_ts_utc.isoformat(),
+                                "entry_price": entry_price,
+                                "tp_price": tp_price,
+                                "sl_price": sl_price,
+                                "trade_type": "PAPER",
+                            },
+                            strategy="false_pump",
+                            mode="paper",
+                            wall_time_utc=entry_ts_utc.isoformat(),
+                            schema_version=3,
+                            path_mode="paper",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[false_pump.watcher] TRADE_WRITE_FAILED symbol=%s event_id=%s",
+                            symbol,
+                            event_id,
+                        )
                     sig = build_short_pump_signal(
                         strategy="false_pump",
                         side="SHORT",
                         symbol=symbol,
-                        run_id=event_id,
+                        run_id=run_id_fp,
                         event_id=event_id,
                         time_utc=time_utc,
                         price=entry_price,
@@ -367,7 +714,20 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                             logger.info(f"[false_pump.watcher] TG entry sent: {symbol}")
                         except Exception:
                             logger.exception(f"[false_pump.watcher] TG entry send failed: {symbol}")
-                    break
+                    await _track_false_pump_outcome(
+                        symbol=symbol,
+                        run_id_fp=run_id_fp,
+                        event_id=str(event_id),
+                        trade_id=trade_id,
+                        entry_ts_utc=entry_ts_utc,
+                        entry_price=entry_price,
+                        tp_price=tp_price,
+                        sl_price=sl_price,
+                        deadline_ts=started + int(cfg.monitor_timeout_sec),
+                        poll_interval_sec=max(1, int(cfg.poll_interval_sec)),
+                        context_score=details.get("context_score"),
+                    )
+                    return
             except Exception as e:
                 err_str = str(e)
                 if "10006" in err_str or "Rate Limit" in err_str or "Too many visits" in err_str:
@@ -380,63 +740,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
             await asyncio.sleep(max(1, int(cfg.poll_interval_sec)))
         else:
             logging.warning("false_pump: timeout %s", symbol)
-            timeout_ts = pd.Timestamp.now(tz="UTC").isoformat()
             timeout_event_id = f"timeout_{symbol}_{int(time.time())}"
-            if FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE and monitor_entry_price is not None:
-                timeout_exit_price = (
-                    monitor_last_price if monitor_last_price is not None else monitor_entry_price
-                )
-                try:
-                    _append_close_row(
-                        {
-                            "ts_utc": timeout_ts,
-                            "strategy": "false_pump",
-                            "symbol": symbol,
-                            "run_id": timeout_event_id,
-                            "event_id": timeout_event_id,
-                            "trade_id": f"false_pump:{timeout_event_id}:{symbol}",
-                            "mode": "paper",
-                            "side": "SHORT",
-                            "entry_price": float(monitor_entry_price),
-                            "tp_price": "",
-                            "sl_price": "",
-                            "exit_price": float(timeout_exit_price),
-                            "outcome": "TIMEOUT",
-                            "close_reason": "TIMEOUT",
-                            "pnl_pct": 0.0,
-                            "pnl_r": 0.0,
-                            "pnl_usd": 0.0,
-                            "risk_usd": "",
-                            "notional_usd": "",
-                            "leverage": "",
-                            "risk_profile": "",
-                            "order_id": "",
-                            "position_idx": "",
-                            "outcome_source": "paper",
-                            "mfe_pct": "",
-                            "mae_pct": "",
-                            "mfe_r": "",
-                            "mae_r": "",
-                        }
-                    )
-                    logger.info(
-                        "[false_pump.watcher] TIMEOUT_CSV_RECORDED %s event_id=%s entry=%s exit=%s",
-                        symbol,
-                        timeout_event_id,
-                        monitor_entry_price,
-                        timeout_exit_price,
-                    )
-                except Exception:
-                    logger.exception(
-                        "[false_pump.watcher] TIMEOUT_CSV_RECORD_FAILED %s event_id=%s",
-                        symbol,
-                        timeout_event_id,
-                    )
-            elif FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE:
-                logger.warning(
-                    "[false_pump.watcher] TIMEOUT_CSV_SKIPPED_NO_ENTRY_PRICE %s",
-                    symbol,
-                )
             if TG_BOT_TOKEN and TG_CHAT_ID:
                 try:
                     text = (
