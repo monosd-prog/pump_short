@@ -475,16 +475,18 @@ def build_mode_matrix(
             s for s in _safe_str_series(closes, "strategy").tolist() if s
         }
 
-    all_strats = set(close_strats)
+    strategy_profiles: Dict[str, set[str]] = {
+        "short_pump": {"short_pump_mid", "short_pump_active_1R", "short_pump_deep"},
+        "short_pump_filtered": {"short_pump_filtered_1R"},
+        "short_pump_fast0": {"fast0_selective", "fast0_2R", "fast0_1p5R", "fast0_base_1R"},
+        "short_pump_fast0_filtered": {"fast0_selective", "fast0_2R", "fast0_1p5R", "fast0_base_1R"},
+        "short_pump_premium": {"short_pump_premium_1R"},
+        "short_pump_wick": {"short_pump_wick_1R"},
+        "false_pump": set(),
+    }
+    all_strats = set(close_strats) | set(strategy_profiles.keys())
     if "false_pump" in events_strats:
         all_strats.add("false_pump")
-
-    profile_map: Dict[str, List[str]] = {
-        "short_pump": ["short_pump_mid", "short_pump_active_1R"],
-        "short_pump_filtered": ["short_pump_filtered_1R"],
-        "short_pump_fast0": ["fast0_selective"],
-        "short_pump_fast0_filtered": ["short_pump_filtered_1R"],
-    }
 
     mode_series = (
         _safe_str_series(closes, "mode") if "mode" in closes.columns else pd.Series([], dtype=str)
@@ -503,8 +505,8 @@ def build_mode_matrix(
         has_paper = paper_count > 0
         has_live = live_count > 0
 
-        mapped_profiles = profile_map.get(strategy, [])
-        in_whitelist = any(p in whitelist for p in mapped_profiles) if mapped_profiles else False
+        mapped_profiles = strategy_profiles.get(strategy, set())
+        in_whitelist = bool(mapped_profiles & whitelist) if mapped_profiles else False
 
         if in_whitelist and has_live:
             status = "live_active"
