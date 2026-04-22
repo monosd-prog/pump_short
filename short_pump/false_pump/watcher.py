@@ -36,6 +36,10 @@ FALSE_PUMP_WEBHOOK_URL = os.getenv(
 
 _tg_start_sent: dict = {}
 TG_START_COOLDOWN_SEC = 3600  # 1 час
+FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE = (
+    os.getenv("FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE", "1").strip().lower()
+    in ("1", "true", "yes", "y", "on")
+)
 
 
 def _funding_rate_value(payload: dict | None) -> float:
@@ -378,7 +382,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
             logging.warning("false_pump: timeout %s", symbol)
             timeout_ts = pd.Timestamp.now(tz="UTC").isoformat()
             timeout_event_id = f"timeout_{symbol}_{int(time.time())}"
-            if monitor_entry_price is not None:
+            if FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE and monitor_entry_price is not None:
                 timeout_exit_price = (
                     monitor_last_price if monitor_last_price is not None else monitor_entry_price
                 )
@@ -428,7 +432,7 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
                         symbol,
                         timeout_event_id,
                     )
-            else:
+            elif FALSE_PUMP_TIMEOUT_DIRECT_CLOSE_WRITE:
                 logger.warning(
                     "[false_pump.watcher] TIMEOUT_CSV_SKIPPED_NO_ENTRY_PRICE %s",
                     symbol,

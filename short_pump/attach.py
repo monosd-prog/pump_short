@@ -41,8 +41,12 @@ def attach_outcome_monitor(position_id: str, metadata: Dict[str, Any], state: Op
         logger.warning("attach_outcome_monitor: position not found in state: %s", position_id)
         return None
     strat, pos = found
-    # guard: only paper positions for SP
-    if pos.get("mode") != "paper" or (pos.get("strategy") or "") not in {"short_pump", "short_pump_filtered"}:
+    # guard: only paper positions for supported SP strategies
+    if pos.get("mode") != "paper" or (pos.get("strategy") or "") not in {
+        "short_pump",
+        "short_pump_filtered",
+        "false_pump",
+    }:
         logger.debug("attach_outcome_monitor: skip non-paper/other-strategy pos=%s", position_id)
         return None
 
