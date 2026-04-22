@@ -25,3 +25,4 @@ tzdata==2025.3
 urllib3==2.6.3
 uvicorn==0.39.0
 lightgbm==4.6.0
+jinja2>=3.1

@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Pipeline Monitor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --yellow: #d29922;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
+      font-size: 13px;
+    }
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin: 0;
+      color: var(--text);
+    }
+    h2 {
+      font-size: 14px;
+      font-weight: 600;
+      margin: 0 0 10px 0;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    select, button {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button:hover, select:hover { border-color: var(--accent); }
+    .updated { color: var(--muted); font-size: 12px; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card .big {
+      font-size: 28px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.1;
+    }
+    .card .label {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 6px;
+    }
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      padding: 6px 10px;
+      text-align: right;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+    }
+    tr.total td { font-weight: 600; background: rgba(88, 166, 255, 0.06); }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .warn { color: var(--yellow); }
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+      padding: 20px 0;
+      text-align: center;
+    }
+    canvas { max-height: 320px; }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 900px) {
+      .two-col { grid-template-columns: 1fr; }
+    }
+    code {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+    }
+    .strategy-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Pipeline Monitor</h1>
+    <div class="controls">
+      <label class="updated" for="daysSel">Period:</label>
+      <select id="daysSel">
+        <option value="1">1 day</option>
+        <option value="3">3 days</option>
+        <option value="7" selected>7 days</option>
+        <option value="14">14 days</option>
+        <option value="30">30 days</option>
+      </select>
+      <button id="refreshBtn">Refresh</button>
+      <span class="updated" id="updated">loading&hellip;</span>
+    </div>
+  </header>
+
+  <div class="cards" id="cards"></div>
+
+  <section>
+    <h2>Funnel</h2>
+    <div id="funnel"></div>
+  </section>
+
+  <section>
+    <h2>Outcomes timeline</h2>
+    <canvas id="outcomesChart"></canvas>
+  </section>
+
+  <section>
+    <h2>Strategy breakdown</h2>
+    <div id="breakdown"></div>
+  </section>
+
+  <div class="two-col">
+    <section>
+      <h2>Latency (median, minutes)</h2>
+      <div id="latency"></div>
+    </section>
+    <section>
+      <h2>Top skip reasons</h2>
+      <div id="skips"></div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Active positions</h2>
+    <div id="positions"></div>
+  </section>
+</div>
+
+<script>
+let chart = null;
+
+function fmtInt(n) {
+  if (n === null || n === undefined) return '-';
+  return Number(n).toLocaleString('en-US');
+}
+function fmtPct(n) {
+  if (n === null || n === undefined) return '-';
+  return Number(n).toFixed(2) + '%';
+}
+function fmtNum(n, d = 2) {
+  if (n === null || n === undefined) return '-';
+  return Number(n).toFixed(d);
+}
+function fmtAge(sec) {
+  if (sec === null || sec === undefined) return '-';
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  return Math.floor(sec / 3600) + 'h ' + Math.floor((sec % 3600) / 60) + 'm';
+}
+function el(tag, attrs = {}, children = []) {
+  const e = document.createElement(tag);
+  for (const k in attrs) {
+    if (k === 'class') e.className = attrs[k];
+    else if (k === 'text') e.textContent = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  }
+  for (const c of children) if (c) e.appendChild(c);
+  return e;
+}
+function renderCards(s) {
+  const container = document.getElementById('cards');
+  container.innerHTML = '';
+  const cards = [
+    { label: 'Signals', value: fmtInt(s.total_signals) },
+    { label: 'Entries', value: fmtInt(s.total_entries) },
+    { label: 'Outcomes', value: fmtInt(s.total_outcomes) },
+    { label: 'Win rate (TP%)', value: fmtPct(s.win_rate_pct) },
+  ];
+  for (const c of cards) {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = '<div class="big">' + c.value + '</div>' +
+                    '<div class="label">' + c.label + '</div>';
+    container.appendChild(div);
+  }
+}
+function renderFunnel(rows) {
+  const container = document.getElementById('funnel');
+  container.innerHTML = '';
+  if (!rows || !rows.length) {
+    container.innerHTML = '<div class="empty">No data</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Strategy</th><th>Signals</th><th>Entries</th><th>Outcomes</th>' +
+    '<th>Sig&rarr;Entry</th><th>Entry&rarr;Outcome</th>' +
+    '</tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    if (r.strategy === 'TOTAL') tr.className = 'total';
+    tr.innerHTML = '<td class="strategy-name">' + r.strategy + '</td>' +
+      '<td>' + fmtInt(r.signals) + '</td>' +
+      '<td>' + fmtInt(r.entries) + '</td>' +
+      '<td>' + fmtInt(r.outcomes) + '</td>' +
+      '<td>' + fmtPct(r.sig_to_entry_pct) + '</td>' +
+      '<td>' + fmtPct(r.entry_to_outcome_pct) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
+function renderBreakdown(rows) {
+  const container = document.getElementById('breakdown');
+  container.innerHTML = '';
+  if (!rows || !rows.length) {
+    container.innerHTML = '<div class="empty">No data</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Strategy</th><th>Total</th>' +
+    '<th>TP</th><th>SL</th><th>TIMEOUT</th>' +
+    '<th>TP%</th><th>SL%</th><th>TO%</th>' +
+    '<th>Avg PnL%</th><th>Sum PnL-R</th>' +
+    '<th>Avg MFE%</th><th>Avg MAE%</th>' +
+    '</tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const tpCls = r.tp_pct >= 50 ? 'pos' : '';
+    const pnlCls = r.avg_pnl_pct > 0 ? 'pos' : (r.avg_pnl_pct < 0 ? 'neg' : '');
+    const sumRCls = r.sum_pnl_r > 0 ? 'pos' : (r.sum_pnl_r < 0 ? 'neg' : '');
+    tr.innerHTML = '<td class="strategy-name">' + r.strategy + '</td>' +
+      '<td>' + fmtInt(r.total) + '</td>' +
+      '<td class="pos">' + fmtInt(r.tp) + '</td>' +
+      '<td class="neg">' + fmtInt(r.sl) + '</td>' +
+      '<td class="warn">' + fmtInt(r.timeout) + '</td>' +
+      '<td class="' + tpCls + '">' + fmtPct(r.tp_pct) + '</td>' +
+      '<td>' + fmtPct(r.sl_pct) + '</td>' +
+      '<td>' + fmtPct(r.timeout_pct) + '</td>' +
+      '<td class="' + pnlCls + '">' + fmtNum(r.avg_pnl_pct, 3) + '</td>' +
+      '<td class="' + sumRCls + '">' + fmtNum(r.sum_pnl_r, 2) + '</td>' +
+      '<td>' + fmtNum(r.avg_mfe_pct, 2) + '</td>' +
+      '<td>' + fmtNum(r.avg_mae_pct, 2) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
+function renderLatency(rows) {
+  const container = document.getElementById('latency');
+  container.innerHTML = '';
+  if (!rows || !rows.length) {
+    container.innerHTML = '<div class="empty">No data</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Strategy</th>' +
+    '<th>Sig&rarr;Entry</th><th>n</th>' +
+    '<th>Entry&rarr;Outcome</th><th>n</th>' +
+    '</tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="strategy-name">' + r.strategy + '</td>' +
+      '<td>' + fmtNum(r.signal_to_entry_min, 2) + '</td>' +
+      '<td>' + fmtInt(r.signal_to_entry_n) + '</td>' +
+      '<td>' + fmtNum(r.entry_to_outcome_min, 2) + '</td>' +
+      '<td>' + fmtInt(r.entry_to_outcome_n) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
+function renderSkips(rows) {
+  const container = document.getElementById('skips');
+  container.innerHTML = '';
+  if (!rows || !rows.length) {
+    container.innerHTML = '<div class="empty">No data</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr><th>Strategy</th><th>Reason</th><th>Count</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of rows) {
+    let first = true;
+    for (const item of r.top) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td class="strategy-name">' + (first ? r.strategy : '') + '</td>' +
+        '<td style="text-align:left"><code>' + item.reason + '</code></td>' +
+        '<td>' + fmtInt(item.count) + '</td>';
+      tb.appendChild(tr);
+      first = false;
+    }
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
+function renderPositions(p) {
+  const container = document.getElementById('positions');
+  container.innerHTML = '';
+  const shortList = (p && p.short) || [];
+  const fastList = (p && p.fast0) || [];
+  if (!shortList.length && !fastList.length) {
+    container.innerHTML = '<div class="empty">No active positions</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr><th>Type</th><th>Symbol</th><th>Run ID</th><th>Age</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of shortList) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>short</td>' +
+      '<td class="strategy-name">' + r.symbol + '</td>' +
+      '<td><code>' + (r.run_id || '-') + '</code></td>' +
+      '<td>' + fmtAge(r.age_sec) + '</td>';
+    tb.appendChild(tr);
+  }
+  for (const r of fastList) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td>fast0</td>' +
+      '<td class="strategy-name">' + r.symbol + '</td>' +
+      '<td>-</td>' +
+      '<td>' + fmtAge(r.age_sec) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
+function renderChart(timeline) {
+  const ctx = document.getElementById('outcomesChart').getContext('2d');
+  const labels = timeline.map(r => r.date);
+  const datasets = [
+    { label: 'TP', backgroundColor: '#3fb950', data: timeline.map(r => r.tp) },
+    { label: 'SL', backgroundColor: '#f85149', data: timeline.map(r => r.sl) },
+    { label: 'TIMEOUT', backgroundColor: '#d29922', data: timeline.map(r => r.timeout) },
+  ];
+  if (chart) {
+    chart.data.labels = labels;
+    chart.data.datasets = datasets;
+    chart.update();
+    return;
+  }
+  chart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#c9d1d9' } },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { color: 'rgba(139, 148, 158, 0.15)' },
+          ticks: { color: '#8b949e' },
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          grid: { color: 'rgba(139, 148, 158, 0.15)' },
+          ticks: { color: '#8b949e', precision: 0 },
+        },
+      },
+    },
+  });
+}
+async function loadData() {
+  const days = document.getElementById('daysSel').value;
+  const upd = document.getElementById('updated');
+  upd.textContent = 'loading…';
+  try {
+    const r = await fetch('/api/dashboard/data?days=' + encodeURIComponent(days),
+                          { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    renderCards(data.summary || {});
+    renderFunnel(data.funnel || []);
+    renderBreakdown(data.outcomes_breakdown || []);
+    renderLatency(data.latency || []);
+    renderSkips(data.skip_reasons || []);
+    renderPositions(data.active_positions || {});
+    renderChart(data.timeline || []);
+    upd.textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    upd.textContent = 'error: ' + e.message;
+  }
+}
+document.getElementById('refreshBtn').addEventListener('click', loadData);
+document.getElementById('daysSel').addEventListener('change', loadData);
+loadData();
+setInterval(loadData, 60000);
+</script>
+</body>
+</html>

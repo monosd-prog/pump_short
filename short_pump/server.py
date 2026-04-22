@@ -7,8 +7,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+
+from analytics.dashboard import build_dashboard_data
 
 from common.io_dataset import ensure_dataset_files, get_dataset_dir
 from common.runtime import code_version, wall_time_utc
@@ -33,6 +39,9 @@ DATASETS_ROOT = os.getenv("DATASETS_ROOT", "/root/pump_short/datasets").rstrip("
 logger = get_logger(__name__)
 
 app = FastAPI(title="Pump → Short Watcher")
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+_dashboard_templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 cfg = Config.from_env()
 rt = Runtime(cfg)
@@ -250,3 +259,43 @@ async def pump(evt: PumpEvent):
     except Exception as e:
         logger.exception(f"Error in /pump endpoint | symbol={evt.symbol}", exc_info=True)
         raise
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page(request: Request):
+    return _dashboard_templates.TemplateResponse(
+        "dashboard.html", {"request": request}
+    )
+
+
+@app.get("/api/dashboard/data")
+async def dashboard_data(days: int = 7):
+    try:
+        days_clamped = max(1, min(int(days), 90))
+    except Exception:
+        days_clamped = 7
+    try:
+        payload = build_dashboard_data(
+            base_dir="/root/pump_short",
+            days=days_clamped,
+            active_short=dict(_active_short_symbols),
+            active_fast0=dict(_active_fast0_symbols),
+        )
+    except Exception as exc:
+        logger.exception("DASHBOARD_BUILD_ERROR | %s", exc)
+        payload = {
+            "meta": {"error": str(exc), "days": days_clamped},
+            "summary": {
+                "total_signals": 0,
+                "total_entries": 0,
+                "total_outcomes": 0,
+                "win_rate_pct": 0.0,
+            },
+            "funnel": [],
+            "outcomes_breakdown": [],
+            "latency": [],
+            "timeline": [],
+            "skip_reasons": [],
+            "active_positions": {"short": [], "fast0": []},
+        }
+    return JSONResponse(payload)
