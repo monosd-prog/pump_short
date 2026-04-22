@@ -169,6 +169,67 @@
     .status-live-ready { background: #2e2a0d; color: #e3c45f; }
     .status-paper-only { background: #0d2742; color: #79c0ff; }
     .status-inactive { background: #1a1a1a; color: #8b949e; }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .tabs button {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      padding: 8px 16px;
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing: 0.3px;
+    }
+    .tabs button:hover { color: var(--text); border-color: transparent; }
+    .tabs button.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .hidden { display: none !important; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+    .stability-STABLE_POSITIVE { background: #0d2e0d; color: #9be9a8; }
+    .stability-UNSTABLE { background: #2e1a0d; color: #ffa07a; }
+    .stability-NOISY { background: #1a1a1a; color: #8b949e; }
+    .ev-pos { background: rgba(63, 185, 80, 0.12); color: #9be9a8; }
+    .ev-neg { background: rgba(248, 81, 73, 0.12); color: #ff9a8a; }
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .factors-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 12px;
+    }
+    .factors-controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .factors-controls label { color: var(--muted); }
+    .factor-row-clickable { cursor: pointer; }
+    .factor-row-clickable:hover td { background: rgba(88, 166, 255, 0.08); }
+    .factor-row-active td { background: rgba(88, 166, 255, 0.14) !important; }
   </style>
 </head>
 <body>
@@ -189,43 +250,97 @@
     </div>
   </header>
 
-  <div class="cards" id="cards"></div>
+  <div class="tabs" id="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="factors">Factors</button>
+  </div>
 
-  <section>
-    <h2>Funnel</h2>
-    <div id="funnel"></div>
-  </section>
+  <div id="tab-overview">
+    <div class="cards" id="cards"></div>
 
-  <section>
-    <h2>Execution mode matrix</h2>
-    <div id="modeMatrix"></div>
-  </section>
-
-  <section>
-    <h2>Outcomes timeline</h2>
-    <canvas id="outcomesChart"></canvas>
-  </section>
-
-  <section>
-    <h2>Strategy breakdown</h2>
-    <div id="breakdown"></div>
-  </section>
-
-  <div class="two-col">
     <section>
-      <h2>Latency (median, minutes)</h2>
-      <div id="latency"></div>
+      <h2>Funnel</h2>
+      <div id="funnel"></div>
     </section>
+
     <section>
-      <h2>Top skip reasons</h2>
-      <div id="skips"></div>
+      <h2>Execution mode matrix</h2>
+      <div id="modeMatrix"></div>
+    </section>
+
+    <section>
+      <h2>Outcomes timeline</h2>
+      <canvas id="outcomesChart"></canvas>
+    </section>
+
+    <section>
+      <h2>Strategy breakdown</h2>
+      <div id="breakdown"></div>
+    </section>
+
+    <div class="two-col">
+      <section>
+        <h2>Latency (median, minutes)</h2>
+        <div id="latency"></div>
+      </section>
+      <section>
+        <h2>Top skip reasons</h2>
+        <div id="skips"></div>
+      </section>
+    </div>
+
+    <section>
+      <h2>Active positions</h2>
+      <div id="positions"></div>
     </section>
   </div>
 
-  <section>
-    <h2>Active positions</h2>
-    <div id="positions"></div>
-  </section>
+  <div id="tab-factors" class="hidden">
+    <div id="factorsStatus" class="factors-meta"></div>
+
+    <section>
+      <h2>L1 &mdash; Strategy Overview</h2>
+      <canvas id="factorsOverviewChart"></canvas>
+      <div id="factorsSummary" style="margin-top:12px"></div>
+    </section>
+
+    <section>
+      <h2>L2 &mdash; Factor Analysis</h2>
+      <div class="factors-controls">
+        <label for="factorStrategySel">Strategy:</label>
+        <select id="factorStrategySel"></select>
+      </div>
+      <div class="grid-2">
+        <div>
+          <canvas id="factorsTop10"></canvas>
+        </div>
+        <div>
+          <div id="factorBucketsWrap"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>L3 &mdash; Combinations</h2>
+      <div id="factorCombos"></div>
+    </section>
+
+    <section>
+      <h2>L4 &mdash; Symbols &amp; Risk Profiles</h2>
+      <div class="grid-2">
+        <div id="factorSymbols"></div>
+        <div id="factorRiskProfiles"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>L5 &mdash; Stability Check (30d vs 90d)</h2>
+      <div class="factors-controls">
+        <label><input type="checkbox" id="stabilityOnlyStable"> only STABLE_POSITIVE</label>
+      </div>
+      <div id="factorStability"></div>
+    </section>
+  </div>
 </div>
 
 <script>
@@ -534,10 +649,477 @@ async function loadData() {
     upd.textContent = 'error: ' + e.message;
   }
 }
-document.getElementById('refreshBtn').addEventListener('click', loadData);
-document.getElementById('daysSel').addEventListener('change', loadData);
+document.getElementById('refreshBtn').addEventListener('click', () => {
+  loadData();
+  if (activeTab === 'factors') loadFactors();
+});
+document.getElementById('daysSel').addEventListener('change', () => {
+  loadData();
+  if (activeTab === 'factors') loadFactors();
+});
 loadData();
 setInterval(loadData, 60000);
+
+// ---------------------------------------------------------------
+// FACTORS TAB
+// ---------------------------------------------------------------
+let activeTab = 'overview';
+let factorsOverviewChart = null;
+let factorsTop10Chart = null;
+let factorsRetryTimer = null;
+let factorsData = null;
+let factorsSelectedStrategy = null;
+let factorsSelectedFactor = null;
+
+const tabsEl = document.getElementById('tabs');
+if (tabsEl) {
+  tabsEl.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-tab]');
+    if (!btn) return;
+    const tab = btn.getAttribute('data-tab');
+    for (const b of tabsEl.querySelectorAll('button')) {
+      b.classList.toggle('active', b === btn);
+    }
+    document.getElementById('tab-overview').classList.toggle('hidden', tab !== 'overview');
+    document.getElementById('tab-factors').classList.toggle('hidden', tab !== 'factors');
+    activeTab = tab;
+    if (tab === 'factors') {
+      loadFactors();
+    } else {
+      if (factorsRetryTimer) { clearTimeout(factorsRetryTimer); factorsRetryTimer = null; }
+    }
+  });
+}
+
+function fmtSignedPct(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return '-';
+  const v = Number(n) * 100;
+  return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+}
+function fmtSignedNum(n, d = 3) {
+  if (n === null || n === undefined || Number.isNaN(n)) return '-';
+  const v = Number(n);
+  return (v >= 0 ? '+' : '') + v.toFixed(d);
+}
+function evCls(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return '';
+  const v = Number(n);
+  if (v > 0) return 'ev-pos';
+  if (v < 0) return 'ev-neg';
+  return '';
+}
+
+async function loadFactors() {
+  if (factorsRetryTimer) { clearTimeout(factorsRetryTimer); factorsRetryTimer = null; }
+  const days = document.getElementById('daysSel').value;
+  const statusEl = document.getElementById('factorsStatus');
+  statusEl.innerHTML = '<span class="spinner"></span>loading…';
+  try {
+    const r = await fetch('/api/dashboard/factors?days=' + encodeURIComponent(days),
+                          { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const payload = await r.json();
+    if (payload.status === 'computing') {
+      const eta = payload.eta_sec || 75;
+      statusEl.innerHTML = '<span class="spinner"></span>' +
+        'Recomputing factor report (~' + eta + 's)… auto-retry in 5s';
+      factorsRetryTimer = setTimeout(() => {
+        if (activeTab === 'factors') loadFactors();
+      }, 5000);
+      return;
+    }
+    if (payload.status === 'error') {
+      statusEl.textContent = 'Error: ' + (payload.error || 'unknown');
+      return;
+    }
+    factorsData = payload.data || {};
+    const computedAt = payload.computed_at || '-';
+    const duration = payload.duration_sec != null ? (payload.duration_sec + 's') : '-';
+    const stratList = (payload.strategies || []).join(', ');
+    statusEl.textContent = 'Last computed: ' + computedAt +
+      ' (took ' + duration + ') | days=' + payload.days +
+      ' | strategies=' + stratList;
+    renderFactorsAll(factorsData);
+  } catch (e) {
+    statusEl.textContent = 'error: ' + e.message;
+  }
+}
+
+function renderFactorsAll(data) {
+  const strategies = Array.isArray(data.strategies) ? data.strategies : [];
+  // ----- L1 Strategy overview -----
+  renderFactorsOverview(strategies);
+  // ----- Strategy selector -----
+  const sel = document.getElementById('factorStrategySel');
+  const prev = factorsSelectedStrategy;
+  sel.innerHTML = '';
+  for (const s of strategies) {
+    const opt = document.createElement('option');
+    opt.value = s.strategy;
+    opt.textContent = s.strategy;
+    sel.appendChild(opt);
+  }
+  if (strategies.length) {
+    const wanted = strategies.find(s => s.strategy === prev) ? prev : strategies[0].strategy;
+    sel.value = wanted;
+    factorsSelectedStrategy = wanted;
+  } else {
+    factorsSelectedStrategy = null;
+  }
+  sel.onchange = () => {
+    factorsSelectedStrategy = sel.value;
+    factorsSelectedFactor = null;
+    renderStrategySections();
+  };
+  renderStrategySections();
+}
+
+function renderStrategySections() {
+  const data = factorsData || {};
+  const strat = (data.strategies || []).find(s => s.strategy === factorsSelectedStrategy);
+  renderFactorsTop10(strat);
+  renderFactorBuckets(strat);
+  renderFactorCombos(strat);
+  renderFactorSymbols(strat);
+  renderFactorRiskProfiles(strat);
+  renderFactorStability(strat);
+}
+
+function renderFactorsOverview(strategies) {
+  // L1 summary table
+  const wrap = document.getElementById('factorsSummary');
+  wrap.innerHTML = '';
+  if (!strategies.length) {
+    wrap.innerHTML = '<div class="empty">No data</div>';
+  } else {
+    const t = document.createElement('table');
+    t.innerHTML = '<thead><tr>' +
+      '<th>Strategy</th><th>N</th><th>TP</th><th>SL</th><th>TO</th>' +
+      '<th>WR</th><th>EV</th><th>EV20</th><th style="text-align:left">Data quality</th>' +
+      '</tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const s of strategies) {
+      const sm = s.summary || {};
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td class="strategy-name">' + s.strategy + '</td>' +
+        '<td>' + fmtInt(sm.n) + '</td>' +
+        '<td class="pos">' + fmtInt(sm.tp) + '</td>' +
+        '<td class="neg">' + fmtInt(sm.sl) + '</td>' +
+        '<td class="warn">' + fmtInt(sm.timeout) + '</td>' +
+        '<td>' + fmtSignedPct(sm.wr) + '</td>' +
+        '<td class="' + evCls(sm.ev) + '">' + fmtSignedNum(sm.ev, 3) + '</td>' +
+        '<td class="' + evCls(sm.ev20) + '">' + fmtSignedNum(sm.ev20, 3) + '</td>' +
+        '<td style="text-align:left;font-size:11px;color:var(--muted)">' +
+          ((sm.data_quality || []).slice(0, 4).join(' · ')) + '</td>';
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    wrap.appendChild(t);
+  }
+
+  // L1 grouped bar chart
+  const ctx = document.getElementById('factorsOverviewChart').getContext('2d');
+  const labels = strategies.map(s => s.strategy);
+  const wrVals = strategies.map(s => Number(((s.summary || {}).wr || 0) * 100));
+  const evVals = strategies.map(s => Number((s.summary || {}).ev || 0));
+  const ev20Vals = strategies.map(s => Number((s.summary || {}).ev20 || 0));
+  const datasets = [
+    { label: 'WR %', backgroundColor: '#58a6ff', data: wrVals, yAxisID: 'yPct' },
+    { label: 'EV', backgroundColor: '#3fb950', data: evVals, yAxisID: 'yEv' },
+    { label: 'EV20', backgroundColor: '#d29922', data: ev20Vals, yAxisID: 'yEv' },
+  ];
+  if (factorsOverviewChart) {
+    factorsOverviewChart.data.labels = labels;
+    factorsOverviewChart.data.datasets = datasets;
+    factorsOverviewChart.update();
+  } else {
+    factorsOverviewChart = new Chart(ctx, {
+      type: 'bar',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#c9d1d9' } } },
+        scales: {
+          x: { grid: { color: 'rgba(139,148,158,0.15)' }, ticks: { color: '#8b949e' } },
+          yPct: {
+            type: 'linear', position: 'left',
+            title: { display: true, text: 'WR %', color: '#8b949e' },
+            grid: { color: 'rgba(139,148,158,0.15)' },
+            ticks: { color: '#8b949e' },
+          },
+          yEv: {
+            type: 'linear', position: 'right',
+            title: { display: true, text: 'EV / EV20', color: '#8b949e' },
+            grid: { drawOnChartArea: false },
+            ticks: { color: '#8b949e' },
+          },
+        },
+      },
+    });
+  }
+}
+
+function topFactorsByEv20(strat) {
+  const factors = (strat && strat.factors) || {};
+  const stability = (strat && strat.stability_check) || [];
+  const stabByFactor = {};
+  for (const row of stability) {
+    const cur = stabByFactor[row.factor];
+    const rank = (v) => (v === 'STABLE_POSITIVE' ? 2 : (v === 'UNSTABLE' ? 1 : 0));
+    if (!cur || rank(row.verdict) > rank(cur.verdict)) {
+      stabByFactor[row.factor] = row;
+    }
+  }
+  const rows = [];
+  for (const fname in factors) {
+    const f = factors[fname] || {};
+    if (!f.tracked) continue;
+    const buckets = (f.buckets || []).filter(b => b && !/^nan$/i.test(String(b.bucket)));
+    if (!buckets.length) continue;
+    let best = buckets[0];
+    for (const b of buckets) {
+      if (Math.abs(b.ev20) > Math.abs(best.ev20)) best = b;
+    }
+    rows.push({
+      factor: fname,
+      best_bucket: best.bucket,
+      best_ev20: best.ev20,
+      best_ev: best.ev,
+      best_wr: best.wr,
+      best_n: best.n,
+      coverage_pct: f.coverage_pct,
+      verdict: (stabByFactor[fname] || {}).verdict || 'NOISY',
+    });
+  }
+  rows.sort((a, b) => Math.abs(b.best_ev20) - Math.abs(a.best_ev20));
+  return rows.slice(0, 10);
+}
+
+function renderFactorsTop10(strat) {
+  const ctx = document.getElementById('factorsTop10').getContext('2d');
+  const top = topFactorsByEv20(strat);
+  const labels = top.map(r => r.factor + ' (' + r.verdict.charAt(0) + ')');
+  const data = top.map(r => Number(r.best_ev20 || 0));
+  const colors = data.map(v => v >= 0 ? '#3fb950' : '#f85149');
+  const datasets = [{ label: 'best |EV20|', backgroundColor: colors, data }];
+  if (factorsTop10Chart) {
+    factorsTop10Chart.data.labels = labels;
+    factorsTop10Chart.data.datasets = datasets;
+    factorsTop10Chart._topMeta = top;
+    factorsTop10Chart.update();
+    return;
+  }
+  factorsTop10Chart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#c9d1d9' } } },
+      onClick: (evt, items) => {
+        if (!items || !items.length) return;
+        const meta = factorsTop10Chart._topMeta || [];
+        const idx = items[0].index;
+        const row = meta[idx];
+        if (!row) return;
+        factorsSelectedFactor = row.factor;
+        renderFactorBuckets(factorsData && factorsData.strategies
+          ? factorsData.strategies.find(s => s.strategy === factorsSelectedStrategy)
+          : null);
+      },
+      scales: {
+        x: {
+          grid: { color: 'rgba(139,148,158,0.15)' },
+          ticks: { color: '#8b949e' },
+          title: { display: true, text: 'EV20 (signed)', color: '#8b949e' },
+        },
+        y: {
+          grid: { color: 'rgba(139,148,158,0.15)' },
+          ticks: { color: '#8b949e' },
+        },
+      },
+    },
+  });
+  factorsTop10Chart._topMeta = top;
+}
+
+function renderFactorBuckets(strat) {
+  const wrap = document.getElementById('factorBucketsWrap');
+  wrap.innerHTML = '';
+  if (!strat) { wrap.innerHTML = '<div class="empty">No data</div>'; return; }
+  const factors = strat.factors || {};
+  const top = topFactorsByEv20(strat);
+  if (!factorsSelectedFactor || !factors[factorsSelectedFactor]) {
+    factorsSelectedFactor = top.length ? top[0].factor : null;
+  }
+  if (!factorsSelectedFactor) {
+    wrap.innerHTML = '<div class="empty">No factors</div>';
+    return;
+  }
+  const stability = (strat.stability_check || []).filter(r => r.factor === factorsSelectedFactor);
+  const verdict = stability.length
+    ? (stability.find(r => r.verdict === 'STABLE_POSITIVE') || stability[0]).verdict
+    : 'NOISY';
+  const header = document.createElement('div');
+  header.style.marginBottom = '8px';
+  header.innerHTML = '<span class="strategy-name" style="font-size:13px;font-weight:600">' +
+    factorsSelectedFactor + '</span> ' +
+    '<span class="status-badge stability-' + verdict + '">' + verdict + '</span> ' +
+    '<span class="updated"> coverage=' + fmtNum((factors[factorsSelectedFactor] || {}).coverage_pct, 0) + '%' +
+    ' · n=' + fmtInt((factors[factorsSelectedFactor] || {}).n_matched) + '</span>';
+  wrap.appendChild(header);
+
+  const hint = document.createElement('div');
+  hint.className = 'updated';
+  hint.style.marginBottom = '6px';
+  hint.textContent = 'Click a bar in the chart to switch factor.';
+  wrap.appendChild(hint);
+
+  const rows = (factors[factorsSelectedFactor] || {}).buckets || [];
+  if (!rows.length) { wrap.appendChild(el('div', { class: 'empty', text: 'No buckets pass thresholds' })); return; }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Bucket</th><th>N</th><th>TP</th><th>SL</th><th>TO</th>' +
+    '<th>WR</th><th>EV</th><th>EV20</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const b of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td style="text-align:left">' + b.bucket + '</td>' +
+      '<td>' + fmtInt(b.n) + '</td>' +
+      '<td class="pos">' + fmtInt(b.tp) + '</td>' +
+      '<td class="neg">' + fmtInt(b.sl) + '</td>' +
+      '<td class="warn">' + fmtInt(b.timeout) + '</td>' +
+      '<td>' + fmtSignedPct(b.wr) + '</td>' +
+      '<td class="' + evCls(b.ev) + '">' + fmtSignedNum(b.ev, 3) + '</td>' +
+      '<td class="' + evCls(b.ev20) + '">' + fmtSignedNum(b.ev20, 3) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  wrap.appendChild(t);
+}
+
+function renderFactorCombos(strat) {
+  const wrap = document.getElementById('factorCombos');
+  wrap.innerHTML = '';
+  const combos = (strat && strat.combos) || [];
+  if (!combos.length) { wrap.innerHTML = '<div class="empty">No combinations pass thresholds</div>'; return; }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Factor A</th><th>Bucket A</th><th>Factor B</th><th>Bucket B</th>' +
+    '<th>N</th><th>WR</th><th>EV</th><th>EV20</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const c of combos.slice(0, 10)) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="strategy-name">' + c.factor_a + '</td>' +
+      '<td style="text-align:left">' + c.bucket_a + '</td>' +
+      '<td class="strategy-name">' + c.factor_b + '</td>' +
+      '<td style="text-align:left">' + c.bucket_b + '</td>' +
+      '<td>' + fmtInt(c.n) + '</td>' +
+      '<td>' + fmtSignedPct(c.wr) + '</td>' +
+      '<td class="' + evCls(c.ev) + '">' + fmtSignedNum(c.ev, 3) + '</td>' +
+      '<td class="' + evCls(c.ev20) + '">' + fmtSignedNum(c.ev20, 3) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  wrap.appendChild(t);
+}
+
+function renderFactorSymbols(strat) {
+  const wrap = document.getElementById('factorSymbols');
+  wrap.innerHTML = '<h2 style="margin-bottom:8px">Symbols (top/worst by EV)</h2>';
+  const rows = (strat && strat.symbol_analysis) || [];
+  if (!rows.length) { wrap.innerHTML += '<div class="empty">No data</div>'; return; }
+  const top = rows.slice(0, 5);
+  const worst = rows.slice().sort((a, b) => a.ev - b.ev).slice(0, 5);
+  const build = (title, list) => {
+    const section = document.createElement('div');
+    section.style.marginBottom = '10px';
+    section.innerHTML = '<div class="updated" style="margin-bottom:4px">' + title + '</div>';
+    const t = document.createElement('table');
+    t.innerHTML = '<thead><tr><th>Symbol</th><th>N</th><th>WR</th><th>EV</th><th>EV20</th></tr></thead>';
+    const tb = document.createElement('tbody');
+    for (const b of list) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td class="strategy-name">' + b.bucket + '</td>' +
+        '<td>' + fmtInt(b.n) + '</td>' +
+        '<td>' + fmtSignedPct(b.wr) + '</td>' +
+        '<td class="' + evCls(b.ev) + '">' + fmtSignedNum(b.ev, 3) + '</td>' +
+        '<td class="' + evCls(b.ev20) + '">' + fmtSignedNum(b.ev20, 3) + '</td>';
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb);
+    section.appendChild(t);
+    return section;
+  };
+  wrap.appendChild(build('Top EV', top));
+  wrap.appendChild(build('Worst EV', worst));
+}
+
+function renderFactorRiskProfiles(strat) {
+  const wrap = document.getElementById('factorRiskProfiles');
+  wrap.innerHTML = '<h2 style="margin-bottom:8px">Risk profiles</h2>';
+  const rows = (strat && strat.risk_profile_analysis) || [];
+  if (!rows.length) { wrap.innerHTML += '<div class="empty">No data</div>'; return; }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr><th>Profile</th><th>N</th><th>TP</th><th>SL</th><th>TO</th>' +
+    '<th>WR</th><th>EV</th><th>EV20</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="strategy-name">' + r.risk_profile + '</td>' +
+      '<td>' + fmtInt(r.n) + '</td>' +
+      '<td class="pos">' + fmtInt(r.tp) + '</td>' +
+      '<td class="neg">' + fmtInt(r.sl) + '</td>' +
+      '<td class="warn">' + fmtInt(r.timeout) + '</td>' +
+      '<td>' + fmtSignedPct(r.wr) + '</td>' +
+      '<td class="' + evCls(r.ev) + '">' + fmtSignedNum(r.ev, 3) + '</td>' +
+      '<td class="' + evCls(r.ev20) + '">' + fmtSignedNum(r.ev20, 3) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  wrap.appendChild(t);
+}
+
+function renderFactorStability(strat) {
+  const wrap = document.getElementById('factorStability');
+  wrap.innerHTML = '';
+  const onlyStable = document.getElementById('stabilityOnlyStable').checked;
+  let rows = (strat && strat.stability_check) || [];
+  if (onlyStable) rows = rows.filter(r => r.verdict === 'STABLE_POSITIVE');
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="empty">No rows' + (onlyStable ? ' (filter: STABLE_POSITIVE)' : '') + '</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Factor</th><th style="text-align:left">Bucket</th>' +
+    '<th>N30</th><th>EV30</th><th>EV20(30d)</th>' +
+    '<th>N90</th><th>EV90</th><th>EV20(90d)</th>' +
+    '<th>Verdict</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td class="strategy-name">' + r.factor + '</td>' +
+      '<td style="text-align:left">' + r.bucket + '</td>' +
+      '<td>' + fmtInt(r.n30) + '</td>' +
+      '<td class="' + evCls(r.ev30) + '">' + fmtSignedNum(r.ev30, 3) + '</td>' +
+      '<td class="' + evCls(r.ev20_30) + '">' + fmtSignedNum(r.ev20_30, 3) + '</td>' +
+      '<td>' + fmtInt(r.n90) + '</td>' +
+      '<td class="' + evCls(r.ev90) + '">' + fmtSignedNum(r.ev90, 3) + '</td>' +
+      '<td class="' + evCls(r.ev20_90) + '">' + fmtSignedNum(r.ev20_90, 3) + '</td>' +
+      '<td><span class="status-badge stability-' + r.verdict + '">' + r.verdict + '</span></td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  wrap.appendChild(t);
+}
+
+document.getElementById('stabilityOnlyStable').addEventListener('change', () => {
+  const strat = (factorsData && factorsData.strategies || []).find(s => s.strategy === factorsSelectedStrategy);
+  renderFactorStability(strat);
+});
 </script>
 </body>
 </html>

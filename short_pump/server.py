@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from analytics.dashboard import build_dashboard_data
 
+from short_pump import factor_cache
 from common.io_dataset import ensure_dataset_files, get_dataset_dir
 from common.runtime import code_version, wall_time_utc
 from short_pump.rollout import (
@@ -89,6 +90,30 @@ async def _log_enabled_strategies() -> None:
         ensure_dataset_files("short_pump_wick", "live", wall_time_utc(), schema_version=3)
     if SHORT_PUMP_FILTERED_ENABLE:
         ensure_dataset_files("short_pump_filtered", "live", wall_time_utc(), schema_version=3)
+
+
+def _factor_default_key() -> factor_cache.CacheKey:
+    days = int(os.getenv("FACTOR_DEFAULT_DAYS", "7"))
+    return factor_cache.make_key(days, _enabled_strategies(), "live")
+
+
+@app.on_event("startup")
+async def _start_factor_refresh() -> None:
+    interval = int(os.getenv("FACTOR_REFRESH_MIN", "60"))
+    factor_cache.start_background(
+        interval_min=interval,
+        default_key_fn=_factor_default_key,
+    )
+    logger.info(
+        "FACTOR_BG_STARTED | interval_min=%d default_key=%s",
+        interval, _factor_default_key(),
+    )
+
+
+@app.on_event("shutdown")
+async def _stop_factor_refresh() -> None:
+    await factor_cache.stop_background()
+
 
 _LONG_TTL_SEC = 30 * 60
 _active_long_symbols: Dict[str, float] = {}
@@ -299,3 +324,42 @@ async def dashboard_data(days: int = 7):
             "active_positions": {"short": [], "fast0": []},
         }
     return JSONResponse(payload)
+
+
+@app.get("/api/dashboard/factors")
+async def dashboard_factors(days: int = 7, strategies: str = ""):
+    try:
+        days_clamped = max(1, min(int(days), 90))
+    except Exception:
+        days_clamped = 7
+    strat_list = [s.strip() for s in (strategies or "").split(",") if s.strip()]
+    if not strat_list:
+        strat_list = _enabled_strategies()
+    key = factor_cache.make_key(days_clamped, strat_list, "live")
+    entry = factor_cache.get_entry(key)
+    if entry and entry.get("status") == "ready":
+        factor_cache.touch_access(key)
+        return JSONResponse({
+            "status": "ready",
+            "computed_at": entry.get("computed_at"),
+            "duration_sec": entry.get("duration_sec"),
+            "days": days_clamped,
+            "strategies": list(key[1]),
+            "data": entry.get("data"),
+        })
+    if entry and entry.get("status") == "error":
+        return JSONResponse({
+            "status": "error",
+            "error": entry.get("error"),
+            "computed_at": entry.get("computed_at"),
+            "days": days_clamped,
+            "strategies": list(key[1]),
+        })
+    # Trigger on-demand compute if not already running.
+    factor_cache.kick_off(key)
+    return JSONResponse({
+        "status": "computing",
+        "eta_sec": int(factor_cache.last_duration_sec()),
+        "days": days_clamped,
+        "strategies": list(key[1]),
+    })
