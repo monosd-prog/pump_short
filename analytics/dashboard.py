@@ -484,7 +484,7 @@ def build_mode_matrix(
         }
 
     strategy_profiles: Dict[str, set[str]] = {
-        "short_pump": {"short_pump_mid", "short_pump_active_1R", "short_pump_deep"},
+        "short_pump": {"short_pump_mid", "short_pump_active_1R", "short_pump_deep", "short_pump_funding_1R"},
         "short_pump_filtered": {"short_pump_filtered_1R"},
         "short_pump_fast0": {"fast0_selective", "fast0_2R", "fast0_1p5R", "fast0_base_1R"},
         "short_pump_fast0_filtered": {"fast0_selective", "fast0_2R", "fast0_1p5R", "fast0_base_1R"},
@@ -516,14 +516,24 @@ def build_mode_matrix(
         mapped_profiles = strategy_profiles.get(strategy, set())
         in_whitelist = bool(mapped_profiles & whitelist) if mapped_profiles else False
 
-        if in_whitelist and has_live:
-            status = "live_active"
-        elif in_whitelist and not has_live:
-            status = "live_ready"
-        elif (not in_whitelist) and has_paper:
+        # STATUS is based on current whitelist policy, not historical live closes.
+        if in_whitelist:
+            status = "live"
+        elif has_paper:
             status = "paper_only"
         else:
             status = "inactive"
+
+        # LIVE column text policy:
+        # - if in whitelist -> show "в whitelist"
+        # - else if historical live exists -> show "<n> (историч.)"
+        # - else -> "—"
+        if in_whitelist:
+            live_display = "в whitelist"
+        elif has_live:
+            live_display = f"{live_count} (историч.)"
+        else:
+            live_display = "—"
 
         matrix.append(
             {
@@ -533,6 +543,7 @@ def build_mode_matrix(
                 "has_live": has_live,
                 "paper_count": paper_count,
                 "live_count": live_count,
+                "live_display": live_display,
                 "status": status,
             }
         )
