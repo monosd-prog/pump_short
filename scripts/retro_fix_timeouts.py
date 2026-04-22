@@ -61,8 +61,19 @@ def _find_entry_wall_time_utc(
     sym = str(row.get("symbol", "") or "").strip().upper()
     strat = str(row.get("strategy", "") or "")
     mode = str(row.get("mode", "") or "")
+    eid = str(row.get("event_id", "") or "")
     if not rid or not sym:
         return None
+
+    # Priority: exact event_id match from trading_closes.csv when available.
+    if eid:
+        me = events_df["event_id"].astype(str) == eid
+        sube = events_df.loc[me].copy()
+        if not sube.empty:
+            w = sube.iloc[0].get("wall_time_utc")
+            ts = pd.to_datetime(w, utc=True, errors="coerce")
+            if not pd.isna(ts):
+                return ts
 
     m = (
         (events_df["run_id"].astype(str) == rid)
