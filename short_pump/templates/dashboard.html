@@ -230,6 +230,179 @@
     .factor-row-clickable { cursor: pointer; }
     .factor-row-clickable:hover td { background: rgba(88, 166, 255, 0.08); }
     .factor-row-active td { background: rgba(88, 166, 255, 0.14) !important; }
+    /* Architecture tab */
+    .arch-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .arch-layer {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .arch-layer h3 {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      color: var(--text);
+      letter-spacing: 0.2px;
+    }
+    .arch-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .arch-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      background: #11161d;
+    }
+    .arch-card strong {
+      display: block;
+      font-size: 12px;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .arch-card span {
+      display: block;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .arch-arrow {
+      text-align: center;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      user-select: none;
+    }
+    .arch-l1 { background: #132033; }
+    .arch-l2 { background: #1b2130; }
+    .arch-l3 { background: #1f2330; }
+    .arch-l4 { background: #1c2a24; }
+    .arch-l5 { background: #2a2219; }
+    .arch-l6 { background: #222222; }
+    /* Profiles tab */
+    .profiles-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 900px) {
+      .profiles-grid { grid-template-columns: 1fr; }
+    }
+    .profile-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .profile-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .profile-name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .profile-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .badge-live { background: #1a3a1a; color: #9be9a8; }
+    .badge-new { background: #35204a; color: #d2a8ff; }
+    .badge-paper { background: #1a1a1a; color: #8b949e; }
+    .badge-off { background: #3a1a1a; color: #ff9a8a; }
+    .profile-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .metric-label {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .metric-value {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    .metric-value.pos { color: #9be9a8; }
+    .metric-value.neg { color: #ff9a8a; }
+    .profile-bar {
+      height: 3px;
+      border-radius: 2px;
+      background: #30363d;
+    }
+    .bar-pos { background: #1D9E75; }
+    .bar-neg { background: #E24B4A; }
+    .profiles-section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 20px 0 10px 0;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .profile-sub {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+    .profile-conditions {
+      border-top: 1px solid var(--border);
+      margin-top: 8px;
+      padding-top: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: ui-monospace, monospace;
+      line-height: 1.5;
+    }
+    /* Factors visual upgrades */
+    .factors-best {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      background: #121820;
+    }
+    .factors-best h3 {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      color: var(--text);
+      letter-spacing: 0.2px;
+    }
+    .factors-best table th,
+    .factors-best table td {
+      border-bottom: 1px solid rgba(48, 54, 61, 0.7);
+    }
+    .wr-bar-row td {
+      padding: 0 10px 8px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .wr-bar {
+      height: 3px;
+      border-radius: 2px;
+      background: #6e7681;
+    }
+    .wr-bar.pos { background: #1D9E75; }
+    .wr-bar.neg { background: #E24B4A; }
   </style>
 </head>
 <body>
@@ -253,6 +426,8 @@
   <div class="tabs" id="tabs">
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="factors">Factors</button>
+    <button data-tab="profiles">Профили</button>
+    <button data-tab="architecture">Архитектура</button>
   </div>
 
   <div id="tab-overview">
@@ -299,6 +474,23 @@
     <div id="factorsStatus" class="factors-meta"></div>
 
     <section>
+      <h2>Лучшие комбинации</h2>
+      <div class="factors-best">
+        <h3>Топ стабильных комбинаций</h3>
+        <table>
+          <thead><tr><th>Комбинация</th><th>WR</th><th>EV</th><th>n</th></tr></thead>
+          <tbody>
+            <tr><td style="text-align:left">funding [0.005,0.01) + stage=3</td><td>63%</td><td class="pos">+0.39</td><td>75</td></tr>
+            <tr><td style="text-align:left">context [0.4,0.6) + funding [0.005,0.01)</td><td>63%</td><td class="pos">+0.38</td><td>52</td></tr>
+            <tr><td style="text-align:left">dist [3.5,5) + oi_change [-2,0)</td><td>61%</td><td class="pos">+0.33</td><td>57</td></tr>
+            <tr><td style="text-align:left">funding [0.0005,0.001) + stage=3</td><td>60%</td><td class="pos">+0.30</td><td>64</td></tr>
+            <tr><td style="text-align:left">context [0.4,0.6) + cvd_ratio [-0.5,0)</td><td>58%</td><td class="pos">+0.27</td><td>41</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
       <h2>L1 &mdash; Strategy Overview</h2>
       <canvas id="factorsOverviewChart"></canvas>
       <div id="factorsSummary" style="margin-top:12px"></div>
@@ -339,6 +531,217 @@
         <label><input type="checkbox" id="stabilityOnlyStable"> only STABLE_POSITIVE</label>
       </div>
       <div id="factorStability"></div>
+    </section>
+  </div>
+
+  <div id="tab-profiles" class="hidden">
+    <section>
+      <h2>Профили</h2>
+      <div class="profiles-section-label">short_pump</div>
+      <div class="profiles-grid">
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">fast0_selective</div>
+            <span class="profile-badge badge-live">live</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">27</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">48%</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.13</div></div>
+          </div>
+          <div class="profile-bar bar-pos" style="width:48%"></div>
+          <div class="profile-conditions">context_score [0.4,0.6) · cvd_delta [-0.5,0)</div>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">short_pump_mid</div>
+            <span class="profile-badge badge-new">новый</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">9</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">55%</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.20</div></div>
+          </div>
+          <div class="profile-bar bar-pos" style="width:55%"></div>
+          <div class="profile-conditions">stage=3 · dist [3.5,5) · context [0.4,0.6)</div>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">short_pump_funding_1R</div>
+            <span class="profile-badge badge-new">новый</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">—</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">—</div></div>
+            <div><div class="metric-label">exp. EV</div><div class="metric-value pos">+0.39*</div></div>
+          </div>
+          <div class="profile-bar bar-pos" style="width:63%"></div>
+          <div class="profile-conditions">stage=3 · funding [0.0005,0.001) OR [0.005,0.01)</div>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">short_pump_wick_1R</div>
+            <span class="profile-badge badge-live">live</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">8</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">75%</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.65</div></div>
+          </div>
+          <div class="profile-bar bar-pos" style="width:75%"></div>
+          <div class="profile-conditions">short_pump_wick strategy · wick entry</div>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">short_pump_premium_1R</div>
+            <span class="profile-badge badge-live">live</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">1</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">—</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value">—</div></div>
+          </div>
+          <div class="profile-bar" style="width:0%"></div>
+          <div class="profile-conditions">short_pump_premium · stage=4 · funding диапазон</div>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">short_pump_active_1R</div>
+            <span class="profile-badge badge-off">отключён</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">90</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">40%</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value neg">-0.26</div></div>
+          </div>
+          <div class="profile-bar bar-neg" style="width:40%"></div>
+          <div class="profile-conditions">stage=4 · dist &gt;= 3.5 → отключён (EV -0.26)</div>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">fast0_2R</div>
+            <span class="profile-badge badge-paper">paper</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">10</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">80%</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.65</div></div>
+          </div>
+          <div class="profile-bar bar-pos" style="width:80%"></div>
+          <div class="profile-conditions">fast0 entry · 2R target · paper only</div>
+        </div>
+
+        <div class="profile-card">
+          <div class="profile-head">
+            <div class="profile-name">fast0_1p5R</div>
+            <span class="profile-badge badge-paper">paper</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">24</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">58%</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.37</div></div>
+          </div>
+          <div class="profile-bar bar-pos" style="width:58%"></div>
+          <div class="profile-conditions">fast0 entry · 1.5R target · paper only</div>
+        </div>
+      </div>
+
+      <div class="profiles-section-label">false_pump</div>
+      <div class="profiles-grid">
+        <div class="profile-card">
+          <div class="profile-head">
+            <div>
+              <div class="profile-name">false_pump</div>
+              <div class="profile-sub">ждём скринер</div>
+            </div>
+            <span class="profile-badge badge-paper">paper</span>
+          </div>
+          <div class="profile-metrics">
+            <div><div class="metric-label">сделок</div><div class="metric-value">0</div></div>
+            <div><div class="metric-label">WR</div><div class="metric-value">—</div></div>
+            <div><div class="metric-label">EV</div><div class="metric-value">—</div></div>
+          </div>
+          <div class="profile-bar" style="width:0%"></div>
+          <div class="profile-conditions">false pump детект · нет risk_profile · накапливаем данные</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="tab-architecture" class="hidden">
+    <section>
+      <h2>Architecture Flow</h2>
+      <div class="arch-flow">
+        <div class="arch-layer arch-l1">
+          <h3>Внешние источники</h3>
+          <div class="arch-cards">
+            <div class="arch-card"><strong>Pump webhook</strong><span>server.py</span></div>
+            <div class="arch-card"><strong>False pump webhook</strong><span>false_pump/webhook.py</span></div>
+            <div class="arch-card"><strong>Bybit REST/WS</strong><span>цены, OI, ликвидации</span></div>
+          </div>
+        </div>
+
+        <div class="arch-arrow">↓</div>
+
+        <div class="arch-layer arch-l2">
+          <h3>Watcher / детект</h3>
+          <div class="arch-cards">
+            <div class="arch-card"><strong>watcher.py</strong><span>фичи + enqueue</span></div>
+            <div class="arch-card"><strong>false_pump/watcher.py</strong><span>детект + outcome poll</span></div>
+            <div class="arch-card"><strong>fast0_sampler.py</strong><span>ML score + enqueue</span></div>
+          </div>
+        </div>
+
+        <div class="arch-arrow">↓</div>
+
+        <div class="arch-layer arch-l3">
+          <h3>ML фильтр + очередь</h3>
+          <div class="arch-cards">
+            <div class="arch-card"><strong>ml/entry_filter.py</strong><span>lgbm score</span></div>
+            <div class="arch-card"><strong>signals_queue.jsonl</strong><span>trading/queue.py</span></div>
+          </div>
+        </div>
+
+        <div class="arch-arrow">↓</div>
+
+        <div class="arch-layer arch-l4">
+          <h3>Исполнение</h3>
+          <div class="arch-cards">
+            <div class="arch-card"><strong>runner.py</strong><span>приоритет · whitelist · sizing</span></div>
+            <div class="arch-card"><strong>risk_profile.py</strong><span>профиль + risk_usd</span></div>
+            <div class="arch-card"><strong>broker.py</strong><span>open_position</span></div>
+            <div class="arch-card"><strong>trading_state.json</strong><span>record_open</span></div>
+          </div>
+        </div>
+
+        <div class="arch-arrow">↓</div>
+
+        <div class="arch-layer arch-l5">
+          <h3>Закрытие / outcome</h3>
+          <div class="arch-cards">
+            <div class="arch-card"><strong>paper_outcome.py</strong><span>close_from_outcome</span></div>
+            <div class="arch-card"><strong>bybit_live_outcome.py</strong><span>live close</span></div>
+            <div class="arch-card"><strong>outcome_delivery.py</strong><span>Telegram notify</span></div>
+          </div>
+        </div>
+
+        <div class="arch-arrow">↓</div>
+
+        <div class="arch-layer arch-l6">
+          <h3>Хранилище + аналитика</h3>
+          <div class="arch-cards">
+            <div class="arch-card"><strong>trading_closes.csv</strong><span>канонические closes</span></div>
+            <div class="arch-card"><strong>datasets/date=/strategy=</strong><span>events/trades/outcomes v3</span></div>
+            <div class="arch-card"><strong>analytics/</strong><span>factor_report · exec</span></div>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 </div>
@@ -682,6 +1085,8 @@ if (tabsEl) {
     }
     document.getElementById('tab-overview').classList.toggle('hidden', tab !== 'overview');
     document.getElementById('tab-factors').classList.toggle('hidden', tab !== 'factors');
+    document.getElementById('tab-profiles').classList.toggle('hidden', tab !== 'profiles');
+    document.getElementById('tab-architecture').classList.toggle('hidden', tab !== 'architecture');
     activeTab = tab;
     if (tab === 'factors') {
       loadFactors();
@@ -995,6 +1400,21 @@ function renderFactorBuckets(strat) {
       '<td class="' + evCls(b.ev) + '">' + fmtSignedNum(b.ev, 3) + '</td>' +
       '<td class="' + evCls(b.ev20) + '">' + fmtSignedNum(b.ev20, 3) + '</td>';
     tb.appendChild(tr);
+    const wrPct = Math.max(0, Math.min(100, Number(b.wr || 0) * 100));
+    let wrCls = '';
+    if (wrPct > 50) wrCls = 'pos';
+    else if (wrPct < 45) wrCls = 'neg';
+
+    const trBar = document.createElement('tr');
+    trBar.className = 'wr-bar-row';
+    const tdBar = document.createElement('td');
+    tdBar.colSpan = 8;
+    const bar = document.createElement('div');
+    bar.className = 'wr-bar ' + wrCls;
+    bar.style.width = wrPct + '%';
+    tdBar.appendChild(bar);
+    trBar.appendChild(tdBar);
+    tb.appendChild(trBar);
   }
   t.appendChild(tb);
   wrap.appendChild(t);
