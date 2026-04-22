@@ -244,9 +244,10 @@ def get_risk_profile(
             )
             return profile, mult, mult
 
-        # - short_pump_mid: dist in [3.5,5), ctx in [0.4,0.6)
+        # - short_pump_mid: stage==3, dist in [3.5,5), ctx in [0.4,0.6)
         if (
-            dist_val is not None
+            stage_i == 3
+            and dist_val is not None
             and 3.5 <= dist_val < 5.0
             and ctx_val is not None
             and 0.4 <= ctx_val < 0.6
