@@ -80,6 +80,7 @@ _LIVE_PROFILE_WHITELIST = frozenset(
         "fast0_selective",
         "short_pump_premium_1R",
         "short_pump_wick_1R",
+        "short_pump_funding_1R",
     }
 )
 
@@ -670,6 +671,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 dist_to_peak_pct=getattr(signal, "dist_to_peak_pct", None),
                 liq_long_usd_30s=getattr(signal, "liq_long_usd_30s", None),
                 context_score=getattr(signal, "context_score", None),
+                funding_rate_abs=getattr(signal, "funding_rate_abs", None),
                 volume_1m=getattr(signal, "volume_1m", None),
                 event_id=str(getattr(signal, "event_id", "") or ""),
                 trade_id=str(getattr(signal, "trade_id", "") or ""),

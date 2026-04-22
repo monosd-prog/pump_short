@@ -102,6 +102,7 @@ def get_risk_profile(
     dist_to_peak_pct: Any = None,
     liq_long_usd_30s: Any = None,
     context_score: Any = None,
+    funding_rate_abs: Any = None,
     volume_1m: Any = None,
     *,
     event_id: str = "",
@@ -197,11 +198,33 @@ def get_risk_profile(
             ctx_val = float(context_score) if context_score is not None else None
         except (TypeError, ValueError):
             pass
+        fr_val = None
+        try:
+            fr_val = abs(float(funding_rate_abs)) if funding_rate_abs is not None else None
+        except (TypeError, ValueError):
+            pass
         liq_val = None
         try:
             liq_val = float(liq_long_usd_30s) if liq_long_usd_30s is not None else None
         except (TypeError, ValueError):
             pass
+
+        # New live submode: short_pump_funding_1R
+        # Condition: stage==3 and funding_rate_abs in [0.0005,0.001) OR [0.005,0.01)
+        if (
+            stage_i == 3
+            and fr_val is not None
+            and ((0.0005 <= fr_val < 0.001) or (0.005 <= fr_val < 0.01))
+        ):
+            profile = "short_pump_funding_1R"
+            mult = 1.0
+            logger.info(
+                "RISK_PROFILE | strategy=%s symbol=%s event_id=%s trade_id=%s funding_rate_abs=%.6f "
+                "selected_profile=%s risk_mult=%.1f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+                strategy, symbol, event_id, trade_id, fr_val, profile, mult,
+                LIVE_FIXED_NOTIONAL_USD, LIVE_LEVERAGE, LIVE_MARGIN_MODE,
+            )
+            return profile, mult, mult
 
         # New live submodes (ACTIVE-by-default in auto-risk-guard):
         # - short_pump_deep: dist in [7.5,10), ctx in [0.4,0.6), liqL30s==0
