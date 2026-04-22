@@ -89,6 +89,14 @@ def _load_trading_closes(base_dir: Path, days: int) -> pd.DataFrame:
     if df.empty or "ts_utc" not in df.columns:
         return df
     ts = pd.to_datetime(df["ts_utc"], utc=True, errors="coerce")
+    # Fallback for mixed timestamp formats that may coerce to NaT.
+    nat_mask = ts.isna()
+    if nat_mask.any():
+        ts2 = pd.to_datetime(
+            df.loc[nat_mask, "ts_utc"], format="mixed", utc=True, errors="coerce"
+        )
+        ts = ts.copy()
+        ts.loc[nat_mask] = ts2
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     df = df.loc[ts >= cutoff].copy()
     df["_ts_utc_parsed"] = ts.loc[df.index]
