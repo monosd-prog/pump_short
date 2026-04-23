@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from analytics.dashboard import build_dashboard_data
+from trading.live_config import load_live_config, set_live_profiles
 
 from short_pump import factor_cache
 from common.io_dataset import ensure_dataset_files, get_dataset_dir
@@ -160,6 +161,10 @@ class PumpEvent(BaseModel):
     extra: Optional[Dict[str, Any]] = None
 
 
+class LiveProfilesUpdate(BaseModel):
+    profiles: list[str]
+
+
 # REMOVED: bootstrap_force_symbols() - auto-tracking on startup disabled.
 # Tracking now starts ONLY via explicit triggers (/pump endpoint or manual scripts).
 # Previously used env vars: FORCE_SYMBOLS_BOOTSTRAP_ENABLED, FORCE_SYMBOLS_BOOTSTRAP, FORCE_SYMBOLS
@@ -291,6 +296,18 @@ async def dashboard_page(request: Request):
     return _dashboard_templates.TemplateResponse(
         "dashboard.html", {"request": request}
     )
+
+
+@app.get("/api/live-config")
+async def api_live_config():
+    return JSONResponse(load_live_config())
+
+
+@app.post("/api/live-config/profiles")
+async def api_live_config_profiles(payload: LiveProfilesUpdate):
+    profiles = list(payload.profiles or [])
+    set_live_profiles(profiles)
+    return JSONResponse({"ok": True, "profiles": profiles})
 
 
 @app.get("/api/dashboard/data")

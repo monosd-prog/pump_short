@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import os
 import pandas as pd
+from trading.live_config import get_live_profiles
 
 CORE_DECISION_WINDOW = 20  # мин. новых core сделок до решения по режиму при EV(20)<0
 
@@ -224,16 +225,8 @@ def _guard_state_str(guard_state: Optional[Dict[str, Any]], guard_key: str) -> O
     return (entry.get("current_state") or "").strip().upper() or None
 
 
-# Whitelist for Bybit live execution — must match trading/runner.py (allowed_live_profiles).
-ALLOWED_LIVE_PROFILES_FOR_REPORT = frozenset(
-    {
-        "fast0_selective",
-        "short_pump_premium_1R",
-        "short_pump_wick_1R",
-        "short_pump_mid",
-        "short_pump_funding_1R",
-    }
-)
+def _get_allowed_live_profiles_for_report() -> set:
+    return get_live_profiles()
 
 _LIVE_ELIGIBILITY_GUARD_KEYS: tuple[str, ...] = (
     "short_pump_mid",
@@ -287,7 +280,7 @@ def _live_eligibility_parts(
     """
     producers = _producer_strategies_for_guard_key(guard_key)
     strat_ok = bool(producers & strategies_set) if producers else False
-    wl_ok = guard_key in ALLOWED_LIVE_PROFILES_FOR_REPORT
+    wl_ok = guard_key in _get_allowed_live_profiles_for_report()
     gst = (guard_state_str or "").strip().upper()
     guard_active_ok = gst == "ACTIVE"
     final = strat_ok and wl_ok and guard_active_ok
@@ -924,7 +917,7 @@ def _render_autotrading_lifecycle_report(
             continue
         if (
             health >= 90
-            and gk not in ALLOWED_LIVE_PROFILES_FOR_REPORT
+            and gk not in _get_allowed_live_profiles_for_report()
             and strat_ok
             and gst == "ACTIVE"
         ):
@@ -997,7 +990,7 @@ def _render_autotrading_lifecycle_report(
     live_any = False
     for gk in _LIFECYCLE_GK_ORDER:
         _lb, gst, n_c, ev20, wr, mdd, pnl, _h = _mode_metrics(gk)
-        if gst != "ACTIVE" or gk not in ALLOWED_LIVE_PROFILES_FOR_REPORT:
+        if gst != "ACTIVE" or gk not in _get_allowed_live_profiles_for_report():
             continue
         live_any = True
         fs = _filter_summary_for_gk(gk, tg_dist_min)
@@ -1013,7 +1006,7 @@ def _render_autotrading_lifecycle_report(
     ready_any = False
     for gk in _LIFECYCLE_GK_ORDER:
         _lb, gst, n_c, ev20, wr, mdd, pnl, health = _mode_metrics(gk)
-        if gst != "ACTIVE" or gk in ALLOWED_LIVE_PROFILES_FOR_REPORT:
+        if gst != "ACTIVE" or gk in _get_allowed_live_profiles_for_report():
             continue
         ready_any = True
         fs = _filter_summary_for_gk(gk, tg_dist_min)

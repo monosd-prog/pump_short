@@ -374,6 +374,37 @@
       font-family: ui-monospace, monospace;
       line-height: 1.5;
     }
+    .profile-toggle {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .profile-toggle.live { background: #1a3a1a; color: #9be9a8; }
+    .profile-toggle.paper { background: #1a1a2e; color: #8b949e; }
+    .profile-toggle.disabled { background: #111; color: #444; cursor: default; }
+    .profile-toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      background: #1a3a1a;
+      color: #9be9a8;
+      border: 1px solid #2f6f3b;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(6px);
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .profile-toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
     /* Factors visual upgrades */
     .factors-best {
       border: 1px solid var(--border);
@@ -538,139 +569,10 @@
     <section>
       <h2>Профили</h2>
       <div class="profiles-section-label">short_pump</div>
-      <div class="profiles-grid">
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">fast0_selective</div>
-            <span class="profile-badge badge-live">live</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">27</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">48%</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.13</div></div>
-          </div>
-          <div class="profile-bar bar-pos" style="width:48%"></div>
-          <div class="profile-conditions">context_score [0.4,0.6) · cvd_delta [-0.5,0)</div>
-        </div>
-
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">short_pump_mid</div>
-            <span class="profile-badge badge-new">новый</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">9</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">55%</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.20</div></div>
-          </div>
-          <div class="profile-bar bar-pos" style="width:55%"></div>
-          <div class="profile-conditions">stage=3 · dist [3.5,5) · context [0.4,0.6)</div>
-        </div>
-
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">short_pump_funding_1R</div>
-            <span class="profile-badge badge-new">новый</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">—</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">—</div></div>
-            <div><div class="metric-label">exp. EV</div><div class="metric-value pos">+0.39*</div></div>
-          </div>
-          <div class="profile-bar bar-pos" style="width:63%"></div>
-          <div class="profile-conditions">stage=3 · funding [0.0005,0.001) OR [0.005,0.01)</div>
-        </div>
-
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">short_pump_wick_1R</div>
-            <span class="profile-badge badge-live">live</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">8</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">75%</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.65</div></div>
-          </div>
-          <div class="profile-bar bar-pos" style="width:75%"></div>
-          <div class="profile-conditions">short_pump_wick strategy · wick entry</div>
-        </div>
-
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">short_pump_premium_1R</div>
-            <span class="profile-badge badge-live">live</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">1</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">—</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value">—</div></div>
-          </div>
-          <div class="profile-bar" style="width:0%"></div>
-          <div class="profile-conditions">short_pump_premium · stage=4 · funding диапазон</div>
-        </div>
-
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">short_pump_active_1R</div>
-            <span class="profile-badge badge-off">отключён</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">90</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">40%</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value neg">-0.26</div></div>
-          </div>
-          <div class="profile-bar bar-neg" style="width:40%"></div>
-          <div class="profile-conditions">stage=4 · dist &gt;= 3.5 → отключён (EV -0.26)</div>
-        </div>
-
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">fast0_2R</div>
-            <span class="profile-badge badge-paper">paper</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">10</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">80%</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.65</div></div>
-          </div>
-          <div class="profile-bar bar-pos" style="width:80%"></div>
-          <div class="profile-conditions">fast0 entry · 2R target · paper only</div>
-        </div>
-
-        <div class="profile-card">
-          <div class="profile-head">
-            <div class="profile-name">fast0_1p5R</div>
-            <span class="profile-badge badge-paper">paper</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">24</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">58%</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value pos">+0.37</div></div>
-          </div>
-          <div class="profile-bar bar-pos" style="width:58%"></div>
-          <div class="profile-conditions">fast0 entry · 1.5R target · paper only</div>
-        </div>
-      </div>
+      <div class="profiles-grid" id="profiles-short-pump"></div>
 
       <div class="profiles-section-label">false_pump</div>
-      <div class="profiles-grid">
-        <div class="profile-card">
-          <div class="profile-head">
-            <div>
-              <div class="profile-name">false_pump</div>
-              <div class="profile-sub">ждём скринер</div>
-            </div>
-            <span class="profile-badge badge-paper">paper</span>
-          </div>
-          <div class="profile-metrics">
-            <div><div class="metric-label">сделок</div><div class="metric-value">0</div></div>
-            <div><div class="metric-label">WR</div><div class="metric-value">—</div></div>
-            <div><div class="metric-label">EV</div><div class="metric-value">—</div></div>
-          </div>
-          <div class="profile-bar" style="width:0%"></div>
-          <div class="profile-conditions">false pump детект · нет risk_profile · накапливаем данные</div>
-        </div>
-      </div>
+      <div class="profiles-grid" id="profiles-false-pump"></div>
     </section>
   </div>
 
@@ -746,8 +648,33 @@
   </div>
 </div>
 
+<div id="profileToast" class="profile-toast">Сохранено</div>
+
 <script>
 let chart = null;
+let profilesData = null;
+let profileSaveInFlight = false;
+let profileToastTimer = null;
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function showProfileToast(text = 'Сохранено') {
+  const toast = document.getElementById('profileToast');
+  if (!toast) return;
+  toast.textContent = text;
+  toast.classList.add('show');
+  if (profileToastTimer) clearTimeout(profileToastTimer);
+  profileToastTimer = setTimeout(() => {
+    toast.classList.remove('show');
+  }, 2000);
+}
 
 function fmtInt(n) {
   if (n === null || n === undefined) return '-';
@@ -876,26 +803,20 @@ function renderModeMatrix(rows) {
     let paperCls = r.has_paper ? 'mode-paper-yes' : 'mode-paper-no';
     let paperText = r.has_paper ? (fmtInt(r.paper_count) + ' trades') : '—';
     let liveCls = 'mode-live-off';
-    let liveText = '—';
-    if (r.has_live && r.in_whitelist) {
+    let liveText = r.live_display || '—';
+    if (r.in_whitelist) {
       liveCls = 'mode-live-on';
-      liveText = '✅ ' + fmtInt(r.live_count) + ' trades';
-    } else if (!r.has_live && r.in_whitelist) {
-      liveCls = 'mode-live-ready';
-      liveText = '⏳ в whitelist';
+      liveText = '✅ ' + liveText;
     } else if (r.has_live && !r.in_whitelist) {
       liveCls = 'mode-live-mismatch';
-      liveText = '⚠️ не в whitelist (' + fmtInt(r.live_count) + ')';
+      liveText = '⚠️ ' + liveText;
     }
 
     let statusCls = 'status-inactive';
     let statusLabel = '⚫ INACTIVE';
-    if (r.status === 'live_active') {
+    if (r.status === 'live') {
       statusCls = 'status-live-active';
       statusLabel = '🟢 LIVE';
-    } else if (r.status === 'live_ready') {
-      statusCls = 'status-live-ready';
-      statusLabel = '🟡 READY';
     } else if (r.status === 'paper_only') {
       statusCls = 'status-paper-only';
       statusLabel = '🔵 PAPER';
@@ -1030,6 +951,112 @@ function renderChart(timeline) {
     },
   });
 }
+function profileCardHtml(name, meta, liveSet) {
+  const strategy = escapeHtml(meta && meta.strategy ? meta.strategy : '—');
+  const conditions = escapeHtml(meta && meta.conditions ? meta.conditions : '—');
+  const status = String(meta && meta.status ? meta.status : '').toLowerCase();
+  const isFalsePump = name === 'false_pump';
+  const isLive = liveSet.has(name);
+
+  let toggleClass = 'paper';
+  let toggleText = '○ PAPER';
+  let disabledAttr = '';
+
+  if (isFalsePump || status === 'accumulating') {
+    toggleClass = 'disabled';
+    toggleText = 'накапливаем данные';
+    disabledAttr = ' disabled';
+  } else if (isLive) {
+    toggleClass = 'live';
+    toggleText = '● LIVE';
+  }
+
+  return '<div class="profile-card">' +
+    '<div class="profile-head">' +
+      '<div>' +
+        '<div class="profile-name">' + escapeHtml(name) + '</div>' +
+        '<div class="profile-sub">' + strategy + '</div>' +
+      '</div>' +
+      '<button class="profile-toggle ' + toggleClass + '" data-profile="' + escapeHtml(name) + '"' + disabledAttr +
+        ' onclick="toggleProfile(this.dataset.profile)">' +
+        toggleText +
+      '</button>' +
+    '</div>' +
+    '<div class="profile-conditions">' + conditions + '</div>' +
+  '</div>';
+}
+
+function renderProfiles(data) {
+  profilesData = data || {};
+  const liveProfiles = Array.isArray(profilesData.live_profiles) ? profilesData.live_profiles : [];
+  const profileMeta = profilesData.profile_meta || {};
+  const liveSet = new Set(liveProfiles);
+
+  const shortWrap = document.getElementById('profiles-short-pump');
+  const falseWrap = document.getElementById('profiles-false-pump');
+  if (!shortWrap || !falseWrap) return;
+
+  const shortParts = [];
+  let falseHtml = '';
+  for (const [name, meta] of Object.entries(profileMeta)) {
+    const card = profileCardHtml(name, meta || {}, liveSet);
+    if (name === 'false_pump') falseHtml = card;
+    else shortParts.push(card);
+  }
+
+  shortWrap.innerHTML = shortParts.length ? shortParts.join('') : '<div class="empty">No profiles</div>';
+  falseWrap.innerHTML = falseHtml || '<div class="empty">No false_pump profile</div>';
+}
+
+async function loadProfiles() {
+  const shortWrap = document.getElementById('profiles-short-pump');
+  const falseWrap = document.getElementById('profiles-false-pump');
+  if (shortWrap && falseWrap) {
+    shortWrap.innerHTML = '<div class="empty">loading…</div>';
+    falseWrap.innerHTML = '<div class="empty">loading…</div>';
+  }
+  try {
+    const r = await fetch('/api/live-config', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    renderProfiles(data);
+  } catch (e) {
+    if (shortWrap) shortWrap.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+    if (falseWrap) falseWrap.innerHTML = '';
+  }
+}
+
+async function toggleProfile(name) {
+  if (profileSaveInFlight || !profilesData) return;
+  if (name === 'false_pump') return;
+
+  const meta = (profilesData.profile_meta || {})[name] || {};
+  if (String(meta.status || '').toLowerCase() === 'accumulating') return;
+
+  const cur = new Set(Array.isArray(profilesData.live_profiles) ? profilesData.live_profiles : []);
+  if (cur.has(name)) cur.delete(name);
+  else cur.add(name);
+  const profiles = Array.from(cur);
+
+  profileSaveInFlight = true;
+  try {
+    const r = await fetch('/api/live-config/profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profiles }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const resp = await r.json();
+    profilesData.live_profiles = Array.isArray(resp.profiles) ? resp.profiles : profiles;
+    renderProfiles(profilesData);
+    showProfileToast('Сохранено');
+  } catch (e) {
+    showProfileToast('Ошибка сохранения');
+  } finally {
+    profileSaveInFlight = false;
+  }
+}
+
 async function loadData() {
   const days = document.getElementById('daysSel').value;
   const upd = document.getElementById('updated');
@@ -1090,6 +1117,8 @@ if (tabsEl) {
     activeTab = tab;
     if (tab === 'factors') {
       loadFactors();
+    } else if (tab === 'profiles') {
+      loadProfiles();
     } else {
       if (factorsRetryTimer) { clearTimeout(factorsRetryTimer); factorsRetryTimer = null; }
     }

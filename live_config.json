@@ -1,0 +1,46 @@
+{
+  "live_profiles": [
+    "fast0_selective",
+    "short_pump_mid",
+    "short_pump_funding_1R",
+    "short_pump_wick_1R",
+    "short_pump_premium_1R"
+  ],
+  "live_strategies": [
+    "short_pump_fast0",
+    "short_pump_fast0_filtered",
+    "short_pump_premium",
+    "short_pump_wick",
+    "short_pump"
+  ],
+  "paper_strategies": [
+    "false_pump"
+  ],
+  "profile_meta": {
+    "fast0_selective": {
+      "strategy": "short_pump_fast0",
+      "conditions": "context_score [0.4,0.6) · cvd_delta [-0.5,0)"
+    },
+    "short_pump_mid": {
+      "strategy": "short_pump",
+      "conditions": "stage=3 · dist [3.5,5) · context [0.4,0.6)"
+    },
+    "short_pump_funding_1R": {
+      "strategy": "short_pump",
+      "conditions": "stage=3 · funding [0.0005,0.001) OR [0.005,0.01)"
+    },
+    "short_pump_wick_1R": {
+      "strategy": "short_pump_wick",
+      "conditions": "stage=4 · dist >= 3.5"
+    },
+    "short_pump_premium_1R": {
+      "strategy": "short_pump_premium",
+      "conditions": "stage=4 · dist >= 3.5 · funding диапазон"
+    },
+    "false_pump": {
+      "strategy": "false_pump",
+      "conditions": "false pump детект · нет risk_profile · накапливаем данные",
+      "status": "accumulating"
+    }
+  }
+}
