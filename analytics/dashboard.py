@@ -490,7 +490,7 @@ def build_mode_matrix(
         "short_pump_fast0_filtered": {"fast0_selective", "fast0_2R", "fast0_1p5R", "fast0_base_1R"},
         "short_pump_premium": {"short_pump_premium_1R"},
         "short_pump_wick": {"short_pump_wick_1R"},
-        "false_pump": set(),
+        "false_pump": {"false_pump_1R"},
     }
     all_strats = set(close_strats) | set(strategy_profiles.keys())
     if "false_pump" in events_strats:
