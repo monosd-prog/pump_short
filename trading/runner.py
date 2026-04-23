@@ -483,6 +483,67 @@ def _fmt_opt(val: Optional[float | int], fmt: str = "%s") -> str:
         return str(val) if val is not None else "N/A"
 
 
+def _parse_opened_ts_to_dt(opened_ts: Any) -> Optional[datetime]:
+    if opened_ts is None:
+        return None
+    s = str(opened_ts).strip()
+    if not s:
+        return None
+    s = s.replace("Z", "+00:00").replace("+0000", "+00:00")
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%d %H:%M:%S%z",
+        "%Y-%m-%d %H:%M:%S",
+    ):
+        try:
+            dt = datetime.strptime(s, fmt)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except ValueError:
+            continue
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+def _log_stuck_live_positions() -> None:
+    """
+    Log live positions older than 24h for manual review only.
+    No auto-close, no state mutation.
+    """
+    state = load_state()
+    open_positions = state.get("open_positions") or {}
+    now_utc = datetime.now(timezone.utc)
+    for strategy, strat_positions in open_positions.items():
+        if not isinstance(strat_positions, dict):
+            continue
+        for trade_id, pos in strat_positions.items():
+            if not isinstance(pos, dict):
+                continue
+            mode = str(pos.get("mode") or "").strip().lower()
+            if mode != "live":
+                continue
+            opened_dt = _parse_opened_ts_to_dt(pos.get("opened_ts"))
+            if opened_dt is None:
+                continue
+            hours_open = (now_utc - opened_dt).total_seconds() / 3600.0
+            if hours_open > 24.0:
+                logger.warning(
+                    "STUCK_LIVE_POSITION | trade_id=%s symbol=%s strategy=%s risk_profile=%s hours_open=%.2f action=manual_review_required",
+                    str(trade_id),
+                    str(pos.get("symbol") or ""),
+                    str(strategy or pos.get("strategy") or ""),
+                    str(pos.get("risk_profile") or ""),
+                    float(hours_open),
+                )
+
+
 def _maybe_refresh_guard(base_dir: str) -> None:
     """
     Trigger a canonical guard refresh when a pending flag exists and the last
@@ -1006,6 +1067,10 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
         # Final persist of current canonical state
         save_state(state)
     finally:
+        try:
+            _log_stuck_live_positions()
+        except Exception:
+            logger.exception("STUCK_LIVE_POSITION_CHECK_FAILED")
         _finish_queue_processing(raw_lines)
 
 
