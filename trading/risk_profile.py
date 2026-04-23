@@ -340,6 +340,15 @@ def get_risk_profile(
         )
         return profile, mult, mult
 
+    if s == "false_pump":
+        profile = "false_pump_1R"
+        mult = 1.0
+        logger.info(
+            "RISK_PROFILE | strategy=%s symbol=%s profile=%s",
+            strategy, symbol, profile,
+        )
+        return profile, mult, mult
+
     return ("", 0.0, 0.0)
 
 

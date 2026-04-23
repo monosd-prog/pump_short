@@ -3,8 +3,7 @@
     "short_pump_mid",
     "short_pump_funding_1R",
     "short_pump_wick_1R",
-    "short_pump_premium_1R",
-    "fast0_selective"
+    "short_pump_premium_1R"
   ],
   "live_strategies": [
     "short_pump_fast0",
@@ -65,6 +64,15 @@
       "ev20": null,
       "wr": null,
       "trades": 0
+    },
+    "false_pump_1R": {
+      "strategy": "false_pump",
+      "conditions": "false pump детект · stage=4 · dist задан",
+      "ev": null,
+      "ev20": null,
+      "wr": null,
+      "trades": 0,
+      "status": "accumulating"
     },
     "fast0_2R": {
       "strategy": "short_pump_fast0",

@@ -1022,15 +1022,19 @@ function renderProfiles(data) {
   if (!shortWrap || !falseWrap) return;
 
   const shortParts = [];
-  let falseHtml = '';
+  const falseParts = [];
   for (const [name, meta] of Object.entries(profileMeta)) {
-    const card = profileCardHtml(name, meta || {}, liveSet);
-    if (name === 'false_pump') falseHtml = card;
-    else shortParts.push(card);
+    const safeMeta = meta || {};
+    const card = profileCardHtml(name, safeMeta, liveSet);
+    if (String(safeMeta.strategy || '').trim() === 'false_pump') {
+      falseParts.push(card);
+    } else {
+      shortParts.push(card);
+    }
   }
 
   shortWrap.innerHTML = shortParts.length ? shortParts.join('') : '<div class="empty">No profiles</div>';
-  falseWrap.innerHTML = falseHtml || '<div class="empty">No false_pump profile</div>';
+  falseWrap.innerHTML = falseParts.length ? falseParts.join('') : '<div class="empty">No false_pump profile</div>';
 }
 
 async function loadProfiles() {
