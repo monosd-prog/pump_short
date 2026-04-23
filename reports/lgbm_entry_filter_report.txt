@@ -1,20 +1,19 @@
 LGBM ENTRY FILTER v1
-trained_at_utc=2026-03-18T21:14:58.832030+00:00
-strategies=short_pump,short_pump_fast0 mode=paper days=40
-rows=46 train=34 valid=12
-AUC_valid=0.5000
+trained_at_utc=2026-04-23T09:17:48.779599+00:00
+strategies=short_pump mode=live days=60
+rows=581 train=328 valid=110
+AUC_valid=0.5479
 
 Top-10 feature importance (gain):
-  - dist_to_peak_pct: 0
+  - dist_to_peak_pct: 18.09
+  - cvd_delta_ratio_30s: 14.76
+  - oi_change_fast_pct: 9.408
+  - funding_rate_abs: 6.355
   - context_score: 0
+  - cvd_delta_ratio_1m: 0
   - liq_long_usd_30s: 0
   - liq_short_usd_30s: 0
-  - funding_rate_abs: 0
-  - oi_change_1m_pct: 0
-  - oi_change_5m_pct: 0
-  - delta_ratio_30s: 0
-  - delta_ratio_1m: 0
-  - volume_1m: 0
+  - stage: 0
 
 Score buckets (valid):
   - gt_0_6: n=0 wr=0.000 mean_score=0.000

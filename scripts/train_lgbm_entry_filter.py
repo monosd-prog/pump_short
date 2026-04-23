@@ -167,7 +167,18 @@ def main() -> None:
         default=0.7,
         help="Max allowed NaN fraction per row across selected features (MVP: 0.7).",
     )
+    ap.add_argument(
+        "--features",
+        type=str,
+        default=None,
+        help="comma-separated feature names to use instead of FEATURES constant",
+    )
     args = ap.parse_args()
+
+    if args.features:
+        features_to_use = [f.strip() for f in args.features.split(",") if f.strip()]
+    else:
+        features_to_use = FEATURES
 
     base_dir = Path(args.data_dir)
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
@@ -207,7 +218,7 @@ def main() -> None:
     print(f"[ML_TRAIN] rows_tpsl={rows_tpsl} (TP_hit/SL_hit only)")
 
     # Keep only numeric features
-    feat_present = [f for f in FEATURES if f in df.columns]
+    feat_present = [f for f in features_to_use if f in df.columns]
     print(f"[ML_TRAIN] features_present ({len(feat_present)}): {feat_present}")
     X_raw = df[feat_present].copy()
     X, med = _impute_median(X_raw, feat_present)
