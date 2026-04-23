@@ -14,7 +14,11 @@ from common.io_dataset import write_event_row, write_outcome_row, write_trade_ro
 from common.market_features import liquidation_features
 from common.outcome_tracker import build_outcome_row
 from common.runtime import wall_time_utc
-from notifications.tg_format import build_short_pump_signal, format_false_pump_entry
+from notifications.tg_format import (
+    build_short_pump_signal,
+    format_false_pump_entry,
+    format_false_pump_timeout,
+)
 from short_pump.bybit_api import (
     get_funding_rate,
     get_klines_1m,
@@ -439,6 +443,18 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
         funding_at_signal: float | None = None
         monitor_entry_price: float | None = None
         monitor_last_price: float | None = None
+        last_funding_rate: float | None = None
+        last_dist_to_peak_pct: float | None = None
+        last_context_score: float | None = None
+        last_oi_change_pct: float | None = None
+        last_pump_price_pct: float | None = None
+        last_stage: int | None = None
+        last_pump_detected: bool | None = None
+        last_oi_weak: bool | None = None
+        last_near_top: bool | None = None
+        last_delta_ok: bool | None = None
+        last_no_new_high: bool | None = None
+        last_liq_present: bool | None = None
 
         while (time.time() - started) < int(cfg.monitor_timeout_sec):
             if not first_tick:
@@ -530,12 +546,32 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
 
                 flags_dict = details.get("flags", {}) if details else {}
                 observed_price = float(details.get("price") or 0.0) if details else 0.0
+                last_funding_rate = funding_rate
+                last_dist_to_peak_pct = (
+                    float(details.get("dist_to_peak_pct"))
+                    if details and details.get("dist_to_peak_pct") is not None
+                    else None
+                )
+                last_context_score = (
+                    float(details.get("context_score"))
+                    if details and details.get("context_score") is not None
+                    else None
+                )
+                last_oi_change_pct = float(details.get("oi_change_pct") or 0.0) if details else None
+                last_pump_price_pct = float(details.get("pump_price_pct") or 0.0) if details else None
+                last_stage = int(details.get("stage")) if details and details.get("stage") is not None else None
+                last_pump_detected = bool(flags_dict.get("pump_detected")) if flags_dict else None
+                last_oi_weak = bool(flags_dict.get("oi_weak")) if flags_dict else None
+                last_near_top = bool(flags_dict.get("near_top")) if flags_dict else None
+                last_delta_ok = bool(flags_dict.get("delta_ok")) if flags_dict else None
                 if observed_price > 0:
                     if monitor_entry_price is None:
                         monitor_entry_price = observed_price
                     monitor_last_price = observed_price
                 pump_pct_val = float(details.get("pump_price_pct", 0.0)) if details else 0.0
                 oi_chg_val = float(details.get("oi_change_pct", 0.0)) if details else 0.0
+                last_no_new_high = bool(flags_dict.get("no_new_high")) if flags_dict else None
+                last_liq_present = bool(flags_dict.get("liq_present")) if flags_dict else None
                 logger.info(
                     f"[false_pump.watcher] TICK {symbol} "
                     f"signal_ok={signal_ok} "
@@ -743,11 +779,21 @@ async def run_watcher(signal: dict, cfg: FalsePumpConfig, queue) -> None:
             timeout_event_id = f"timeout_{symbol}_{int(time.time())}"
             if TG_BOT_TOKEN and TG_CHAT_ID:
                 try:
-                    text = (
-                        f"⏱ false_pump | МОНИТОРИНГ ЗАВЕРШЁН (таймаут)\n"
-                        f"sym={symbol}\n"
-                        f"Лже-памп не обнаружен за {int(cfg.monitor_timeout_sec / 3600)}ч\n"
-                        f"#false_pump #TIMEOUT"
+                    text = format_false_pump_timeout(
+                        symbol=symbol,
+                        hours=float(cfg.monitor_timeout_sec) / 3600.0,
+                        funding_rate=last_funding_rate,
+                        dist_to_peak_pct=last_dist_to_peak_pct,
+                        context_score=last_context_score,
+                        oi_change_pct=last_oi_change_pct,
+                        pump_price_pct=last_pump_price_pct,
+                        stage=last_stage,
+                        pump_detected=last_pump_detected,
+                        oi_weak=last_oi_weak,
+                        near_top=last_near_top,
+                        delta_ok=last_delta_ok,
+                        no_new_high=last_no_new_high,
+                        liq_present=last_liq_present,
                     )
                     send_telegram(
                         text,

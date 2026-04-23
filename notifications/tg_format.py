@@ -420,6 +420,77 @@ def format_tpsl_failed_closed_message(
     return "\n".join(lines)
 
 
+def _fmt_timeout_num(
+    val: Any,
+    *,
+    digits: int = 2,
+    signed: bool = False,
+    suffix: str = "",
+    empty: str = "—",
+) -> str:
+    if val is None or val == "":
+        return empty
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return empty
+    sign = "+" if signed and f >= 0 else ""
+    return f"{sign}{f:.{digits}f}{suffix}"
+
+
+def _fmt_timeout_flag(val: Any, empty: str = "—") -> str:
+    if val is None or val == "":
+        return empty
+    if isinstance(val, bool):
+        return "True" if val else "False"
+    return str(val)
+
+
+def format_false_pump_timeout(symbol: str, hours: float, **kwargs: Any) -> str:
+    """
+    Timeout message for false_pump watcher with latest indicator snapshot.
+    Missing values are rendered as "—".
+    """
+    funding_rate = kwargs.get("funding_rate")
+    dist_to_peak_pct = kwargs.get("dist_to_peak_pct")
+    context_score = kwargs.get("context_score")
+    oi_change_pct = kwargs.get("oi_change_pct")
+    pump_price_pct = kwargs.get("pump_price_pct")
+    stage = kwargs.get("stage")
+
+    pump_detected = kwargs.get("pump_detected")
+    oi_weak = kwargs.get("oi_weak")
+    near_top = kwargs.get("near_top")
+    delta_ok = kwargs.get("delta_ok")
+    no_new_high = kwargs.get("no_new_high")
+    liq_present = kwargs.get("liq_present")
+
+    lines = [
+        f"⏱ false_pump | ТАЙМАУТ | sym={symbol}",
+        f"Мониторинг {float(hours):.1f}ч — точка входа не найдена",
+        "",
+        "──────────────",
+        "📊 Последние индикаторы:",
+        f"funding: {_fmt_timeout_num(funding_rate, digits=4, signed=True)}",
+        f"dist_to_peak: {_fmt_timeout_num(dist_to_peak_pct, digits=1, suffix='%')}",
+        f"context_score: {_fmt_timeout_num(context_score, digits=2)}",
+        f"oi_change: {_fmt_timeout_num(oi_change_pct, digits=1, signed=True, suffix='%')}",
+        f"pump_pct: {_fmt_timeout_num(pump_price_pct, digits=1, signed=True, suffix='%')}",
+        f"stage: {_fmt_timeout_flag(stage)}",
+        "",
+        "🔍 Причины отказа:",
+        f"pump_detected: {_fmt_timeout_flag(pump_detected)}",
+        f"oi_weak: {_fmt_timeout_flag(oi_weak)}",
+        f"near_top: {_fmt_timeout_flag(near_top)}",
+        f"delta_ok: {_fmt_timeout_flag(delta_ok)}",
+        f"no_new_high: {_fmt_timeout_flag(no_new_high)}",
+        f"liq_present: {_fmt_timeout_flag(liq_present)}",
+        "──────────────",
+        "#false_pump #TIMEOUT #PAPER",
+    ]
+    return "\n".join(lines)
+
+
 def format_live_open_message(position: Dict[str, Any]) -> str:
     """
     Format LIVE_OPEN notification for a successfully opened live position.
