@@ -299,6 +299,9 @@
       position: relative;
       overflow: hidden;
     }
+    .profile-card.disabled {
+      opacity: 0.6;
+    }
     .profile-head {
       display: flex;
       justify-content: space-between;
@@ -326,9 +329,9 @@
     .badge-off { background: #3a1a1a; color: #ff9a8a; }
     .profile-metrics {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 8px;
-      margin-bottom: 10px;
+      margin-top: 8px;
     }
     .metric-label {
       color: var(--muted);
@@ -958,6 +961,20 @@ function profileCardHtml(name, meta, liveSet) {
   const isFalsePump = name === 'false_pump';
   const isLive = liveSet.has(name);
 
+  const tradesRaw = meta && Object.prototype.hasOwnProperty.call(meta, 'trades') ? meta.trades : null;
+  const wrRaw = meta && Object.prototype.hasOwnProperty.call(meta, 'wr') ? meta.wr : null;
+  const evRaw = meta && Object.prototype.hasOwnProperty.call(meta, 'ev') ? meta.ev : null;
+  const ev20Raw = meta && Object.prototype.hasOwnProperty.call(meta, 'ev20') ? meta.ev20 : null;
+
+  const trades = (tradesRaw === null || tradesRaw === undefined) ? '—' : String(tradesRaw);
+  const wr = (wrRaw === null || wrRaw === undefined) ? '—' : (Number(wrRaw) * 100).toFixed(1) + '%';
+  const ev = (evRaw === null || evRaw === undefined) ? '—' : Number(evRaw).toFixed(3);
+  const ev20 = (ev20Raw === null || ev20Raw === undefined) ? '—' : Number(ev20Raw).toFixed(3);
+
+  const wrClass = (wrRaw === null || wrRaw === undefined) ? '' : (Number(wrRaw) > 0.50 ? ' pos' : (Number(wrRaw) < 0.45 ? ' neg' : ''));
+  const evClass = (evRaw === null || evRaw === undefined) ? '' : (Number(evRaw) > 0 ? ' pos' : (Number(evRaw) < 0 ? ' neg' : ''));
+  const ev20Class = (ev20Raw === null || ev20Raw === undefined) ? '' : (Number(ev20Raw) > 0 ? ' pos' : (Number(ev20Raw) < 0 ? ' neg' : ''));
+
   let toggleClass = 'paper';
   let toggleText = '○ PAPER';
   let disabledAttr = '';
@@ -971,7 +988,9 @@ function profileCardHtml(name, meta, liveSet) {
     toggleText = '● LIVE';
   }
 
-  return '<div class="profile-card">' +
+  const cardClass = status === 'disabled' ? 'profile-card disabled' : 'profile-card';
+
+  return '<div class="' + cardClass + '">' +
     '<div class="profile-head">' +
       '<div>' +
         '<div class="profile-name">' + escapeHtml(name) + '</div>' +
@@ -983,6 +1002,12 @@ function profileCardHtml(name, meta, liveSet) {
       '</button>' +
     '</div>' +
     '<div class="profile-conditions">' + conditions + '</div>' +
+    '<div class="profile-metrics">' +
+      '<div><div class="metric-label">Trades</div><div class="metric-value">' + trades + '</div></div>' +
+      '<div><div class="metric-label">WR</div><div class="metric-value' + wrClass + '">' + wr + '</div></div>' +
+      '<div><div class="metric-label">EV</div><div class="metric-value' + evClass + '">' + ev + '</div></div>' +
+      '<div><div class="metric-label">EV20</div><div class="metric-value' + ev20Class + '">' + ev20 + '</div></div>' +
+    '</div>' +
   '</div>';
 }
 

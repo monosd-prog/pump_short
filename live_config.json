@@ -1,10 +1,10 @@
 {
   "live_profiles": [
-    "fast0_selective",
     "short_pump_mid",
     "short_pump_funding_1R",
     "short_pump_wick_1R",
-    "short_pump_premium_1R"
+    "short_pump_premium_1R",
+    "fast0_selective"
   ],
   "live_strategies": [
     "short_pump_fast0",
@@ -19,28 +19,77 @@
   "profile_meta": {
     "fast0_selective": {
       "strategy": "short_pump_fast0",
-      "conditions": "context_score [0.4,0.6) · cvd_delta [-0.5,0)"
+      "conditions": "context_score [0.4,0.6) · cvd_delta [-0.5,0)",
+      "ev": 0.128,
+      "ev20": -0.01,
+      "wr": 0.48,
+      "trades": 27
     },
     "short_pump_mid": {
       "strategy": "short_pump",
-      "conditions": "stage=3 · dist [3.5,5) · context [0.4,0.6)"
+      "conditions": "stage=3 · dist [3.5,5) · context [0.4,0.6)",
+      "ev": 0.2,
+      "ev20": 0.26,
+      "wr": 0.548,
+      "trades": 57
     },
     "short_pump_funding_1R": {
       "strategy": "short_pump",
-      "conditions": "stage=3 · funding [0.0005,0.001) OR [0.005,0.01)"
+      "conditions": "stage=3 · funding [0.0005,0.001) OR [0.005,0.01)",
+      "ev": 0.386,
+      "ev20": 0.21,
+      "wr": 0.632,
+      "trades": null
     },
     "short_pump_wick_1R": {
       "strategy": "short_pump_wick",
-      "conditions": "stage=4 · dist >= 3.5"
+      "conditions": "stage=4 · dist >= 3.5",
+      "ev": 0.65,
+      "ev20": 0.65,
+      "wr": 0.75,
+      "trades": 8
     },
     "short_pump_premium_1R": {
       "strategy": "short_pump_premium",
-      "conditions": "stage=4 · dist >= 3.5 · funding диапазон"
+      "conditions": "stage=4 · dist >= 3.5 · funding диапазон",
+      "ev": 0.1,
+      "ev20": 0.1,
+      "wr": 0.5,
+      "trades": 6
     },
     "false_pump": {
       "strategy": "false_pump",
       "conditions": "false pump детект · нет risk_profile · накапливаем данные",
-      "status": "accumulating"
+      "status": "accumulating",
+      "ev": null,
+      "ev20": null,
+      "wr": null,
+      "trades": 0
+    },
+    "fast0_2R": {
+      "strategy": "short_pump_fast0",
+      "conditions": "fast0 entry · 2R target · paper only",
+      "ev": 0.653,
+      "ev20": null,
+      "wr": 0.8,
+      "trades": 10
+    },
+    "fast0_1p5R": {
+      "strategy": "short_pump_fast0",
+      "conditions": "fast0 entry · 1.5R target · paper only",
+      "ev": 0.374,
+      "ev20": null,
+      "wr": 0.583,
+      "trades": 24
+    },
+    "short_pump_active_1R": {
+      "strategy": "short_pump",
+      "conditions": "stage=4 · dist >= 3.5 → отключён (EV -0.26)",
+      "ev": -0.258,
+      "ev20": -0.4,
+      "wr": 0.397,
+      "trades": 90,
+      "status": "disabled"
     }
   }
 }
