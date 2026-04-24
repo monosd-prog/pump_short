@@ -32,7 +32,7 @@ from short_pump.telegram import TG_BOT_TOKEN, TG_CHAT_ID, send_telegram
 from short_pump.liquidations import get_liq_stats, get_liq_stats_usd
 from trading.paper_outcome import close_from_outcome
 from trading.queue import enqueue_signal
-from trading.state import make_position_id
+from trading.state import load_state, make_position_id
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +191,25 @@ async def _track_false_pump_outcome(
     mae_pct = 0.0
     last_close: float | None = None
     entry_ms = int(entry_ts_utc.timestamp() * 1000)
+    # Wait until runner persists the opened paper position into trading_state.
+    # Runner ticks every ~10s; give extra headroom to avoid CLOSE_SKIP race.
+    _OPEN_WAIT_SEC = 15
+    time.sleep(_OPEN_WAIT_SEC)
+
+    state = load_state()
+    pid = make_position_id("false_pump", run_id_fp, str(event_id), symbol)
+    pos = (
+        (state.get("open_positions") or {})
+        .get("false_pump", {})
+        .get(pid)
+    )
+    if not pos:
+        logger.warning(
+            "FALSE_PUMP_OPEN_NOT_FOUND | pid=%s symbol=%s - "
+            "position not in state after %ds wait, skipping outcome tracking",
+            pid, symbol, _OPEN_WAIT_SEC,
+        )
+        return
 
     try:
         while time.time() < deadline_ts:
