@@ -437,6 +437,26 @@
     }
     .wr-bar.pos { background: #1D9E75; }
     .wr-bar.neg { background: #E24B4A; }
+    .pipeline-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .dot-green { background: var(--green); }
+    .dot-red { background: var(--red); }
+    .dot-yellow { background: var(--yellow); }
+    .dot-blue { background: var(--accent); }
+    .dot-gray { background: var(--muted); }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
   </style>
 </head>
 <body>
@@ -462,6 +482,7 @@
     <button data-tab="factors">Factors</button>
     <button data-tab="profiles">Профили</button>
     <button data-tab="architecture">Архитектура</button>
+    <button data-tab="pipeline">Pipeline</button>
   </div>
 
   <div id="tab-overview">
@@ -579,6 +600,26 @@
     </section>
   </div>
 
+  <div id="tab-pipeline" class="hidden">
+    <section>
+      <h2>Pipeline Health</h2>
+      <div class="cards" id="pipelineHealthCards"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>Event Stream</h2>
+        <button id="pipelineRefreshBtn">Refresh</button>
+      </div>
+      <div id="pipelineEventsTable"></div>
+    </section>
+
+    <section>
+      <h2>Pipeline Health Per Strategy</h2>
+      <div id="pipelineStrategyHealth"></div>
+    </section>
+  </div>
+
   <div id="tab-architecture" class="hidden">
     <section>
       <h2>Architecture Flow</h2>
@@ -658,6 +699,8 @@ let chart = null;
 let profilesData = null;
 let profileSaveInFlight = false;
 let profileToastTimer = null;
+let pipelineTimer = null;
+let lastDashboardData = null;
 
 function escapeHtml(s) {
   return String(s || '')
@@ -1011,6 +1054,157 @@ function profileCardHtml(name, meta, liveSet) {
   '</div>';
 }
 
+function pipelineDotClass(evt) {
+  const type = String(evt.type || '').toUpperCase();
+  const result = String(evt.result || '').toUpperCase();
+  if (type === 'OUTCOME') {
+    if (result === 'TP_HIT' || result === 'TP') return 'dot-green';
+    if (result === 'SL_HIT' || result === 'SL') return 'dot-red';
+    if (result === 'TIMEOUT') return 'dot-yellow';
+    return 'dot-gray';
+  }
+  if (type === 'ENTRY') return 'dot-blue';
+  if (type === 'SIGNAL') return 'dot-gray';
+  return 'dot-gray';
+}
+
+function renderPipelineHealth(funnelRows, modeRows) {
+  const container = document.getElementById('pipelineHealthCards');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const rows = Array.isArray(funnelRows) ? funnelRows : [];
+  const totals = rows.find(r => r.strategy === 'TOTAL') || null;
+  const sigEntry = totals ? totals.sig_to_entry_pct : null;
+  const entryOut = totals ? totals.entry_to_outcome_pct : null;
+
+  let live = 0;
+  let paper = 0;
+  for (const r of (Array.isArray(modeRows) ? modeRows : [])) {
+    live += Number(r.live_count || 0);
+    paper += Number(r.paper_count || 0);
+  }
+  const ratio = (live + paper) > 0 ? (live / (live + paper)) * 100 : null;
+
+  const cards = [
+    { label: 'Signal→Entry rate', value: fmtPct(sigEntry) },
+    { label: 'Entry→Outcome rate', value: fmtPct(entryOut) },
+    { label: 'Live vs Paper ratio', value: ratio === null ? '-' : (ratio.toFixed(1) + '% live') },
+  ];
+  for (const c of cards) {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = '<div class="big">' + c.value + '</div><div class="label">' + c.label + '</div>';
+    container.appendChild(div);
+  }
+}
+
+function renderPipelineEvents(events) {
+  const container = document.getElementById('pipelineEventsTable');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!events || !events.length) {
+    container.innerHTML = '<div class="empty">No events</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Time</th><th>Type</th><th>Strategy</th><th>Symbol</th><th>Mode</th><th>Result</th><th>Detail</th>' +
+    '</tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const e of events) {
+    const tr = document.createElement('tr');
+    const dot = '<span class="pipeline-dot ' + pipelineDotClass(e) + '"></span>';
+    tr.innerHTML =
+      '<td>' + escapeHtml(e.ts || '-') + '</td>' +
+      '<td>' + dot + escapeHtml((e.type || '').toUpperCase()) + '</td>' +
+      '<td class="strategy-name">' + escapeHtml(e.strategy || '-') + '</td>' +
+      '<td class="strategy-name">' + escapeHtml(e.symbol || '-') + '</td>' +
+      '<td>' + escapeHtml(e.mode || '-') + '</td>' +
+      '<td>' + escapeHtml(e.result || '-') + '</td>' +
+      '<td style="text-align:left">' + escapeHtml(e.detail || '-') + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
+
+function renderPipelineStrategyHealth(funnelRows, latencyRows) {
+  const container = document.getElementById('pipelineStrategyHealth');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const fRows = (Array.isArray(funnelRows) ? funnelRows : []).filter(r => r.strategy !== 'TOTAL');
+  const lRows = Array.isArray(latencyRows) ? latencyRows : [];
+  if (!fRows.length) {
+    container.innerHTML = '<div class="empty">No data</div>';
+    return;
+  }
+
+  const latencyMap = new Map();
+  for (const r of lRows) {
+    latencyMap.set(r.strategy, r);
+  }
+
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Strategy</th><th>Sig→Entry</th><th>Entry→Out</th><th>Avg latency</th>' +
+    '</tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const r of fRows) {
+    const l = latencyMap.get(r.strategy) || {};
+    const lat = l.entry_to_outcome_min === null || l.entry_to_outcome_min === undefined
+      ? '-'
+      : (Number(l.entry_to_outcome_min).toFixed(2) + 'm');
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td class="strategy-name">' + escapeHtml(r.strategy) + '</td>' +
+      '<td>' + fmtPct(r.sig_to_entry_pct) + '</td>' +
+      '<td>' + fmtPct(r.entry_to_outcome_pct) + '</td>' +
+      '<td>' + lat + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  container.appendChild(t);
+}
+
+async function loadPipeline() {
+  try {
+    const days = document.getElementById('daysSel').value;
+    if (!lastDashboardData) {
+      const baseResp = await fetch('/api/dashboard/data?days=' + encodeURIComponent(days), { cache: 'no-store' });
+      if (baseResp.ok) {
+        lastDashboardData = await baseResp.json();
+      }
+    }
+    const resp = await fetch('/api/pipeline/events?limit=20', { cache: 'no-store' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const payload = await resp.json();
+
+    const base = lastDashboardData || {};
+    renderPipelineHealth(base.funnel || [], base.mode_matrix || []);
+    renderPipelineStrategyHealth(base.funnel || [], base.latency || []);
+    renderPipelineEvents(payload.events || []);
+  } catch (e) {
+    const container = document.getElementById('pipelineEventsTable');
+    if (container) container.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function startPipelineAutoRefresh() {
+  stopPipelineAutoRefresh();
+  pipelineTimer = setInterval(() => {
+    if (activeTab === 'pipeline') loadPipeline();
+  }, 30000);
+}
+
+function stopPipelineAutoRefresh() {
+  if (pipelineTimer) {
+    clearInterval(pipelineTimer);
+    pipelineTimer = null;
+  }
+}
+
 function renderProfiles(data) {
   profilesData = data || {};
   const liveProfiles = Array.isArray(profilesData.live_profiles) ? profilesData.live_profiles : [];
@@ -1095,6 +1289,7 @@ async function loadData() {
                           { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
+    lastDashboardData = data;
     renderCards(data.summary || {});
     renderFunnel(data.funnel || []);
     renderModeMatrix(data.mode_matrix || []);
@@ -1115,7 +1310,12 @@ document.getElementById('refreshBtn').addEventListener('click', () => {
 document.getElementById('daysSel').addEventListener('change', () => {
   loadData();
   if (activeTab === 'factors') loadFactors();
+  if (activeTab === 'pipeline') loadPipeline();
 });
+const pipelineRefreshBtn = document.getElementById('pipelineRefreshBtn');
+if (pipelineRefreshBtn) {
+  pipelineRefreshBtn.addEventListener('click', () => loadPipeline());
+}
 loadData();
 setInterval(loadData, 60000);
 
@@ -1143,12 +1343,19 @@ if (tabsEl) {
     document.getElementById('tab-factors').classList.toggle('hidden', tab !== 'factors');
     document.getElementById('tab-profiles').classList.toggle('hidden', tab !== 'profiles');
     document.getElementById('tab-architecture').classList.toggle('hidden', tab !== 'architecture');
+    document.getElementById('tab-pipeline').classList.toggle('hidden', tab !== 'pipeline');
     activeTab = tab;
     if (tab === 'factors') {
       loadFactors();
+      stopPipelineAutoRefresh();
     } else if (tab === 'profiles') {
       loadProfiles();
+      stopPipelineAutoRefresh();
+    } else if (tab === 'pipeline') {
+      loadPipeline();
+      startPipelineAutoRefresh();
     } else {
+      stopPipelineAutoRefresh();
       if (factorsRetryTimer) { clearTimeout(factorsRetryTimer); factorsRetryTimer = null; }
     }
   });

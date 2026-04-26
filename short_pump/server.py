@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import csv
+import json
 import threading
 import time
 from datetime import datetime, timezone
@@ -151,6 +153,121 @@ def _cleanup_short(now: float) -> None:
 
 def _to_utc_iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_event_ts(value: str) -> datetime:
+    s = (value or "").strip()
+    if not s:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    s = s.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _event_ts_iso(value: str) -> str:
+    dt = _parse_event_ts(value)
+    return dt.replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _safe_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pipeline_events_from_closes(limit: int) -> list[dict[str, Any]]:
+    path = Path(get_dataset_dir()) / "trading_closes.csv"
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+    except Exception:
+        return []
+
+    for row in rows[-limit:]:
+        strategy = row.get("strategy") or ""
+        symbol = row.get("symbol") or ""
+        risk_profile = row.get("risk_profile") or ""
+        mode = (row.get("mode") or "paper").strip().lower() or "paper"
+
+        entry_ts_raw = row.get("entry_time_utc") or row.get("opened_ts") or ""
+        if entry_ts_raw:
+            events.append(
+                {
+                    "ts": _event_ts_iso(entry_ts_raw),
+                    "type": "ENTRY",
+                    "strategy": strategy,
+                    "symbol": symbol,
+                    "risk_profile": risk_profile,
+                    "mode": mode,
+                    "result": None,
+                    "pnl_r": None,
+                    "detail": "Entry opened",
+                }
+            )
+
+        outcome_ts_raw = row.get("ts_utc") or row.get("outcome_time_utc") or ""
+        result = row.get("outcome") or ""
+        pnl_r = _safe_float(row.get("pnl_r"))
+        detail = f"R {pnl_r:+.2f}" if pnl_r is not None else (f"Outcome {result}" if result else "Outcome")
+        events.append(
+            {
+                "ts": _event_ts_iso(outcome_ts_raw),
+                "type": "OUTCOME",
+                "strategy": strategy,
+                "symbol": symbol,
+                "risk_profile": risk_profile,
+                "mode": mode,
+                "result": result,
+                "pnl_r": pnl_r,
+                "detail": detail,
+            }
+        )
+    return events
+
+
+def _pipeline_events_from_signals(limit: int) -> list[dict[str, Any]]:
+    path = Path(get_dataset_dir()) / "signals_queue.jsonl.processed"
+    if not path.exists():
+        return []
+    events: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return []
+
+    for line in lines[-limit:]:
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        ts_raw = str(payload.get("ts_utc") or payload.get("time_utc") or "")
+        events.append(
+            {
+                "ts": _event_ts_iso(ts_raw),
+                "type": "SIGNAL",
+                "strategy": str(payload.get("strategy") or ""),
+                "symbol": str(payload.get("symbol") or ""),
+                "risk_profile": str(payload.get("risk_profile") or payload.get("profile") or ""),
+                "mode": str(payload.get("mode") or "paper").strip().lower() or "paper",
+                "result": None,
+                "pnl_r": None,
+                "detail": "Signal queued",
+            }
+        )
+    return events
 
 
 class PumpEvent(BaseModel):
@@ -341,6 +458,24 @@ async def dashboard_data(days: int = 7):
             "active_positions": {"short": [], "fast0": []},
         }
     return JSONResponse(payload)
+
+
+@app.get("/api/pipeline/events")
+async def pipeline_events(limit: int = 20):
+    try:
+        n = max(1, min(int(limit), 200))
+    except Exception:
+        n = 20
+
+    events: list[dict[str, Any]] = []
+    events.extend(_pipeline_events_from_closes(n))
+    events.extend(_pipeline_events_from_signals(n))
+    events.sort(
+        key=lambda e: _parse_event_ts(str(e.get("ts") or "")).timestamp(),
+        reverse=True,
+    )
+    trimmed = events[:n]
+    return JSONResponse({"events": trimmed, "count": len(trimmed)})
 
 
 @app.get("/api/dashboard/factors")
