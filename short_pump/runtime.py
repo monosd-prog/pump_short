@@ -100,28 +100,29 @@ class Runtime:
                 log_exception(logger, "Failed to parse pump_pct", symbol=symbol, step="FILTER", extra={"pump_pct": pump_pct})
                 pp = None
 
-            if pp is not None and pp < self.cfg.min_pump_pct:
-                return {
-                    "status": "ignored",
-                    "reason": "pump_pct_too_small",
-                    "symbol": symbol,
-                    "pump_pct": pp,
-                }
+            # pump_pct filter disabled - accept any pump size
+            # if pp is not None and pp < self.cfg.min_pump_pct:
+            #     return {
+            #         "status": "ignored",
+            #         "reason": "pump_pct_too_small",
+            #         "symbol": symbol,
+            #         "pump_pct": pp,
+            #     }
 
-        # REQUIRE_10M_WINDOW
-        if self.cfg.require_10m_window:
-            e = extra or {}
-            tf = str(e.get("tf", "")).lower()
-            win = e.get("window_minutes")
-
-            ok_10m = False
-            if tf in ("10m", "10min", "10"):
-                ok_10m = True
-            if isinstance(win, (int, float)) and int(win) == 10:
-                ok_10m = True
-
-            if not ok_10m:
-                return {"status": "ignored", "reason": "not_10m_window", "symbol": symbol}
+        # REQUIRE_10M_WINDOW filter disabled
+        # if self.cfg.require_10m_window:
+        #     e = extra or {}
+        #     tf = str(e.get("tf", "")).lower()
+        #     win = e.get("window_minutes")
+        #
+        #     ok_10m = False
+        #     if tf in ("10m", "10min", "10"):
+        #         ok_10m = True
+        #     if isinstance(win, (int, float)) and int(win) == 10:
+        #         ok_10m = True
+        #
+        #     if not ok_10m:
+        #         return {"status": "ignored", "reason": "not_10m_window", "symbol": symbol}
 
         return None
 
