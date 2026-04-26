@@ -70,7 +70,7 @@ class Runtime:
     def _validate_symbol(self, symbol: str) -> str:
         s = symbol.strip().upper()
         if not s.endswith("USDT"):
-            raise HTTPException(status_code=400, detail="symbol must be XXXUSDT")
+            s = s + "USDT"
         return s
 
     def apply_filters(
