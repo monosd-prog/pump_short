@@ -3,7 +3,8 @@
     "short_pump_mid",
     "short_pump_funding_1R",
     "short_pump_wick_1R",
-    "short_pump_premium_1R"
+    "short_pump_premium_1R",
+    "fast0_selective"
   ],
   "live_strategies": [
     "short_pump_fast0",
