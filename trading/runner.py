@@ -52,6 +52,7 @@ from trading.config import (
 from trading.broker import get_broker
 from trading.auto_risk_guard import is_entry_allowed_for_signal
 from trading.risk_profile import get_risk_profile
+from trading.live_config import get_live_profiles
 from trading.risk import (
     calc_position_size,
     calc_risk_usd,
@@ -84,6 +85,10 @@ _LIVE_PROFILE_WHITELIST = frozenset(
         "short_pump_funding_1R",
     }
 )
+
+
+def _get_live_whitelist() -> set:
+    return get_live_profiles()
 
 
 def _ensure_dir(path: str) -> None:
@@ -747,7 +752,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                 )
 
         # Shared queue protection: paper runner must not consume live-eligible signals.
-        if EXECUTION_MODE == "paper" and risk_profile_name in _LIVE_PROFILE_WHITELIST:
+        if EXECUTION_MODE == "paper" and risk_profile_name in _get_live_whitelist():
             deferred = _find_raw_line_for_signal(raw_lines, signal)
             if deferred:
                 _requeue_signal_line(deferred)
@@ -871,7 +876,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
 
         # LIVE PROFILE WHITELIST: only allow explicitly approved profiles in live mode
         if EXECUTION_MODE == "live":
-            if risk_profile_name in _LIVE_PROFILE_WHITELIST:
+            if risk_profile_name in _get_live_whitelist():
                 logger.info(
                     "LIVE_PROFILE_ALLOWED | risk_profile=%s strategy=%s symbol=%s",
                     risk_profile_name, signal.strategy, signal.symbol,
@@ -884,7 +889,7 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
                     str(signal.event_id or ""),
                     risk_profile_name,
                 )
-            if risk_profile_name not in _LIVE_PROFILE_WHITELIST:
+            if risk_profile_name not in _get_live_whitelist():
                 logger.info(
                     "LIVE_PROFILE_POLICY_BLOCK | strategy=%s symbol=%s run_id=%s profile=%s reason=not_in_live_whitelist",
                     signal.strategy, signal.symbol, signal.run_id or "", risk_profile_name,
