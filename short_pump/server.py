@@ -184,7 +184,7 @@ def _safe_float(value: Any) -> float | None:
 
 
 def _pipeline_events_from_closes(limit: int) -> list[dict[str, Any]]:
-    path = Path(get_dataset_dir()) / "trading_closes.csv"
+    path = Path(DATASETS_ROOT) / "trading_closes.csv"
     if not path.exists():
         return []
     events: list[dict[str, Any]] = []
@@ -237,7 +237,7 @@ def _pipeline_events_from_closes(limit: int) -> list[dict[str, Any]]:
 
 
 def _pipeline_events_from_signals(limit: int) -> list[dict[str, Any]]:
-    path = Path(get_dataset_dir()) / "signals_queue.jsonl.processed"
+    path = Path(DATASETS_ROOT) / "signals_queue.jsonl.processed"
     if not path.exists():
         return []
     events: list[dict[str, Any]] = []
