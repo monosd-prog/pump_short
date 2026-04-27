@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from analytics.dashboard import build_dashboard_data
-from trading.live_config import load_live_config, set_profile_status
+from trading.live_config import get_live_profiles, load_live_config, set_profile_status
 
 from short_pump import factor_cache
 from common.io_dataset import ensure_dataset_files, get_dataset_dir
@@ -56,8 +56,14 @@ def _fast0_filtered_enabled() -> bool:
 
 
 def _current_exec_mode() -> str:
-    mode = (os.getenv("EXECUTION_MODE") or os.getenv("AUTO_TRADING_MODE") or "paper").strip().lower()
-    return mode if mode in ("paper", "live") else "paper"
+    # Если есть хотя бы один live профиль — режим live
+    try:
+        live_profiles = get_live_profiles()
+        if live_profiles:
+            return "live"
+    except Exception:
+        pass
+    return "paper"
 
 
 def _enabled_strategies() -> list[str]:
