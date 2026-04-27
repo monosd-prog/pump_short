@@ -21,10 +21,16 @@ async def handle_oi_signal(request) -> web.Response:
 
     logger.info(f"[false_pump.webhook] received signal: {payload}")
     symbol = str(payload.get("symbol", "")).strip().upper()
+    if not symbol.endswith("USDT"):
+        symbol = symbol + "USDT"
     direction = str(payload.get("direction", "")).strip().upper()
     try:
-        oi_change_pct = float(payload.get("oi_change_pct", 0.0))
-        price_change_pct = float(payload.get("price_change_pct", 0.0))
+        oi_change_pct = float(
+            payload.get("oi_change_pct") or payload.get("oi_pct") or 0.0
+        )
+        price_change_pct = float(
+            payload.get("price_change_pct") or payload.get("price_pct") or 0.0
+        )
     except (TypeError, ValueError):
         return web.json_response({"status": "error", "error": "invalid_fields"}, status=400)
 
