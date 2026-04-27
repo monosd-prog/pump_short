@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from analytics.dashboard import build_dashboard_data
-from trading.live_config import load_live_config, set_live_profiles
+from trading.live_config import load_live_config, set_profile_status
 
 from short_pump import factor_cache
 from common.io_dataset import ensure_dataset_files, get_dataset_dir
@@ -278,8 +278,9 @@ class PumpEvent(BaseModel):
     extra: Optional[Dict[str, Any]] = None
 
 
-class LiveProfilesUpdate(BaseModel):
-    profiles: list[str]
+class LiveProfileUpdate(BaseModel):
+    profile: str
+    status: str
 
 
 # REMOVED: bootstrap_force_symbols() - auto-tracking on startup disabled.
@@ -420,11 +421,12 @@ async def api_live_config():
     return JSONResponse(load_live_config())
 
 
-@app.post("/api/live-config/profiles")
-async def api_live_config_profiles(payload: LiveProfilesUpdate):
-    profiles = list(payload.profiles or [])
-    set_live_profiles(profiles)
-    return JSONResponse({"ok": True, "profiles": profiles})
+@app.post("/api/live-config/profile")
+async def api_live_config_profile(payload: LiveProfileUpdate):
+    profile = (payload.profile or "").strip()
+    status = (payload.status or "").strip().lower()
+    set_profile_status(profile, status)
+    return JSONResponse({"ok": True, "profile": profile, "status": status})
 
 
 @app.get("/api/dashboard/data")

@@ -14,6 +14,7 @@ from trading.config import (
     AUTO_RISK_GUARD_STATE_PATH,
     EXECUTION_MODE,
 )
+from trading.live_config import get_live_profiles
 
 # Flag file that signals guard metrics are stale (written by outcome paths,
 # consumed by runner._maybe_refresh_guard). While present, new entries are blocked.
@@ -194,72 +195,11 @@ def _mode_name_for_signal_and_profile(signal: Any, risk_profile_name: str) -> Op
     return None
 
 
-def is_entry_allowed_for_signal(signal: Any, risk_profile_name: str) -> Tuple[bool, str]:
-    """
-    Enforcement hook for runner/broker.
-
-    - When risk_profile is not in guard set (mode_name is None) -> allow.
-    - LIVE mode: DISABLED and RECOVERY ALWAYS block, regardless of AUTO_RISK_GUARD_ENABLE/ENFORCE.
-      This is critical: DISABLED = no live orders, period.
-    - Paper mode: respect AUTO_RISK_GUARD_ENABLE and ENFORCE (dry-run vs block).
-    """
-    mode_name = _mode_name_for_signal_and_profile(signal, risk_profile_name)
-    if mode_name is None:
-        # Guard is only defined for specific боевые режимы; everything else passes through.
-        return True, ""
-
-    if _guard_refresh_pending():
-        logger.info(
-            "ENTRY_BLOCKED_GUARD_PENDING_REFRESH | mode=%s strategy=%s symbol=%s",
-            mode_name,
-            getattr(signal, "strategy", ""),
-            getattr(signal, "symbol", ""),
-        )
-        return False, "guard_refresh_pending"
-
-    entry = get_mode_state(mode_name)
-    state = entry.current_state
-
-    # LIVE mode: any non-ACTIVE state must block live entry.
-    if (EXECUTION_MODE or "").strip().lower() == "live" and state != STATE_ACTIVE:
-        logger.info(
-            "SKIP_TRADE_GUARD | mode=%s state=%s strategy=%s symbol=%s reason=not_ACTIVE",
-            mode_name,
-            state,
-            getattr(signal, "strategy", ""),
-            getattr(signal, "symbol", ""),
-        )
-        return False, f"guard_state={state}"
-
-    # Paper mode or ACTIVE/WATCH: respect feature flags
-    if not AUTO_RISK_GUARD_ENABLE:
-        return True, ""
-
-    # Dry-run: log state but don't block.
-    if not AUTO_RISK_GUARD_ENFORCE:
-        logger.info(
-            "AUTO_RISK_GUARD_DRY_RUN | mode=%s state=%s strategy=%s symbol=%s",
-            mode_name,
-            state,
-            getattr(signal, "strategy", ""),
-            getattr(signal, "symbol", ""),
-        )
-        return True, ""
-
-    # Enforcement (paper): DISABLED and RECOVERY block
-    if state in {STATE_DISABLED, STATE_RECOVERY}:
-        logger.info(
-            "AUTO_RISK_GUARD_BLOCKED | strategy=%s symbol=%s profile=%s state=%s reason=%s",
-            getattr(signal, "strategy", ""),
-            getattr(signal, "symbol", ""),
-            mode_name,
-            state,
-            entry.reason or "",
-        )
-        return False, f"guard_state={state}"
-
-    # ACTIVE / WATCH
-    return True, ""
+def is_entry_allowed_for_signal(signal: Any, risk_profile_name: str, **kwargs: Any) -> Tuple[bool, str]:
+    live_profiles = get_live_profiles()
+    if risk_profile_name in live_profiles:
+        return True, "live_config: profile in live"
+    return False, "live_config: profile not in live (paper)"
 
 
 def next_state(current: GuardEntry, metrics: GuardMetrics) -> GuardEntry:

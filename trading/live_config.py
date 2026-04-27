@@ -11,23 +11,27 @@ def load_live_config() -> dict:
 
 
 def get_live_profiles() -> set:
-    return set(load_live_config().get("live_profiles", []))
+    """Возвращает set профилей со статусом 'live'."""
+    cfg = load_live_config()
+    profiles = cfg.get("profiles", {})
+    return {name for name, status in profiles.items() if status == "live"}
 
 
-def get_live_strategies() -> list:
-    return load_live_config().get("live_strategies", [])
-
-
-def get_paper_strategies() -> list:
-    return load_live_config().get("paper_strategies", [])
+def get_all_profiles() -> dict:
+    """Возвращает dict {profile_name: status} для всех профилей."""
+    return load_live_config().get("profiles", {})
 
 
 def get_profile_meta() -> dict:
     return load_live_config().get("profile_meta", {})
 
 
-def set_live_profiles(profiles: list) -> None:
+def set_profile_status(profile: str, status: str) -> None:
+    """Устанавливает статус профиля: 'live' или 'paper'."""
+    assert status in ("live", "paper")
     with _lock:
         cfg = json.loads(_CONFIG_PATH.read_text())
-        cfg["live_profiles"] = profiles
+        if "profiles" not in cfg:
+            cfg["profiles"] = {}
+        cfg["profiles"][profile] = status
         _CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))

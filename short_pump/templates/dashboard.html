@@ -997,12 +997,13 @@ function renderChart(timeline) {
     },
   });
 }
-function profileCardHtml(name, meta, liveSet) {
+function profileCardHtml(name, meta, profilesMap) {
   const strategy = escapeHtml(meta && meta.strategy ? meta.strategy : '—');
   const conditions = escapeHtml(meta && meta.conditions ? meta.conditions : '—');
   const status = String(meta && meta.status ? meta.status : '').toLowerCase();
   const isFalsePump = name === 'false_pump';
-  const isLive = liveSet.has(name);
+  const profileStatus = String((profilesMap && profilesMap[name]) || 'paper').toLowerCase();
+  const isLive = profileStatus === 'live';
 
   const tradesRaw = meta && Object.prototype.hasOwnProperty.call(meta, 'trades') ? meta.trades : null;
   const wrRaw = meta && Object.prototype.hasOwnProperty.call(meta, 'wr') ? meta.wr : null;
@@ -1207,9 +1208,8 @@ function stopPipelineAutoRefresh() {
 
 function renderProfiles(data) {
   profilesData = data || {};
-  const liveProfiles = Array.isArray(profilesData.live_profiles) ? profilesData.live_profiles : [];
+  const profilesMap = (profilesData && profilesData.profiles) || {};
   const profileMeta = profilesData.profile_meta || {};
-  const liveSet = new Set(liveProfiles);
 
   const shortWrap = document.getElementById('profiles-short-pump');
   const falseWrap = document.getElementById('profiles-false-pump');
@@ -1219,7 +1219,7 @@ function renderProfiles(data) {
   const falseParts = [];
   for (const [name, meta] of Object.entries(profileMeta)) {
     const safeMeta = meta || {};
-    const card = profileCardHtml(name, safeMeta, liveSet);
+    const card = profileCardHtml(name, safeMeta, profilesMap);
     if (String(safeMeta.strategy || '').trim() === 'false_pump') {
       falseParts.push(card);
     } else {
@@ -1242,6 +1242,7 @@ async function loadProfiles() {
     const r = await fetch('/api/live-config', { cache: 'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
+    if (!data.profiles) data.profiles = {};
     renderProfiles(data);
   } catch (e) {
     if (shortWrap) shortWrap.innerHTML = '<div class="empty">error: ' + escapeHtml(e.message) + '</div>';
@@ -1256,21 +1257,21 @@ async function toggleProfile(name) {
   const meta = (profilesData.profile_meta || {})[name] || {};
   if (String(meta.status || '').toLowerCase() === 'accumulating') return;
 
-  const cur = new Set(Array.isArray(profilesData.live_profiles) ? profilesData.live_profiles : []);
-  if (cur.has(name)) cur.delete(name);
-  else cur.add(name);
-  const profiles = Array.from(cur);
+  const profilesMap = { ...((profilesData && profilesData.profiles) || {}) };
+  const currentStatus = String(profilesMap[name] || 'paper').toLowerCase();
+  const nextStatus = currentStatus === 'live' ? 'paper' : 'live';
 
   profileSaveInFlight = true;
   try {
-    const r = await fetch('/api/live-config/profiles', {
+    const r = await fetch('/api/live-config/profile', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ profiles }),
+      body: JSON.stringify({ profile: name, status: nextStatus }),
     });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const resp = await r.json();
-    profilesData.live_profiles = Array.isArray(resp.profiles) ? resp.profiles : profiles;
+    if (!profilesData.profiles) profilesData.profiles = {};
+    profilesData.profiles[name] = resp.status || nextStatus;
     renderProfiles(profilesData);
     showProfileToast('Сохранено');
   } catch (e) {

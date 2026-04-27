@@ -1,21 +1,15 @@
 {
-  "live_profiles": [
-    "short_pump_mid",
-    "short_pump_funding_1R",
-    "short_pump_wick_1R",
-    "short_pump_premium_1R",
-    "fast0_selective"
-  ],
-  "live_strategies": [
-    "short_pump_fast0",
-    "short_pump_fast0_filtered",
-    "short_pump_premium",
-    "short_pump_wick",
-    "short_pump"
-  ],
-  "paper_strategies": [
-    "false_pump"
-  ],
+  "profiles": {
+    "fast0_selective": "live",
+    "short_pump_mid": "live",
+    "short_pump_funding_1R": "live",
+    "short_pump_wick_1R": "live",
+    "short_pump_premium_1R": "live",
+    "fast0_2R": "paper",
+    "fast0_1p5R": "paper",
+    "short_pump_active_1R": "paper",
+    "false_pump_1R": "paper"
+  },
   "profile_meta": {
     "fast0_selective": {
       "strategy": "short_pump_fast0",
