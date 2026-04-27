@@ -2079,9 +2079,18 @@ def run_watch_for_symbol(
                     # Append trading_closes + finalize paper state before canonical merge + outcomes_v3.
                     # Idempotent via close_from_outcome (no_open_position / outcome_finalized).
                     try:
-                        from trading.config import AUTO_TRADING_ENABLE, EXECUTION_MODE, MODE
+                        from trading.config import AUTO_TRADING_ENABLE
+                        from trading.live_config import get_live_profiles
                         from trading.paper_outcome import close_from_outcome
                         from trading.state import make_position_id
+
+                        # Определяем mode из live_config вместо env
+                        try:
+                            _live_profiles = get_live_profiles()
+                            _is_live_mode = len(_live_profiles) > 0
+                        except Exception:
+                            _live_profiles = set()
+                            _is_live_mode = False
 
                         if AUTO_TRADING_ENABLE:
                             event_id_outcome = entry_payload.get("event_id") or run_id
@@ -2091,7 +2100,7 @@ def run_watch_for_symbol(
                             logger.info(
                                 "WATCHER_CLOSE_ATTEMPT | strategy=%s | mode=%s | position_id=%s",
                                 route_strategy,
-                                (EXECUTION_MODE or MODE or "").strip() or "unknown",
+                                "live" if _is_live_mode else "paper",
                                 pid_attempt,
                             )
                             end_reason_close = summary.get("end_reason") or summary.get("outcome") or ""
@@ -2116,10 +2125,18 @@ def run_watch_for_symbol(
 
                     # For LIVE+auto: outcome from close_from_live_outcome/close_on_timeout only. Skip to avoid duplicate.
                     _skip_write, _skip_reason = _watcher_should_skip_outcome_live(run_id, str(event_id), cfg.symbol)
-                    from trading.config import AUTO_TRADING_ENABLE, EXECUTION_MODE
+                    from trading.config import AUTO_TRADING_ENABLE
+                    from trading.live_config import get_live_profiles
+                    # Определяем mode из live_config вместо env
+                    try:
+                        _live_profiles = get_live_profiles()
+                        _is_live_mode = len(_live_profiles) > 0
+                    except Exception:
+                        _live_profiles = set()
+                        _is_live_mode = False
                     skip_watcher_outcome_write = (
                         _skip_write
-                        or (AUTO_TRADING_ENABLE and (EXECUTION_MODE or "").strip().lower() == "live")
+                        or (AUTO_TRADING_ENABLE and _is_live_mode)
                     )
                     if not skip_watcher_outcome_write:
                         try:
