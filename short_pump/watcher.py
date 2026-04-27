@@ -1845,6 +1845,21 @@ def run_watch_for_symbol(
                             "context_score": context_score_msg,
                         },
                     )
+                    log_info(
+                        logger,
+                        "ENTRY_OK_TG_SENT",
+                        symbol=cfg.symbol,
+                        run_id=run_id,
+                        stage=st.stage,
+                        step="TELEGRAM_SEND",
+                        extra={
+                            "event_id": str(event_id),
+                            "route_strategy": route_strategy,
+                            "dist_to_peak_pct": dist_to_peak,
+                            "context_score": context_score_msg,
+                            "entry_type": entry_type,
+                        },
+                    )
                     # ML score logging only (no filtering)
                     try:
                         from ml.entry_filter import maybe_log_ml_score_enabled, predict_entry_score
