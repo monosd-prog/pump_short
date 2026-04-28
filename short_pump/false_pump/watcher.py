@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 import aiohttp
 import pandas as pd
@@ -45,6 +46,18 @@ FALSE_PUMP_WEBHOOK_URL = os.getenv(
 
 _tg_start_sent: dict = {}
 TG_START_COOLDOWN_SEC = 3600  # 1 час
+
+
+def _is_self_webhook_url(url: str) -> bool:
+    """Guard against false_pump sending signals back into itself."""
+    try:
+        parsed = urlparse(str(url or "").strip())
+    except Exception:
+        return False
+    host = (parsed.hostname or "").lower()
+    port = int(parsed.port or 80)
+    path = (parsed.path or "").rstrip("/")
+    return host in {"localhost", "127.0.0.1"} and port == 8441 and path == "/api/oi_signal"
 
 
 def _fp_ds_event(
@@ -128,6 +141,12 @@ async def notify_false_pump(
         return
     if oi_change_pct <= 20.0 or price_change_pct <= 5.0:
         return
+    if _is_self_webhook_url(FALSE_PUMP_WEBHOOK_URL):
+        logger.debug(
+            "[false_pump.watcher] notify skipped for %s: self-webhook loop guard",
+            symbol,
+        )
+        return
     payload = {
         "symbol": symbol,
         "direction": direction,
@@ -194,7 +213,7 @@ async def _track_false_pump_outcome(
     # Wait until runner persists the opened paper position into trading_state.
     # Runner ticks every ~10s; give extra headroom to avoid CLOSE_SKIP race.
     _OPEN_WAIT_SEC = 15
-    time.sleep(_OPEN_WAIT_SEC)
+    await asyncio.sleep(_OPEN_WAIT_SEC)
 
     state = load_state()
     pid = make_position_id("false_pump", run_id_fp, str(event_id), symbol)
