@@ -689,6 +689,8 @@ def close_on_timeout(state: dict[str, Any], now_utc: str, *, broker: Any = None)
     changed = False
     op = state.get("open_positions") or {}
     for strategy, strat_pos in list(op.items()):
+        if strategy == "false_pump":
+            continue  # false_pump watcher manages its own lifecycle
         if not isinstance(strat_pos, dict):
             continue
         for pid, pos in list(strat_pos.items()):
