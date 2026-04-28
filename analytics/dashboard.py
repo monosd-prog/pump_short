@@ -627,19 +627,25 @@ def build_dashboard_data(
     active_positions = _build_active_positions(active_short, active_fast0)
 
     tp_total = sum(row.get("tp", 0) for row in outcomes_breakdown)
-    tp_live = sum(row.get("tp_live", 0) for row in outcomes_breakdown)
-    tp_paper = sum(row.get("tp_paper", 0) for row in outcomes_breakdown)
     win_rate_pct = _pct(tp_total, totals["outcomes"])
+
     outcomes_live = 0
     outcomes_paper = 0
-    if isinstance(mode_matrix, list):
-        for row in mode_matrix:
-            if not isinstance(row, dict):
-                continue
-            outcomes_live += int(row.get("live_count", 0) or 0)
-            outcomes_paper += int(row.get("paper_count", 0) or 0)
-    win_rate_live = _pct(tp_live, outcomes_live)
-    win_rate_paper = _pct(tp_paper, outcomes_paper)
+    win_rate_live = 0.0
+    win_rate_paper = 0.0
+    if not closes.empty and {"mode", "outcome"}.issubset(closes.columns):
+        mode_series = _safe_str_series(closes, "mode")
+        outcome_series = _safe_str_series(closes, "outcome")
+
+        live_mask = mode_series == "live"
+        paper_mask = mode_series == "paper"
+        tp_mask = outcome_series == "TP_hit"
+
+        outcomes_live = int(live_mask.sum())
+        outcomes_paper = int(paper_mask.sum())
+
+        win_rate_live = _pct(int((live_mask & tp_mask).sum()), outcomes_live)
+        win_rate_paper = _pct(int((paper_mask & tp_mask).sum()), outcomes_paper)
 
     generated_at = datetime.now(timezone.utc)
     cutoff = generated_at - timedelta(days=days)
