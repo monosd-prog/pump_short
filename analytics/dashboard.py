@@ -627,7 +627,19 @@ def build_dashboard_data(
     active_positions = _build_active_positions(active_short, active_fast0)
 
     tp_total = sum(row.get("tp", 0) for row in outcomes_breakdown)
+    tp_live = sum(row.get("tp_live", 0) for row in outcomes_breakdown)
+    tp_paper = sum(row.get("tp_paper", 0) for row in outcomes_breakdown)
     win_rate_pct = _pct(tp_total, totals["outcomes"])
+    outcomes_live = 0
+    outcomes_paper = 0
+    if isinstance(mode_matrix, list):
+        for row in mode_matrix:
+            if not isinstance(row, dict):
+                continue
+            outcomes_live += int(row.get("live_count", 0) or 0)
+            outcomes_paper += int(row.get("paper_count", 0) or 0)
+    win_rate_live = _pct(tp_live, outcomes_live)
+    win_rate_paper = _pct(tp_paper, outcomes_paper)
 
     generated_at = datetime.now(timezone.utc)
     cutoff = generated_at - timedelta(days=days)
@@ -643,6 +655,10 @@ def build_dashboard_data(
             "total_entries": totals["entries"],
             "total_outcomes": totals["outcomes"],
             "win_rate_pct": win_rate_pct,
+            "total_outcomes_live": outcomes_live,
+            "total_outcomes_paper": outcomes_paper,
+            "win_rate_live": win_rate_live,
+            "win_rate_paper": win_rate_paper,
         },
         "funnel": funnel,
         "outcomes_breakdown": outcomes_breakdown,

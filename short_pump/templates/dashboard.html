@@ -481,6 +481,7 @@
     <button data-tab="overview" class="active">Overview</button>
     <button data-tab="factors">Factors</button>
     <button data-tab="profiles">Профили</button>
+    <button data-tab="oi-screener">OI Screener</button>
     <button data-tab="architecture">Архитектура</button>
     <button data-tab="pipeline">Pipeline</button>
   </div>
@@ -597,6 +598,64 @@
 
       <div class="profiles-section-label">false_pump</div>
       <div class="profiles-grid" id="profiles-false-pump"></div>
+    </section>
+  </div>
+
+  <div id="tab-oi-screener" class="hidden">
+    <section>
+      <h2>OI Screener Controls</h2>
+      <div class="controls" style="margin-bottom:12px; gap:12px;">
+        <label>
+          min OI growth %:
+          <input id="oiMinGrowthInput" type="number" step="0.1" min="0" style="margin-left:6px; width:120px;">
+        </label>
+        <label>
+          max growth period (min):
+          <input id="oiMaxPeriodInput" type="number" step="1" min="1" style="margin-left:6px; width:120px;">
+        </label>
+        <label>
+          pump price %:
+          <input id="oiPumpPriceInput" type="number" step="0.1" min="0" style="margin-left:6px; width:120px;">
+        </label>
+        <label>
+          OI max reaction %:
+          <input id="oiMaxReactionInput" type="number" step="0.1" min="0" style="margin-left:6px; width:120px;">
+        </label>
+        <label>
+          near top %:
+          <input id="oiNearTopInput" type="number" step="0.1" min="0" style="margin-left:6px; width:120px;">
+        </label>
+        <label>
+          min optional flags:
+          <input id="oiMinFlagsInput" type="number" step="1" min="0" max="3" style="margin-left:6px; width:120px;">
+        </label>
+        <label>
+          mandatory hits (1..3):
+          <input id="oiMandatoryHitsInput" type="number" step="1" min="1" max="3" style="margin-left:6px; width:120px;">
+        </label>
+        <label>
+          liq min USD:
+          <input id="oiLiqMinUsdInput" type="number" step="100" min="0" style="margin-left:6px; width:140px;">
+        </label>
+        <button id="oiSaveBtn">Save</button>
+        <button id="oiRefreshBtn">Refresh</button>
+      </div>
+      <div class="updated" id="oiConfigStatus">loading…</div>
+    </section>
+
+    <section>
+      <h2>Active false_pump symbols</h2>
+      <div id="oiActiveSymbols"></div>
+    </section>
+
+    <section>
+      <h2>Recent OI webhook events</h2>
+      <div id="oiEventsTable"></div>
+    </section>
+
+    <section>
+      <h2>Recent false_pump outcomes</h2>
+      <div id="oiOutcomesTable"></div>
     </section>
   </div>
 
@@ -753,16 +812,20 @@ function el(tag, attrs = {}, children = []) {
 function renderCards(s) {
   const container = document.getElementById('cards');
   container.innerHTML = '';
+  const liveN = Number(s.total_outcomes_live || 0);
+  const liveValue = liveN < 5 ? 'n/a (мало данных)' : fmtPct(s.win_rate_live);
   const cards = [
     { label: 'Signals', value: fmtInt(s.total_signals) },
     { label: 'Entries', value: fmtInt(s.total_entries) },
     { label: 'Outcomes', value: fmtInt(s.total_outcomes) },
-    { label: 'Win rate (TP%)', value: fmtPct(s.win_rate_pct) },
+    { label: 'WIN RATE LIVE', value: liveValue, valueClass: 'pos' },
+    { label: 'WIN RATE PAPER', value: fmtPct(s.win_rate_paper), valueClass: '' },
   ];
   for (const c of cards) {
     const div = document.createElement('div');
     div.className = 'card';
-    div.innerHTML = '<div class="big">' + c.value + '</div>' +
+    const bigClass = c.valueClass ? ('big ' + c.valueClass) : 'big';
+    div.innerHTML = '<div class="' + bigClass + '">' + c.value + '</div>' +
                     '<div class="label">' + c.label + '</div>';
     container.appendChild(div);
   }
@@ -1206,6 +1269,154 @@ function stopPipelineAutoRefresh() {
   }
 }
 
+function renderOIScreenerMonitor(data) {
+  const cfg = (data && data.config) || {};
+  const active = (data && data.active_symbols) || [];
+  const events = (data && data.recent_events) || [];
+  const outcomes = (data && data.recent_outcomes) || [];
+  const minInp = document.getElementById('oiMinGrowthInput');
+  const maxInp = document.getElementById('oiMaxPeriodInput');
+  const pumpInp = document.getElementById('oiPumpPriceInput');
+  const maxReactionInp = document.getElementById('oiMaxReactionInput');
+  const nearTopInp = document.getElementById('oiNearTopInput');
+  const minFlagsInp = document.getElementById('oiMinFlagsInput');
+  const mandatoryHitsInp = document.getElementById('oiMandatoryHitsInput');
+  const liqMinUsdInp = document.getElementById('oiLiqMinUsdInput');
+  if (minInp) minInp.value = cfg.min_oi_growth_pct ?? '';
+  if (maxInp) maxInp.value = cfg.max_growth_period_min ?? '';
+  if (pumpInp) pumpInp.value = cfg.pump_price_pct ?? '';
+  if (maxReactionInp) maxReactionInp.value = cfg.oi_max_reaction_pct ?? '';
+  if (nearTopInp) nearTopInp.value = cfg.near_top_pct ?? '';
+  if (minFlagsInp) minFlagsInp.value = cfg.min_flags_required ?? '';
+  if (mandatoryHitsInp) mandatoryHitsInp.value = cfg.mandatory_min_hits ?? '';
+  if (liqMinUsdInp) liqMinUsdInp.value = cfg.liq_min_usd ?? '';
+
+  const activeWrap = document.getElementById('oiActiveSymbols');
+  if (activeWrap) {
+    if (!active.length) {
+      activeWrap.innerHTML = '<div class="empty">No active symbols</div>';
+    } else {
+      activeWrap.innerHTML = active.map((s) => '<code style="margin-right:6px;">' + escapeHtml(s) + '</code>').join('');
+    }
+  }
+
+  const tableWrap = document.getElementById('oiEventsTable');
+  if (!tableWrap) return;
+  if (!events.length) {
+    tableWrap.innerHTML = '<div class="empty">No events yet</div>';
+    return;
+  }
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr>' +
+    '<th>Time</th><th>Action</th><th>Symbol</th><th>Direction</th><th>Period</th><th>OI %</th><th>Price %</th>' +
+    '</tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const e of events) {
+    const tr = document.createElement('tr');
+    const ts = e.ts ? new Date(Number(e.ts) * 1000).toLocaleTimeString() : '-';
+    tr.innerHTML =
+      '<td>' + escapeHtml(ts) + '</td>' +
+      '<td>' + escapeHtml(e.action || '-') + '</td>' +
+      '<td class="strategy-name">' + escapeHtml(e.symbol || '-') + '</td>' +
+      '<td>' + escapeHtml(e.direction || '-') + '</td>' +
+      '<td>' + escapeHtml(String(e.period_min ?? '-')) + '</td>' +
+      '<td>' + escapeHtml(e.oi_change_pct == null ? '-' : Number(e.oi_change_pct).toFixed(2)) + '</td>' +
+      '<td>' + escapeHtml(e.price_change_pct == null ? '-' : Number(e.price_change_pct).toFixed(2)) + '</td>';
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  tableWrap.innerHTML = '';
+  tableWrap.appendChild(t);
+
+  const outcomesWrap = document.getElementById('oiOutcomesTable');
+  if (!outcomesWrap) return;
+  if (!outcomes.length) {
+    outcomesWrap.innerHTML = '<div class="empty">No outcomes yet</div>';
+    return;
+  }
+  const ot = document.createElement('table');
+  ot.innerHTML = '<thead><tr>' +
+    '<th>Time</th><th>Symbol</th><th>Outcome</th><th>PnL %</th><th>Entry</th><th>Exit</th><th>Profile</th><th>Mode</th>' +
+    '</tr></thead>';
+  const otb = document.createElement('tbody');
+  for (const o of outcomes) {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + escapeHtml(String(o.ts_utc || '-')) + '</td>' +
+      '<td class="strategy-name">' + escapeHtml(String(o.symbol || '-')) + '</td>' +
+      '<td>' + escapeHtml(String(o.outcome || '-')) + '</td>' +
+      '<td>' + escapeHtml(o.pnl_pct == null ? '-' : Number(o.pnl_pct).toFixed(2)) + '</td>' +
+      '<td>' + escapeHtml(o.entry_price == null ? '-' : String(o.entry_price)) + '</td>' +
+      '<td>' + escapeHtml(o.exit_price == null ? '-' : String(o.exit_price)) + '</td>' +
+      '<td>' + escapeHtml(String(o.risk_profile || '-')) + '</td>' +
+      '<td>' + escapeHtml(String(o.mode || '-')) + '</td>';
+    otb.appendChild(tr);
+  }
+  ot.appendChild(otb);
+  outcomesWrap.innerHTML = '';
+  outcomesWrap.appendChild(ot);
+}
+
+async function loadOIScreenerMonitor() {
+  const status = document.getElementById('oiConfigStatus');
+  if (status) status.textContent = 'loading…';
+  try {
+    const r = await fetch('/api/oi-screener/monitor?limit=60', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    renderOIScreenerMonitor(data);
+    if (status) status.textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    if (status) status.textContent = 'error: ' + e.message;
+  }
+}
+
+async function saveOIScreenerConfig() {
+  if (oiSaveInFlight) return;
+  const status = document.getElementById('oiConfigStatus');
+  const minInp = document.getElementById('oiMinGrowthInput');
+  const maxInp = document.getElementById('oiMaxPeriodInput');
+  const pumpInp = document.getElementById('oiPumpPriceInput');
+  const maxReactionInp = document.getElementById('oiMaxReactionInput');
+  const nearTopInp = document.getElementById('oiNearTopInput');
+  const minFlagsInp = document.getElementById('oiMinFlagsInput');
+  const mandatoryHitsInp = document.getElementById('oiMandatoryHitsInput');
+  const liqMinUsdInp = document.getElementById('oiLiqMinUsdInput');
+  if (!minInp || !maxInp || !pumpInp || !maxReactionInp || !nearTopInp || !minFlagsInp || !mandatoryHitsInp || !liqMinUsdInp) return;
+  oiSaveInFlight = true;
+  try {
+    const payload = {};
+    const addIfFinite = (key, raw, asInt = false) => {
+      const v = Number(raw);
+      if (!Number.isFinite(v)) return;
+      payload[key] = asInt ? Math.trunc(v) : v;
+    };
+    addIfFinite('min_oi_growth_pct', minInp.value);
+    addIfFinite('max_growth_period_min', maxInp.value, true);
+    addIfFinite('pump_price_pct', pumpInp.value);
+    addIfFinite('oi_max_reaction_pct', maxReactionInp.value);
+    addIfFinite('near_top_pct', nearTopInp.value);
+    addIfFinite('min_flags_required', minFlagsInp.value, true);
+    addIfFinite('mandatory_min_hits', mandatoryHitsInp.value, true);
+    addIfFinite('liq_min_usd', liqMinUsdInp.value);
+    if (!Object.keys(payload).length) {
+      throw new Error('empty payload');
+    }
+    const r = await fetch('/api/oi-screener/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    if (status) status.textContent = 'saved ' + new Date().toLocaleTimeString();
+    await loadOIScreenerMonitor();
+  } catch (e) {
+    if (status) status.textContent = 'save error: ' + e.message;
+  } finally {
+    oiSaveInFlight = false;
+  }
+}
+
 function renderProfiles(data) {
   profilesData = data || {};
   const profilesMap = (profilesData && profilesData.profiles) || {};
@@ -1330,6 +1541,7 @@ let factorsRetryTimer = null;
 let factorsData = null;
 let factorsSelectedStrategy = null;
 let factorsSelectedFactor = null;
+let oiSaveInFlight = false;
 
 const tabsEl = document.getElementById('tabs');
 if (tabsEl) {
@@ -1343,6 +1555,7 @@ if (tabsEl) {
     document.getElementById('tab-overview').classList.toggle('hidden', tab !== 'overview');
     document.getElementById('tab-factors').classList.toggle('hidden', tab !== 'factors');
     document.getElementById('tab-profiles').classList.toggle('hidden', tab !== 'profiles');
+    document.getElementById('tab-oi-screener').classList.toggle('hidden', tab !== 'oi-screener');
     document.getElementById('tab-architecture').classList.toggle('hidden', tab !== 'architecture');
     document.getElementById('tab-pipeline').classList.toggle('hidden', tab !== 'pipeline');
     activeTab = tab;
@@ -1351,6 +1564,9 @@ if (tabsEl) {
       stopPipelineAutoRefresh();
     } else if (tab === 'profiles') {
       loadProfiles();
+      stopPipelineAutoRefresh();
+    } else if (tab === 'oi-screener') {
+      loadOIScreenerMonitor();
       stopPipelineAutoRefresh();
     } else if (tab === 'pipeline') {
       loadPipeline();
@@ -1806,6 +2022,10 @@ document.getElementById('stabilityOnlyStable').addEventListener('change', () => 
   const strat = (factorsData && factorsData.strategies || []).find(s => s.strategy === factorsSelectedStrategy);
   renderFactorStability(strat);
 });
+const oiSaveBtn = document.getElementById('oiSaveBtn');
+if (oiSaveBtn) oiSaveBtn.addEventListener('click', () => saveOIScreenerConfig());
+const oiRefreshBtn = document.getElementById('oiRefreshBtn');
+if (oiRefreshBtn) oiRefreshBtn.addEventListener('click', () => loadOIScreenerMonitor());
 </script>
 </body>
 </html>
