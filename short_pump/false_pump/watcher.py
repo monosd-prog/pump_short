@@ -234,9 +234,17 @@ async def _track_false_pump_outcome(
         while time.time() < deadline_ts:
             try:
                 kl = await asyncio.to_thread(get_klines_1m, "linear", symbol, 10)
-            except Exception:
-                logger.exception("[false_pump.watcher] OUTCOME_POLL_FETCH_FAIL %s", symbol)
-                await asyncio.sleep(poll_interval_sec)
+            except Exception as e:
+                err_str = str(e)
+                if "10006" in err_str or "rate limit" in err_str.lower():
+                    logger.warning(
+                        "[false_pump.watcher] RATE_LIMIT_BACKOFF | symbol=%s | sleeping 30s",
+                        symbol,
+                    )
+                    await asyncio.sleep(30)
+                else:
+                    logger.exception("[false_pump.watcher] OUTCOME_POLL_FETCH_FAIL %s", symbol)
+                    await asyncio.sleep(poll_interval_sec)
                 continue
             if kl is None or kl.empty:
                 await asyncio.sleep(poll_interval_sec)

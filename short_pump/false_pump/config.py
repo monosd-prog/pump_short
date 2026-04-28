@@ -8,7 +8,7 @@ class FalsePumpConfig:
     trigger_min_oi_pct: float = 80.0
     trigger_min_price_pct: float = 1.0
     monitor_timeout_sec: int = 14400
-    poll_interval_sec: int = 10
+    poll_interval_sec: int = 15
     trigger_cooldown_sec: int = 300
     pump_price_pct: float = 0.8
     pump_candles_count: int = 3
@@ -19,6 +19,7 @@ class FalsePumpConfig:
     liq_window_sec: int = 300
     liq_min_usd: float = 30000.0
     min_flags_required: int = 2
+    mandatory_min_hits: int = 3
     webhook_host: str = "0.0.0.0"
     webhook_port: int = 8441
     signal_name: str = "false_pump"
