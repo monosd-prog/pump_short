@@ -14,6 +14,12 @@ from short_pump.rollout import SHORT_PUMP_FILTERED_DIST_TO_PEAK_MAX
 logger = logging.getLogger(__name__)
 
 
+FALSE_PUMP_LIVE_RISK_R = 1.0
+FALSE_PUMP_LIVE_NOTIONAL_USD = 10.0
+FALSE_PUMP_LIVE_LEVERAGE = 3
+FALSE_PUMP_LIVE_MARGIN_MODE = "isolated"
+
+
 def _float_env(name: str, default: float) -> float:
     try:
         v = os.getenv(name)
@@ -341,11 +347,17 @@ def get_risk_profile(
         return profile, mult, mult
 
     if s == "false_pump":
-        profile = "false_pump_1R"
-        mult = 1.0
+        profile = "false_pump_live_1R"
+        mult = FALSE_PUMP_LIVE_RISK_R
         logger.info(
-            "RISK_PROFILE | strategy=%s symbol=%s profile=%s",
-            strategy, symbol, profile,
+            "RISK_PROFILE | strategy=%s symbol=%s profile=%s risk_r=%.1f fixed_notional_usd=%.0f leverage=%s margin_mode=%s",
+            strategy,
+            symbol,
+            profile,
+            mult,
+            FALSE_PUMP_LIVE_NOTIONAL_USD,
+            FALSE_PUMP_LIVE_LEVERAGE,
+            FALSE_PUMP_LIVE_MARGIN_MODE,
         )
         return profile, mult, mult
 

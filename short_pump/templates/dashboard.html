@@ -1420,7 +1420,23 @@ async function saveOIScreenerConfig() {
 function renderProfiles(data) {
   profilesData = data || {};
   const profilesMap = (profilesData && profilesData.profiles) || {};
-  const profileMeta = profilesData.profile_meta || {};
+  const profileMeta = { ...(profilesData.profile_meta || {}) };
+
+  if (!profileMeta.false_pump_live_1R) {
+    profileMeta.false_pump_live_1R = {
+      strategy: 'false_pump',
+      conditions: 'live bootstrap: conservative sizing (1R, 50 USD, x3, isolated)',
+      ev: null,
+      ev20: null,
+      wr: null,
+      trades: 0,
+      status: 'accumulating',
+      risk_r: 1.0,
+      notional_usd: 50,
+      leverage: 3,
+      margin_mode: 'isolated'
+    };
+  }
 
   const shortWrap = document.getElementById('profiles-short-pump');
   const falseWrap = document.getElementById('profiles-false-pump');

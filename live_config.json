@@ -1,6 +1,6 @@
 {
   "profiles": {
-    "fast0_selective": "live",
+    "fast0_selective": "paper",
     "short_pump_mid": "live",
     "short_pump_funding_1R": "live",
     "short_pump_wick_1R": "live",
@@ -8,7 +8,8 @@
     "fast0_2R": "paper",
     "fast0_1p5R": "paper",
     "short_pump_active_1R": "paper",
-    "false_pump_1R": "paper"
+    "false_pump_1R": "paper",
+    "false_pump_live_1R": "paper"
   },
   "profile_meta": {
     "fast0_selective": {
@@ -69,6 +70,19 @@
       "trades": 0,
       "status": "accumulating"
     },
+    "false_pump_live_1R": {
+      "strategy": "false_pump",
+      "conditions": "live bootstrap: conservative sizing (1R, 50 USD, x3, isolated)",
+      "ev": null,
+      "ev20": null,
+      "wr": null,
+      "trades": 0,
+      "status": "accumulating",
+      "risk_r": 1.0,
+      "notional_usd": 10,
+      "leverage": 3,
+      "margin_mode": "isolated"
+    },
     "fast0_2R": {
       "strategy": "short_pump_fast0",
       "conditions": "fast0 entry · 2R target · paper only",
@@ -94,5 +108,15 @@
       "trades": 90,
       "status": "disabled"
     }
+  },
+  "oi_screener_controls": {
+    "min_oi_growth_pct": 2.0,
+    "max_growth_period_min": 90,
+    "pump_price_pct": 0.55,
+    "oi_max_reaction_pct": 3.0,
+    "near_top_pct": 8.0,
+    "min_flags_required": 1,
+    "mandatory_min_hits": 2,
+    "liq_min_usd": 10000.0
   }
 }
