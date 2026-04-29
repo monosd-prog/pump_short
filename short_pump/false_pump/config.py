@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 @dataclass
 class FalsePumpConfig:
-    trigger_min_oi_pct: float = 80.0
+    trigger_min_oi_pct: float = 2.0
     trigger_min_price_pct: float = 1.0
     monitor_timeout_sec: int = 14400
     poll_interval_sec: int = 15
