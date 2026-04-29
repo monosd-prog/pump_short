@@ -54,6 +54,7 @@ from common.io_dataset import write_event_row, write_outcome_row, write_trade_ro
 from common.runtime import wall_time_utc
 from common.feature_contract import normalize_event_feature_row
 from common.market_features import liquidation_features, market_features_snapshot, orderbook_imbalance_and_spread
+from trading.live_config import get_live_profiles as _get_live_profiles
 
 logger = get_logger(__name__)
 
@@ -116,6 +117,13 @@ def _compute_derived_deltas(payload: dict) -> dict:
         "cvd_accel": cvd_accel,
         "vol_accel": vol_accel,
     }
+
+
+def _get_exec_mode_for_tg() -> str:
+    try:
+        return "live" if _get_live_profiles() else "paper"
+    except Exception:
+        return "paper"
 
 
 TG_OUTCOME_TG_SEND_RETRY_MAX = int(os.getenv("TG_OUTCOME_TG_SEND_RETRY_MAX", "3").replace(",", "."))
@@ -1830,7 +1838,7 @@ def run_watch_for_symbol(
                         formatted=True,
                         meta={
                             "kind": "ENTRY_OK",
-                            "exec_mode": (os.getenv("EXECUTION_MODE") or "paper").strip().lower() or "paper",
+                            "exec_mode": _get_exec_mode_for_tg(),
                             "risk_profile": _rp_entry or "",
                             "symbol": cfg.symbol,
                             "entry_price": entry_price,
