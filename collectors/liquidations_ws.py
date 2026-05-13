@@ -10,7 +10,9 @@ import asyncio
 import csv
 import json
 import logging
+import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +35,10 @@ MAX_SUB_ARGS = 10
 STATS_INTERVAL_SEC = 600.0
 BACKOFF_START = 1.0
 BACKOFF_MAX = 30.0
+WATCHDOG_SILENCE_SEC = 1800  # 30 minutes global silence = exit
+WATCHDOG_CHECK_INTERVAL_SEC = 60
+WATCHDOG_GRACE_SEC = 300  # grace period after process start
+TG_ALERT_COOLDOWN_SEC = 1800
 
 CSV_COLUMNS = ("ts_utc", "ts_ms", "symbol", "side", "qty", "price", "value_usd")
 
@@ -40,6 +46,13 @@ log = logging.getLogger("liquidations_ws")
 _write_lock = asyncio.Lock()
 _counter_lock = asyncio.Lock()
 _liq_count_window = 0
+_last_activity_mono: float = time.monotonic()
+_activity_lock = asyncio.Lock()
+_connected_workers: int = 0
+_connected_lock = asyncio.Lock()
+_last_tg_alert_mono: dict[str, float] = {}
+_collector_start_mono: float = 0.0
+_total_workers: int = 0
 
 
 def _fetch_bybit_linear_usdt_trading_symbols() -> List[str]:
@@ -82,6 +95,81 @@ def _ensure_csv_header(path: Path) -> None:
             w = csv.writer(f)
             w.writerow(CSV_COLUMNS)
             f.flush()
+
+
+async def _touch_global_activity() -> None:
+    """Update heartbeat on any received WS frame (incl. ping/subscribe ack)."""
+    global _last_activity_mono
+    async with _activity_lock:
+        _last_activity_mono = time.monotonic()
+
+
+def _send_telegram_alert(message: str, alert_key: str) -> None:
+    """Send TG alert with per-key cooldown; no-op if env missing."""
+    now = time.monotonic()
+    last = _last_tg_alert_mono.get(alert_key, 0.0)
+    if now - last < TG_ALERT_COOLDOWN_SEC:
+        return
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        log.warning("TG_ALERT skipped: no TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID in env")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode(
+            {
+                "chat_id": chat_id,
+                "text": f"🚨 [liquidations-collector] {message}",
+                "parse_mode": "HTML",
+            }
+        ).encode()
+        req = urllib.request.Request(url, data=data)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+        _last_tg_alert_mono[alert_key] = now
+        log.info("TG_ALERT_SENT key=%s", alert_key)
+    except Exception as e:
+        log.warning("TG_ALERT_FAILED key=%s err=%s", alert_key, e)
+
+
+async def _global_silence_watchdog() -> None:
+    """Exit if no WS frames system-wide for WATCHDOG_SILENCE_SEC (after grace)."""
+    log.info(
+        "GLOBAL_SILENCE_WATCHDOG started check_interval=%ds silence_limit=%ds grace=%ds",
+        int(WATCHDOG_CHECK_INTERVAL_SEC),
+        int(WATCHDOG_SILENCE_SEC),
+        int(WATCHDOG_GRACE_SEC),
+    )
+    start_mono = time.monotonic()
+    while True:
+        await asyncio.sleep(WATCHDOG_CHECK_INTERVAL_SEC)
+        now = time.monotonic()
+        if now - start_mono < WATCHDOG_GRACE_SEC:
+            continue
+        async with _activity_lock:
+            silence = now - _last_activity_mono
+        if silence > WATCHDOG_SILENCE_SEC:
+            msg = (
+                f"WATCHDOG TRIGGERED: no WS frames for {silence:.0f}s "
+                f"(threshold {WATCHDOG_SILENCE_SEC}s). Exiting (systemd will restart)."
+            )
+            log.error(msg)
+            _send_telegram_alert(msg, alert_key="watchdog_silence")
+            await asyncio.sleep(2)
+            os._exit(1)
+
+
+async def _inc_connected() -> None:
+    global _connected_workers
+    async with _connected_lock:
+        _connected_workers += 1
+
+
+async def _dec_connected() -> None:
+    global _connected_workers
+    async with _connected_lock:
+        _connected_workers = max(0, _connected_workers - 1)
 
 
 async def _append_liquidation_rows(rows: List[tuple[Any, ...]]) -> None:
@@ -150,7 +238,25 @@ async def _stats_loop() -> None:
         async with _counter_lock:
             n = _liq_count_window
             _liq_count_window = 0
-        log.info("STATS interval=%ds liquidations_written=%d", int(STATS_INTERVAL_SEC), n)
+        async with _connected_lock:
+            cw = _connected_workers
+        log.info(
+            "STATS interval=%ds liquidations_written=%d connected_ws=%d/%d",
+            int(STATS_INTERVAL_SEC),
+            n,
+            cw,
+            _total_workers,
+        )
+        now_mono = time.monotonic()
+        if (
+            now_mono - _collector_start_mono >= WATCHDOG_GRACE_SEC
+            and cw == 0
+            and _total_workers > 0
+        ):
+            _send_telegram_alert(
+                "ALERT: 0 active WebSocket connections (all workers disconnected).",
+                alert_key="zero_connections",
+            )
 
 
 async def _connection_worker(conn_id: int, symbols: List[str]) -> None:
@@ -176,23 +282,28 @@ async def _connection_worker(conn_id: int, symbols: List[str]) -> None:
                 await ws.send(json.dumps(sub))
                 log.info("CONNECTED conn_id=%d subscribed_args=%d", conn_id, len(args))
                 backoff = BACKOFF_START
-                async for raw in ws:
-                    if isinstance(raw, bytes):
-                        raw = raw.decode("utf-8")
-                    try:
-                        msg = json.loads(raw)
-                    except json.JSONDecodeError:
-                        log.warning("conn_id=%d non-json: %r", conn_id, raw[:200])
-                        continue
-                    if not isinstance(msg, dict):
-                        continue
-                    if msg.get("op") == "ping":
-                        await ws.send(json.dumps({"op": "pong"}))
-                        continue
-                    if msg.get("success") is False:
-                        log.warning("conn_id=%d WS error payload: %s", conn_id, raw[:500])
-                        continue
-                    await _handle_ws_message(conn_id, msg)
+                await _inc_connected()
+                try:
+                    async for raw in ws:
+                        await _touch_global_activity()
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8")
+                        try:
+                            msg = json.loads(raw)
+                        except json.JSONDecodeError:
+                            log.warning("conn_id=%d non-json: %r", conn_id, raw[:200])
+                            continue
+                        if not isinstance(msg, dict):
+                            continue
+                        if msg.get("op") == "ping":
+                            await ws.send(json.dumps({"op": "pong"}))
+                            continue
+                        if msg.get("success") is False:
+                            log.warning("conn_id=%d WS error payload: %s", conn_id, raw[:500])
+                            continue
+                        await _handle_ws_message(conn_id, msg)
+                finally:
+                    await _dec_connected()
         except ConnectionClosed as e:
             log.warning(
                 "DISCONNECT conn_id=%d code=%s reason=%r — retry in %.1fs",
@@ -201,15 +312,38 @@ async def _connection_worker(conn_id: int, symbols: List[str]) -> None:
                 e.reason,
                 backoff,
             )
+            log.info(
+                "RECONNECT_SCHEDULED conn_id=%d reason=connection_closed exc_type=ConnectionClosed "
+                "code=%s detail=%r backoff=%.1fs",
+                conn_id,
+                e.code,
+                e.reason,
+                backoff,
+            )
         except (WebSocketException, OSError, asyncio.TimeoutError) as e:
             log.warning("DISCONNECT conn_id=%d err=%s — retry in %.1fs", conn_id, e, backoff)
+            log.info(
+                "RECONNECT_SCHEDULED conn_id=%d reason=ws_or_os exc_type=%s detail=%r backoff=%.1fs",
+                conn_id,
+                type(e).__name__,
+                e,
+                backoff,
+            )
         except Exception as e:  # pragma: no cover
             log.exception("conn_id=%d fatal loop err=%s — retry in %.1fs", conn_id, e, backoff)
+            log.info(
+                "RECONNECT_SCHEDULED conn_id=%d reason=unexpected exc_type=%s detail=%r backoff=%.1fs",
+                conn_id,
+                type(e).__name__,
+                e,
+                backoff,
+            )
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2.0, BACKOFF_MAX)
 
 
 async def main_async() -> None:
+    global _last_activity_mono, _collector_start_mono, _total_workers
     symbols = await asyncio.to_thread(_fetch_bybit_linear_usdt_trading_symbols)
     if not symbols:
         log.error("No symbols from instruments-info; exiting")
@@ -219,6 +353,11 @@ async def main_async() -> None:
         symbols[i : i + MAX_SUB_ARGS] for i in range(0, len(symbols), MAX_SUB_ARGS)
     ]
     log.info("WS_PLAN connections=%d max_args_per_conn=%d", len(batches), MAX_SUB_ARGS)
+    _collector_start_mono = time.monotonic()
+    _total_workers = len(batches)
+    async with _activity_lock:
+        _last_activity_mono = time.monotonic()
+    asyncio.create_task(_global_silence_watchdog())
     asyncio.create_task(_stats_loop())
     workers = [
         asyncio.create_task(_connection_worker(i, batch), name=f"liq_ws_{i}")

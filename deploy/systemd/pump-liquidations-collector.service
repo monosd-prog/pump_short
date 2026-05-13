@@ -1,0 +1,18 @@
+[Unit]
+Description=Bybit Liquidations WebSocket Collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/pump_short
+ExecStart=/usr/bin/python3 /root/pump_short/collectors/liquidations_ws.py
+EnvironmentFile=/etc/pump-short-live.env
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

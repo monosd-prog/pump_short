@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily heartbeat for liquidations collector
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/pump_short
+ExecStart=/usr/bin/python3 /root/pump_short/collectors/liquidations_heartbeat.py
+EnvironmentFile=/etc/pump-short-live.env
+StandardOutput=journal
+StandardError=journal
