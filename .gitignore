@@ -18,6 +18,8 @@ __pycache__/
 
 # data / logs
 datasets/
+!pump_v2/datasets/
+!pump_v2/datasets/SCHEMA.md
 logs/
 pump_v2/logs/
 reports/
