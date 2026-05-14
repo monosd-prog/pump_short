@@ -19,6 +19,7 @@ __pycache__/
 # data / logs
 datasets/
 logs/
+pump_v2/logs/
 reports/
 !pump_v2/backtest/reports/
 !pump_v2/backtest/reports/.gitkeep
