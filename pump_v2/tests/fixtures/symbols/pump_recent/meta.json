@@ -1,0 +1,8 @@
+{
+  "symbol": "DYMUSDT",
+  "ts_snapshot_utc": "2026-05-13T00:18:55.398976+00:00",
+  "window_start_utc": "2026-05-12T23:18:55.398976+00:00",
+  "window_end_utc": "2026-05-13T00:18:55.398976+00:00",
+  "description": "watch_start from datasets events_v3 (pump_pct in payload); 60m window before snapshot.",
+  "oi_parquet_note": "open_interest API returns only the latest N 5m points (~16h lookback); no rows fell inside [window_start_utc, window_end_utc] \u2014 stored full latest snapshot for non-null v1 OI metrics."
+}

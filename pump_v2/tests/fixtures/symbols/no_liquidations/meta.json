@@ -1,0 +1,7 @@
+{
+  "symbol": "IOTAUSDT",
+  "ts_snapshot_utc": "2026-05-14T11:00:00+00:00",
+  "window_start_utc": "2026-05-14T10:00:00+00:00",
+  "window_end_utc": "2026-05-14T11:00:00+00:00",
+  "description": "Hour window with zero rows for this symbol in datasets/liquidations.csv (verified offline)."
+}

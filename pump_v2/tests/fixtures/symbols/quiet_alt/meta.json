@@ -1,0 +1,8 @@
+{
+  "symbol": "DOGEUSDT",
+  "ts_snapshot_utc": "2026-05-13T12:00:00+00:00",
+  "window_start_utc": "2026-05-13T11:00:00+00:00",
+  "window_end_utc": "2026-05-13T12:00:00+00:00",
+  "description": "Lower-activity alt vs BTC; same snapshot wall as btc_typical.",
+  "oi_parquet_note": "open_interest API returns only the latest N 5m points (~16h lookback); no rows fell inside [window_start_utc, window_end_utc] \u2014 stored full latest snapshot for non-null v1 OI metrics."
+}
