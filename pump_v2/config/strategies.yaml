@@ -1,0 +1,79 @@
+runner:
+  tick_interval_sec: 5
+  symbols_universe: "bybit_usdt_perp_top200"
+
+data_paths:
+  base: "/root/pump_short/datasets"
+  liquidations: "/root/pump_short/datasets/liquidations.csv"
+  events_v3: "/root/pump_short/datasets/events_v3.csv"
+  trades_v3: "/root/pump_short/datasets/trades_v3.csv"
+  trading_closes: "/root/pump_short/datasets/trading_closes.csv"
+
+global_risk:
+  max_open_positions: 5
+  max_daily_loss_r: -3.0
+  max_drawdown_r: -8.0
+  cooldown_after_loss_min: 0
+
+auto_disable:
+  enabled: true
+  min_trades: 50
+  ev_r_floor: -0.05
+  lookback_days: 30
+  check_time_utc: "00:00"
+
+telegram:
+  alerts_enabled: true
+  daily_report_time_utc: "10:00"
+
+strategies:
+  short_pump_mid:
+    enabled: false  # not implemented yet
+    risk:
+      r_multiplier: 1.0
+      notional_usd: 100
+      leverage: 10
+      sl_pct: 5.0
+      tp_pct: 5.0
+    params:
+      min_pump_pct: 8.0
+      stage: 4
+      max_dist_to_peak_pct: 3.5
+
+  short_pump_funding:
+    enabled: false
+    risk:
+      r_multiplier: 1.0
+      notional_usd: 100
+      leverage: 10
+      sl_pct: 5.0
+      tp_pct: 5.0
+    params:
+      min_funding_rate: 0.001
+      stage: 4
+
+  liquidation_short:
+    enabled: false
+    risk:
+      r_multiplier: 1.0
+      notional_usd: 50
+      leverage: 5
+      sl_pct: 4.0
+      tp_pct: 4.0
+    params:
+      min_liquidation_usd: 50000
+      oi_drop_pct_after_liq: 2.0
+      lookback_minutes: 10
+      require_cvd_growing_before: true
+
+  false_pump:
+    enabled: false
+    risk:
+      r_multiplier: 1.0
+      notional_usd: 50
+      leverage: 5
+      sl_pct: 7.0
+      tp_pct: 7.0
+    params:
+      stage: 4
+      near_top: true
