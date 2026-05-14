@@ -20,9 +20,10 @@ __pycache__/
 datasets/
 logs/
 reports/
+!pump_v2/backtest/reports/
+!pump_v2/backtest/reports/.gitkeep
 
 # IDE
-.vscode/
 .cursor/
 .cursor*
 
