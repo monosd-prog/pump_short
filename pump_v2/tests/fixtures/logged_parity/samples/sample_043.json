@@ -1,0 +1,147 @@
+{
+  "meta": {
+    "sample_id": "sample_043",
+    "source_file": "datasets/date=20260506/strategy=short_pump/mode=live/events_v3.csv",
+    "source_row_index": 120,
+    "symbol": "LYNUSDT",
+    "strategy": "short_pump",
+    "mode": "live",
+    "event_id": "20260506_164655_entry_fast",
+    "time_utc": "2026-05-06 14:13:23.899315+00:00"
+  },
+  "logged_indicators": {
+    "oi_change_1m_pct": {
+      "value": -1.573294,
+      "source": "csv_column"
+    },
+    "oi_change_5m_pct": {
+      "value": -1.573294,
+      "source": "csv_column"
+    },
+    "oi_change_fast_pct": {
+      "value": -1.573294,
+      "source": "csv_column"
+    },
+    "delta_ratio_30s": {
+      "value": -0.253641,
+      "source": "csv_column"
+    },
+    "delta_ratio_1m": {
+      "value": -0.098783,
+      "source": "csv_column"
+    },
+    "delta_ratio_3m": {
+      "value": null,
+      "source": "payload_json"
+    },
+    "cvd_delta_ratio_30s": {
+      "value": -0.253641,
+      "source": "csv_column"
+    },
+    "cvd_delta_ratio_1m": {
+      "value": -0.098783,
+      "source": "csv_column"
+    },
+    "cvd_abs_5m": {
+      "value": 201436.0,
+      "source": "csv_column"
+    },
+    "cvd_ratio_5m": {
+      "value": 0.267943,
+      "source": "csv_column"
+    },
+    "funding_rate": {
+      "value": 0.000428,
+      "source": "csv_column"
+    },
+    "funding_rate_abs": {
+      "value": 0.000428,
+      "source": "csv_column"
+    },
+    "green_candles_5": {
+      "value": 3.0,
+      "source": "csv_column"
+    },
+    "wick_body_ratio_last": {
+      "value": 0.395833,
+      "source": "csv_column"
+    },
+    "upper_wick_ratio_last": {
+      "value": 0.134328,
+      "source": "csv_column"
+    },
+    "lower_wick_ratio_last": {
+      "value": 0.149254,
+      "source": "csv_column"
+    },
+    "max_candle_body_pct_5": {
+      "value": 2.889626,
+      "source": "csv_column"
+    },
+    "avg_candle_body_pct_5": {
+      "value": 1.556151,
+      "source": "csv_column"
+    },
+    "volume_zscore_20": {
+      "value": -0.427188,
+      "source": "csv_column"
+    },
+    "stage": {
+      "value": 4,
+      "source": "csv_column"
+    },
+    "dist_to_peak_pct": {
+      "value": 10.884919,
+      "source": "csv_column"
+    },
+    "context_score": {
+      "value": 0.65,
+      "source": "csv_column"
+    },
+    "context_parts": {
+      "value": {
+        "stage": 0.3,
+        "near_top": 0.0,
+        "oi": 0.1,
+        "vol": 0.0,
+        "atr": 0.05,
+        "cvd": 0.2
+      },
+      "source": "payload_json"
+    },
+    "liq_long_count_30s": {
+      "value": 0,
+      "source": "csv_column"
+    },
+    "liq_long_usd_30s": {
+      "value": 0.0,
+      "source": "csv_column"
+    },
+    "liq_short_count_30s": {
+      "value": 0,
+      "source": "csv_column"
+    },
+    "liq_short_usd_30s": {
+      "value": 0.0,
+      "source": "csv_column"
+    },
+    "liq_long_count_1m": {
+      "value": 0,
+      "source": "csv_column"
+    },
+    "liq_long_usd_1m": {
+      "value": 0.0,
+      "source": "csv_column"
+    },
+    "liq_short_count_1m": {
+      "value": 0,
+      "source": "csv_column"
+    },
+    "liq_short_usd_1m": {
+      "value": 0.0,
+      "source": "csv_column"
+    }
+  },
+  "raw_inputs_available": false,
+  "note": "Logged values from production watcher. For parity tests only — cannot independently recompute without raw klines/trades/oi."
+}
