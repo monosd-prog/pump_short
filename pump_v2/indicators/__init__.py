@@ -1,6 +1,8 @@
 """pump_v2 indicators (ported from v1 with parity tests)."""
 
 from pump_v2.indicators.atr_pct_5m_14 import ATRPct5m14
+from pump_v2.indicators.dist_to_fsm_peak_pct import DistToFSMPeakPct
+from pump_v2.indicators.dist_to_window_peak_pct import DistToWindowPeakPct
 from pump_v2.indicators.cvd_5m import CVD5m
 from pump_v2.indicators.cvd_delta_ratio import CVDDeltaRatio
 from pump_v2.indicators.delta_ratio import DeltaRatio
@@ -16,6 +18,8 @@ __all__ = [
     "CVD5m",
     "CVDDeltaRatio",
     "DeltaRatio",
+    "DistToFSMPeakPct",
+    "DistToWindowPeakPct",
     "FundingSnapshot",
     "FundingSnapshotIndicator",
     "LiquidationRollups",
