@@ -8,6 +8,7 @@ from pump_v2.indicators.funding_snapshot import FundingSnapshot, FundingSnapshot
 from pump_v2.indicators.liquidation_rollups import LiquidationRollups, LiquidationRollupsIndicator
 from pump_v2.indicators.oi_change_pct import OIChangePct
 from pump_v2.indicators.pump_shape_5m import PumpShape5m, PumpShape5mIndicator
+from pump_v2.indicators.structure_state import StructureState, StructureStateIndicator
 from pump_v2.indicators.volume_zscore import VolumeZScore
 
 __all__ = [
@@ -22,5 +23,7 @@ __all__ = [
     "OIChangePct",
     "PumpShape5m",
     "PumpShape5mIndicator",
+    "StructureState",
+    "StructureStateIndicator",
     "VolumeZScore",
 ]
