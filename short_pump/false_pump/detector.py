@@ -27,6 +27,7 @@ def detect_pump(candles_1m: pd.DataFrame, cfg: FalsePumpConfig) -> Tuple[bool, f
         return False, 0.0
     recent["close"] = pd.to_numeric(recent["close"], errors="coerce")
     recent = recent.dropna(subset=["close"])
+    recent = recent.reset_index(drop=True)
     if len(recent) < 2:
         return False, 0.0
 
@@ -37,7 +38,7 @@ def detect_pump(candles_1m: pd.DataFrame, cfg: FalsePumpConfig) -> Tuple[bool, f
     pump_pct = ((current_price - local_min) / local_min) * 100.0
 
     idx_min = int(recent["close"].idxmin())
-    idx_last = int(recent.index[-1])
+    idx_last = len(recent) - 1
     bars_since_min = idx_last - idx_min
     in_recent_window = bars_since_min <= int(cfg.pump_candles_count)
     pump_detected = in_recent_window and (pump_pct >= float(cfg.pump_price_pct))
@@ -140,7 +141,13 @@ def detect_false_pump(
     flags_hit = sum(1 for v in optional_flags.values() if v)
     total_flags = len(optional_flags)
 
-    mandatory_ok = bool(pump_detected and oi_weak and near_top)
+    mandatory_flags = {
+        "pump_detected": bool(pump_detected),
+        "oi_weak": bool(oi_weak),
+        "near_top": bool(near_top),
+    }
+    mandatory_hits = sum(1 for v in mandatory_flags.values() if v)
+    mandatory_ok = mandatory_hits >= max(1, int(cfg.mandatory_min_hits))
     signal_ok = mandatory_ok and (flags_hit >= int(cfg.min_flags_required))
 
     details: Dict[str, Any] = {
@@ -164,6 +171,8 @@ def detect_false_pump(
         },
         "flags_hit": int(flags_hit),
         "total_flags": int(total_flags),
+        "mandatory_hits": int(mandatory_hits),
+        "mandatory_required": int(max(1, int(cfg.mandatory_min_hits))),
         "context_score": round(flags_hit / total_flags, 2) if total_flags else 0.0,
     }
     return bool(signal_ok), details

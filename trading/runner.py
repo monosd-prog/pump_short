@@ -717,10 +717,25 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
         stop_distance_pct = calc_stop_distance_pct(entry_f, sl_f)
         ok, reason = validate_stop_distance(stop_distance_pct)
         if not ok:
-            logger.warning("run_once: reject stop_distance strategy=%s %s", signal.strategy, reason)
-            _finish_queue_processing(raw_lines)
-            save_state(state)
-            return
+            # false_pump uses a wider model stop by design (default 7%).
+            # Allow a strategy-specific cap without weakening global validation.
+            if (signal.strategy or "").strip() == "false_pump":
+                try:
+                    fp_stop_max_pct = float(os.getenv("FALSE_PUMP_STOP_DISTANCE_MAX_PCT", "0.07"))
+                except (TypeError, ValueError):
+                    fp_stop_max_pct = 0.07
+                if stop_distance_pct <= fp_stop_max_pct:
+                    logger.info(
+                        "run_once: false_pump stop override stop_distance_pct=%.4f max=%.4f",
+                        stop_distance_pct,
+                        fp_stop_max_pct,
+                    )
+                    ok = True
+            if not ok:
+                logger.warning("run_once: reject stop_distance strategy=%s %s", signal.strategy, reason)
+                _finish_queue_processing(raw_lines)
+                save_state(state)
+                return
 
         risk_profile_name = ""
         risk_mult = 1.0

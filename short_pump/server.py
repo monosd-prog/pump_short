@@ -28,6 +28,9 @@ from short_pump.rollout import (
     SHORT_PUMP_WICK_ENABLE,
 )
 from short_pump.config import Config
+from short_pump.false_pump.controls import get_controls, set_controls
+from short_pump.false_pump.webhook import get_recent_oi_events
+from short_pump.false_pump.watcher import _active_symbols
 from short_pump.logging_utils import get_logger
 from short_pump.runtime import Runtime
 
@@ -276,6 +279,36 @@ def _pipeline_events_from_signals(limit: int) -> list[dict[str, Any]]:
     return events
 
 
+def _recent_false_pump_outcomes(limit: int = 20) -> list[dict[str, Any]]:
+    path = Path(DATASETS_ROOT) / "trading_closes.csv"
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8", newline="") as f:
+            rows = list(csv.DictReader(f))
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in reversed(rows):
+        if (row.get("strategy") or "").strip() != "false_pump":
+            continue
+        out.append(
+            {
+                "ts_utc": row.get("ts_utc") or "",
+                "symbol": row.get("symbol") or "",
+                "outcome": row.get("outcome") or "",
+                "pnl_pct": _safe_float(row.get("pnl_pct")),
+                "entry_price": _safe_float(row.get("entry_price")),
+                "exit_price": _safe_float(row.get("exit_price")),
+                "risk_profile": row.get("risk_profile") or "",
+                "mode": (row.get("mode") or "paper").strip().lower() or "paper",
+            }
+        )
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
 class PumpEvent(BaseModel):
     symbol: str
     exchange: Optional[str] = "bybit"
@@ -287,6 +320,17 @@ class PumpEvent(BaseModel):
 class LiveProfileUpdate(BaseModel):
     profile: str
     status: str
+
+
+class OIScreenerConfigUpdate(BaseModel):
+    min_oi_growth_pct: Optional[float] = None
+    max_growth_period_min: Optional[int] = None
+    pump_price_pct: Optional[float] = None
+    oi_max_reaction_pct: Optional[float] = None
+    near_top_pct: Optional[float] = None
+    min_flags_required: Optional[int] = None
+    mandatory_min_hits: Optional[int] = None
+    liq_min_usd: Optional[float] = None
 
 
 # REMOVED: bootstrap_force_symbols() - auto-tracking on startup disabled.
@@ -433,6 +477,36 @@ async def api_live_config_profile(payload: LiveProfileUpdate):
     status = (payload.status or "").strip().lower()
     set_profile_status(profile, status)
     return JSONResponse({"ok": True, "profile": profile, "status": status})
+
+
+@app.get("/api/oi-screener/config")
+async def api_oi_screener_config():
+    return JSONResponse(get_controls())
+
+
+@app.post("/api/oi-screener/config")
+async def api_oi_screener_config_update(payload: OIScreenerConfigUpdate):
+    updates = payload.model_dump(exclude_none=True)
+    if not updates:
+        return JSONResponse({"ok": False, "error": "empty_payload"}, status_code=400)
+    cfg = set_controls(**updates)
+    return JSONResponse({"ok": True, **cfg})
+
+
+@app.get("/api/oi-screener/monitor")
+async def api_oi_screener_monitor(limit: int = 40):
+    try:
+        n = max(1, min(int(limit), 200))
+    except Exception:
+        n = 40
+    return JSONResponse(
+        {
+            "config": get_controls(),
+            "active_symbols": sorted(list(_active_symbols)),
+            "recent_events": list(reversed(get_recent_oi_events(n))),
+            "recent_outcomes": _recent_false_pump_outcomes(limit=min(30, n)),
+        }
+    )
 
 
 @app.get("/api/dashboard/data")

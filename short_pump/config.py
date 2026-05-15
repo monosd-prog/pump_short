@@ -229,4 +229,36 @@ class Config:
                 },
             )
 
+        # false_pump runtime knobs
+        c.false_pump.poll_interval_sec = _get_int(
+            "FALSE_PUMP_POLL_INTERVAL_SEC", c.false_pump.poll_interval_sec
+        )
+        c.false_pump.monitor_timeout_sec = _get_int(
+            "FALSE_PUMP_MONITOR_TIMEOUT_SEC", c.false_pump.monitor_timeout_sec
+        )
+        c.false_pump.pump_price_pct = _get_float(
+            "FALSE_PUMP_PUMP_PRICE_PCT", c.false_pump.pump_price_pct
+        )
+        c.false_pump.pump_candles_count = _get_int(
+            "FALSE_PUMP_PUMP_CANDLES_COUNT", c.false_pump.pump_candles_count
+        )
+        c.false_pump.pump_lookback_candles = _get_int(
+            "FALSE_PUMP_PUMP_LOOKBACK_CANDLES", c.false_pump.pump_lookback_candles
+        )
+        c.false_pump.oi_max_reaction_pct = _get_float(
+            "FALSE_PUMP_OI_MAX_REACTION_PCT", c.false_pump.oi_max_reaction_pct
+        )
+        c.false_pump.near_top_pct = _get_float(
+            "FALSE_PUMP_NEAR_TOP_PCT", c.false_pump.near_top_pct
+        )
+        c.false_pump.min_flags_required = _get_int(
+            "FALSE_PUMP_MIN_FLAGS_REQUIRED", c.false_pump.min_flags_required
+        )
+        c.false_pump.mandatory_min_hits = _get_int(
+            "FALSE_PUMP_MANDATORY_MIN_HITS", c.false_pump.mandatory_min_hits
+        )
+        c.false_pump.liq_min_usd = _get_float(
+            "FALSE_PUMP_LIQ_MIN_USD", c.false_pump.liq_min_usd
+        )
+
         return c
