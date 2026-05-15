@@ -50,3 +50,40 @@
 
 **Priority:** low — не блокирует ничего сейчас. Помнить про это при 
 дебаге странных результатов.
+
+### liquidation_rollups: семантика и naming
+
+**Discovered:** при переносе liquidation_rollups (commit 7ec54bf)
+
+**Три зафиксированных нюанса:**
+
+1. **Side mapping (Bybit → long/short):**
+
+   v1 реализация: `short_pump/liquidations.py:567-610`. 
+   v2 повторяет 1:1. Это семантически корректно, не баг.
+
+2. **Window boundary расходится между v1 и v2:**
+   - v1 (in-memory WS buffer): `[now - N, now]` — обе границы включены
+   - v2 (CSV-based):            `(now - N, now]` — левая граница исключена
+   
+   В практике различие минимальное (миллисекундная точность). 
+   Если когда-то понадобится exact parity с v1 production — изменить 
+   фильтр в `liquidation_rollups.py:compute` с `>` на `>=`.
+
+3. **Naming gap для Phase 3:**
+   - v2 dataclass поля: `*_30s`, `*_60s`
+   - v1 events_v3.csv колонки: `liq_*_30s`, `liq_*_1m`
+   
+   Когда будут переноситься стратегии в Phase 3 — их v1 код читает 
+   `liq_long_count_1m`, не `liq_long_count_60s`. 
+   
+   **Нужен один из двух подходов:**
+   - (A) В стратегии при чтении из LiquidationRollups использовать 
+     `getattr(rollups, "long_count_60s")` через mapping `"1m" → "60s"`
+   - (B) Добавить в LiquidationRollups dataclass alias-поля 
+     `long_count_1m = long_count_60s` etc. — для совместимости
+   
+   Решение принимать в Phase 3 при первой стратегии которая использует 
+   liquidation features (вероятно false_pump).
+
+**Priority:** medium — не блокирует Phase 2, но обязательно учесть в Phase 3.
