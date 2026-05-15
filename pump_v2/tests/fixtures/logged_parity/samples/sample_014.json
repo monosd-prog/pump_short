@@ -1,33 +1,33 @@
 {
   "meta": {
     "sample_id": "sample_014",
-    "source_file": "datasets/date=20260319/strategy=short_pump/mode=live/events_v3.csv",
-    "source_row_index": 55,
-    "symbol": "SXPUSDT",
+    "source_file": "datasets/date=20260405/strategy=short_pump/mode=live/events_v3.csv",
+    "source_row_index": 50,
+    "symbol": "SIRENUSDT",
     "strategy": "short_pump",
     "mode": "live",
-    "event_id": "20260319_133916_entry_fast",
-    "time_utc": "2026-03-19 10:59:28.303424+00:00"
+    "event_id": "20260405_121155_entry_fast",
+    "time_utc": "2026-04-05 09:22:02.513786+00:00"
   },
   "logged_indicators": {
     "oi_change_1m_pct": {
-      "value": 0.722188,
+      "value": 0.077241,
       "source": "csv_column"
     },
     "oi_change_5m_pct": {
-      "value": 0.722188,
+      "value": 0.077241,
       "source": "csv_column"
     },
     "oi_change_fast_pct": {
-      "value": 0.722188,
+      "value": 0.077241,
       "source": "csv_column"
     },
     "delta_ratio_30s": {
-      "value": -0.28651,
+      "value": -0.207753,
       "source": "csv_column"
     },
     "delta_ratio_1m": {
-      "value": -0.133246,
+      "value": -0.207753,
       "source": "csv_column"
     },
     "delta_ratio_3m": {
@@ -35,11 +35,11 @@
       "source": "payload_json"
     },
     "cvd_delta_ratio_30s": {
-      "value": -0.28651,
+      "value": -0.207753,
       "source": "csv_column"
     },
     "cvd_delta_ratio_1m": {
-      "value": -0.133246,
+      "value": -0.207753,
       "source": "csv_column"
     },
     "cvd_abs_5m": {
@@ -51,11 +51,11 @@
       "source": "csv_column"
     },
     "funding_rate": {
-      "value": -0.005427,
+      "value": -0.005098,
       "source": "csv_column"
     },
     "funding_rate_abs": {
-      "value": 0.005427,
+      "value": 0.005098,
       "source": "csv_column"
     },
     "green_candles_5": {
@@ -63,27 +63,27 @@
       "source": "csv_column"
     },
     "wick_body_ratio_last": {
-      "value": 1.777778,
+      "value": 0.630952,
       "source": "csv_column"
     },
     "upper_wick_ratio_last": {
-      "value": 0.16,
+      "value": 0.0,
       "source": "csv_column"
     },
     "lower_wick_ratio_last": {
-      "value": 0.48,
+      "value": 0.386861,
       "source": "csv_column"
     },
     "max_candle_body_pct_5": {
-      "value": 10.391198,
+      "value": 2.357973,
       "source": "csv_column"
     },
     "avg_candle_body_pct_5": {
-      "value": 3.315452,
+      "value": 1.345021,
       "source": "csv_column"
     },
     "volume_zscore_20": {
-      "value": null,
+      "value": -1.68428,
       "source": "csv_column"
     },
     "stage": {
@@ -91,7 +91,7 @@
       "source": "csv_column"
     },
     "dist_to_peak_pct": {
-      "value": 5.010893,
+      "value": 8.169784,
       "source": "csv_column"
     },
     "context_score": {

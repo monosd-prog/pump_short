@@ -1,33 +1,33 @@
 {
   "meta": {
     "sample_id": "sample_037",
-    "source_file": "datasets/date=20260428/strategy=short_pump_premium/mode=live/events_v3.csv",
-    "source_row_index": 0,
-    "symbol": "ORCAUSDT",
-    "strategy": "short_pump_premium",
+    "source_file": "datasets/date=20260429/strategy=short_pump_fast0/mode=live/events_v3.csv",
+    "source_row_index": 104,
+    "symbol": "BSBUSDT",
+    "strategy": "short_pump_fast0",
     "mode": "live",
-    "event_id": "20260428_030725_entry_fast",
-    "time_utc": "2026-04-28 00:27:33.255590+00:00"
+    "event_id": "20260429_075225_fast0_3_2e6a84d5",
+    "time_utc": "2026-04-29 04:53:00+0000"
   },
   "logged_indicators": {
     "oi_change_1m_pct": {
-      "value": 1.44721,
+      "value": 0.096474,
       "source": "csv_column"
     },
     "oi_change_5m_pct": {
-      "value": 1.44721,
+      "value": 0.096474,
       "source": "csv_column"
     },
     "oi_change_fast_pct": {
-      "value": 1.44721,
+      "value": 0.096474,
       "source": "csv_column"
     },
     "delta_ratio_30s": {
-      "value": -0.218807,
+      "value": -0.42919,
       "source": "csv_column"
     },
     "delta_ratio_1m": {
-      "value": -0.218807,
+      "value": -0.42919,
       "source": "csv_column"
     },
     "delta_ratio_3m": {
@@ -35,86 +35,79 @@
       "source": "payload_json"
     },
     "cvd_delta_ratio_30s": {
-      "value": -0.218807,
+      "value": -0.42919,
       "source": "csv_column"
     },
     "cvd_delta_ratio_1m": {
-      "value": -0.218807,
+      "value": -0.42919,
       "source": "csv_column"
     },
     "cvd_abs_5m": {
-      "value": -5459.2,
+      "value": -28733.0,
       "source": "csv_column"
     },
     "cvd_ratio_5m": {
-      "value": -0.218807,
+      "value": -0.42919,
       "source": "csv_column"
     },
     "funding_rate": {
-      "value": -0.006669,
+      "value": 0.000799,
       "source": "csv_column"
     },
     "funding_rate_abs": {
-      "value": 0.006669,
+      "value": 0.000799,
       "source": "csv_column"
     },
     "green_candles_5": {
-      "value": 2.0,
+      "value": 3.0,
       "source": "csv_column"
     },
     "wick_body_ratio_last": {
-      "value": 3.903226,
+      "value": 0.141593,
       "source": "csv_column"
     },
     "upper_wick_ratio_last": {
-      "value": 0.460526,
+      "value": 0.116279,
       "source": "csv_column"
     },
     "lower_wick_ratio_last": {
-      "value": 0.335526,
+      "value": 0.007752,
       "source": "csv_column"
     },
     "max_candle_body_pct_5": {
-      "value": 5.879258,
+      "value": 9.379817,
       "source": "csv_column"
     },
     "avg_candle_body_pct_5": {
-      "value": 2.327804,
+      "value": 2.375948,
       "source": "csv_column"
     },
     "volume_zscore_20": {
-      "value": -1.067092,
+      "value": 4.242106,
       "source": "csv_column"
     },
     "stage": {
-      "value": 3,
-      "source": "csv_column"
-    },
-    "dist_to_peak_pct": {
-      "value": 0.474588,
-      "source": "csv_column"
-    },
-    "context_score": {
-      "value": 0.75,
-      "source": "csv_column"
-    },
-    "context_parts": {
-      "value": {
-        "stage": 0.25,
-        "near_top": 0.25,
-        "oi": 0.0,
-        "vol": 0.0,
-        "atr": 0.05,
-        "cvd": 0.2
-      },
-      "source": "payload_json"
-    },
-    "liq_long_count_30s": {
       "value": 0,
       "source": "csv_column"
     },
+    "dist_to_peak_pct": {
+      "value": 1.125523,
+      "source": "csv_column"
+    },
+    "context_score": {
+      "value": 0.25,
+      "source": "csv_column"
+    },
+    "context_parts": {
+      "value": null,
+      "source": "payload_json"
+    },
+    "liq_long_count_30s": {
+      "value": 20,
+      "source": "csv_column"
+    },
     "liq_long_usd_30s": {
-      "value": 0.0,
+      "value": 21012.0,
       "source": "csv_column"
     },
     "liq_short_count_30s": {
@@ -126,11 +119,11 @@
       "source": "csv_column"
     },
     "liq_long_count_1m": {
-      "value": 0,
+      "value": 20,
       "source": "csv_column"
     },
     "liq_long_usd_1m": {
-      "value": 0.0,
+      "value": 21012.0,
       "source": "csv_column"
     },
     "liq_short_count_1m": {

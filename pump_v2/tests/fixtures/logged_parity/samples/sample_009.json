@@ -1,30 +1,30 @@
 {
   "meta": {
     "sample_id": "sample_009",
-    "source_file": "datasets/date=20260303/strategy=short_pump/mode=paper/events_v3.csv",
-    "source_row_index": 13,
-    "symbol": "KITEUSDT",
-    "strategy": "short_pump",
-    "mode": "paper",
-    "event_id": "20260303_034725_entry_fast",
-    "time_utc": "2026-03-03 01:47:46.658315+00:00"
+    "source_file": "datasets/date=20260314/strategy=short_pump_fast0/mode=live/events_v3.csv",
+    "source_row_index": 257,
+    "symbol": "MBOXUSDT",
+    "strategy": "short_pump_fast0",
+    "mode": "live",
+    "event_id": "20260314_175235_fast0_2_57a0a6b7",
+    "time_utc": "2026-03-14 14:52:59+0000"
   },
   "logged_indicators": {
     "oi_change_1m_pct": {
-      "value": null,
+      "value": 2.73133,
       "source": "csv_column"
     },
     "oi_change_5m_pct": {
-      "value": null,
+      "value": 2.73133,
       "source": "csv_column"
     },
     "oi_change_fast_pct": {
-      "value": -0.31296,
+      "value": null,
       "source": "csv_column"
     },
     "delta_ratio_30s": {
-      "value": -0.366958,
-      "source": "payload_json"
+      "value": null,
+      "source": "csv_column"
     },
     "delta_ratio_1m": {
       "value": null,
@@ -35,11 +35,11 @@
       "source": "payload_json"
     },
     "cvd_delta_ratio_30s": {
-      "value": -0.366958,
+      "value": -0.306241,
       "source": "csv_column"
     },
     "cvd_delta_ratio_1m": {
-      "value": -0.470517,
+      "value": -0.288294,
       "source": "csv_column"
     },
     "cvd_abs_5m": {
@@ -51,11 +51,11 @@
       "source": "csv_column"
     },
     "funding_rate": {
-      "value": -0.00203,
+      "value": -0.012581,
       "source": "csv_column"
     },
     "funding_rate_abs": {
-      "value": 0.00203,
+      "value": 0.012581,
       "source": "csv_column"
     },
     "green_candles_5": {
@@ -83,30 +83,23 @@
       "source": "csv_column"
     },
     "volume_zscore_20": {
-      "value": null,
+      "value": 3.071589,
       "source": "csv_column"
     },
     "stage": {
-      "value": 4,
+      "value": 0,
       "source": "csv_column"
     },
     "dist_to_peak_pct": {
-      "value": 6.728997,
+      "value": 0.927293,
       "source": "csv_column"
     },
     "context_score": {
-      "value": 0.55,
+      "value": 0.4,
       "source": "csv_column"
     },
     "context_parts": {
-      "value": {
-        "stage": 0.3,
-        "near_top": 0.0,
-        "oi": 0.0,
-        "vol": 0.0,
-        "atr": 0.05,
-        "cvd": 0.2
-      },
+      "value": null,
       "source": "payload_json"
     },
     "liq_long_count_30s": {

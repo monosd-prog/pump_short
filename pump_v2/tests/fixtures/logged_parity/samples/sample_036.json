@@ -1,13 +1,13 @@
 {
   "meta": {
     "sample_id": "sample_036",
-    "source_file": "datasets/date=20260427/strategy=false_pump/mode=paper/events_v3.csv",
-    "source_row_index": 332,
-    "symbol": "0GUSDT",
+    "source_file": "datasets/date=20260428/strategy=false_pump/mode=paper/events_v3.csv",
+    "source_row_index": 87,
+    "symbol": "GOATUSDT",
     "strategy": "false_pump",
     "mode": "paper",
-    "event_id": "1777317980625",
-    "time_utc": "2026-04-27 19:26:20+0000"
+    "event_id": "1777344231821",
+    "time_utc": "2026-04-28 02:43:51+0000"
   },
   "logged_indicators": {
     "oi_change_1m_pct": {
@@ -51,11 +51,11 @@
       "source": "csv_column"
     },
     "funding_rate": {
-      "value": -0.001747,
+      "value": 5e-05,
       "source": "csv_column"
     },
     "funding_rate_abs": {
-      "value": 0.001747,
+      "value": 5e-05,
       "source": "csv_column"
     },
     "green_candles_5": {
@@ -91,7 +91,7 @@
       "source": "csv_column"
     },
     "dist_to_peak_pct": {
-      "value": 0.707419,
+      "value": 1.162791,
       "source": "csv_column"
     },
     "context_score": {
