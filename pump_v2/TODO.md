@@ -173,3 +173,48 @@
 Решить в Phase 3 при первой стратегии что использует window peak.
 
 **Priority:** medium — не блокирует Phase 2, обязательно учесть в Phase 3.
+
+### context_score_5m: input is dbg5-shaped, not v2 indicator outputs
+
+**Discovered:** при переносе context_score_5m (commit f971495),
+последний индикатор Phase 2.
+
+**Что обнаружено:**
+
+v1 `compute_context_score_5m` принимает `dbg5` dict (результат `build_dbg5`).
+Это НЕ те же самые скаляры что наши v2 индикаторы возвращают:
+
+| dbg5 key                | v2 indicator         | Difference                          |
+|-------------------------|----------------------|-------------------------------------|
+| vol_z                   | volume_zscore        | dbg5 uses lookback ~48 (context5m._volume_z), v2 indicator uses 50 (features.volume_zscore) |
+| atr_14_5m_pct (%)       | atr_pct_5m_14        | dbg5 returns percent (×100), v2 indicator returns fraction |
+| 5 parts: stage, near_top, oi, vol, atr | — | v1 legacy: cvd part dropped from canonical compute_context_score_5m |
+
+**Что это значит для Phase 3 (Strategies):**
+
+Когда стратегия (например short_pump_mid) захочет вызвать
+`ContextScore5mIndicator`, у неё есть три варианта:
+
+(A) Собрать dbg5-shaped dict вручную, считая `vol_z` и `atr_14_5m_pct`
+    через v1-style функции (`context5m._volume_z` и `context5m._atr_pct_14`).
+    Требует переноса этих двух helper-функций как отдельных v2-индикаторов
+    (либо как private utilities).
+
+(B) Сделать adapter внутри `ContextScore5mIndicator.compute()` который
+    принимает v2-style inputs (наши `volume_zscore`, `atr_pct_5m_14`) и
+    внутри пересчитывает в dbg5 scale.
+
+(C) Создать "dbg5"/"context_bundle" как отдельный composite в
+    `MarketContext`, который наполняется на каждом тике (по аналогии с
+    тем как watcher v1 делает `build_dbg5`).
+
+**Рекомендация:** вариант (C). Это ближе всего к v1 архитектуре и
+сохраняет `ContextScore5mIndicator` как чистый компоновщик.
+
+**Action item:** решить в Phase 3 при переносе первой стратегии
+которая использует `context_score_5m`. Возможно понадобится перенести
+дополнительно `_volume_z` и `_atr_pct_14` из `context5m.py` как
+вспомогательные индикаторы.
+
+**Priority:** high для Phase 3 — это в критическом пути перевода
+короткостратегий.
