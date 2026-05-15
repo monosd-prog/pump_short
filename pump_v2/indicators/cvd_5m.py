@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 import pandas as pd
 
 from pump_v2.core.indicator_base import Indicator
-from pump_v2.indicators.delta_ratio import _normalize_trades_df
+from pump_v2.indicators._trade_utils import normalize_trades_df as _normalize_trades_df
 
 
 def _cvd_5m_v1_body(
