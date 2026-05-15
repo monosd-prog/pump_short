@@ -126,15 +126,16 @@ def log_exception(
         extra: Additional context dict
         exc_info: Whether to include exception info (default True)
     """
-    extra_dict = extra or {}
-    formatted_msg = _format_context_msg(
-        msg,
-        symbol=symbol,
-        run_id=run_id,
-        stage=stage,
-        step=step,
-        **extra_dict,
-    )
+    extra_dict = dict(extra or {})
+    if symbol is not None:
+        extra_dict["symbol"] = symbol
+    if run_id is not None:
+        extra_dict["run_id"] = run_id
+    if stage is not None:
+        extra_dict["stage"] = stage
+    if step is not None:
+        extra_dict["step"] = step
+    formatted_msg = _format_context_msg(msg, **extra_dict)
     logger.exception(formatted_msg, exc_info=exc_info)
 
 
@@ -149,15 +150,16 @@ def log_info(
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Log info message with context."""
-    extra_dict = extra or {}
-    formatted_msg = _format_context_msg(
-        msg,
-        symbol=symbol,
-        run_id=run_id,
-        stage=stage,
-        step=step,
-        **extra_dict,
-    )
+    extra_dict = dict(extra or {})
+    if symbol is not None:
+        extra_dict["symbol"] = symbol
+    if run_id is not None:
+        extra_dict["run_id"] = run_id
+    if stage is not None:
+        extra_dict["stage"] = stage
+    if step is not None:
+        extra_dict["step"] = step
+    formatted_msg = _format_context_msg(msg, **extra_dict)
     logger.info(formatted_msg)
 
 
@@ -172,6 +174,14 @@ def log_warning(
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Log warning message with context."""
-    extra_dict = extra or {}
-    formatted_msg = _format_context_msg(msg, symbol=symbol, run_id=run_id, stage=stage, step=step, **extra_dict)
+    extra_dict = dict(extra or {})
+    if symbol is not None:
+        extra_dict["symbol"] = symbol
+    if run_id is not None:
+        extra_dict["run_id"] = run_id
+    if stage is not None:
+        extra_dict["stage"] = stage
+    if step is not None:
+        extra_dict["step"] = step
+    formatted_msg = _format_context_msg(msg, **extra_dict)
     logger.warning(formatted_msg)
