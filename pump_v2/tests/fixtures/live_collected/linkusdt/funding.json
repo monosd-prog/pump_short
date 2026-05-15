@@ -1,0 +1,40 @@
+{
+  "ws_ticker_last": {
+    "symbol": "LINKUSDT",
+    "ask1Price": "10.369",
+    "ask1Size": "311.5"
+  },
+  "rest_tickers": {
+    "symbol": "LINKUSDT",
+    "lastPrice": "10.369",
+    "indexPrice": "10.377",
+    "markPrice": "10.371",
+    "prevPrice24h": "10.237",
+    "price24hPcnt": "0.012894",
+    "highPrice24h": "10.773",
+    "lowPrice24h": "10.179",
+    "prevPrice1h": "10.294",
+    "openInterest": "6349571.8",
+    "openInterestValue": "65851409.14",
+    "turnover24h": "64407598.2752",
+    "volume24h": "6147588.7000",
+    "fundingRate": "0.00000354",
+    "nextFundingTime": "1778832000000",
+    "predictedDeliveryPrice": "",
+    "basisRate": "",
+    "deliveryFeeRate": "",
+    "deliveryTime": "0",
+    "ask1Size": "456.4",
+    "bid1Price": "10.368",
+    "ask1Price": "10.369",
+    "bid1Size": "10161.2",
+    "basis": "",
+    "preOpenPrice": "",
+    "preQty": "",
+    "curPreListingPhase": "",
+    "fundingIntervalHour": "8",
+    "basisRateYear": "",
+    "fundingCap": "0.01"
+  },
+  "fetched_at_utc": "2026-05-15T07:50:54.084969+00:00"
+}

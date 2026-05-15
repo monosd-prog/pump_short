@@ -1,0 +1,40 @@
+{
+  "collection_start_utc": "2026-05-15T07:05:03.450636+00:00",
+  "collection_end_utc": "2026-05-15T07:50:54.088886+00:00",
+  "duration_minutes": 45.0,
+  "dry_run": false,
+  "symbols": [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "DOGEUSDT",
+    "LINKUSDT"
+  ],
+  "stats": {
+    "BTCUSDT": {
+      "n_trades": 58432,
+      "n_oi_snapshots": 83,
+      "n_liquidations": 29
+    },
+    "ETHUSDT": {
+      "n_trades": 63133,
+      "n_oi_snapshots": 84,
+      "n_liquidations": 9
+    },
+    "SOLUSDT": {
+      "n_trades": 23284,
+      "n_oi_snapshots": 83,
+      "n_liquidations": 10
+    },
+    "DOGEUSDT": {
+      "n_trades": 22890,
+      "n_oi_snapshots": 83,
+      "n_liquidations": 4
+    },
+    "LINKUSDT": {
+      "n_trades": 7192,
+      "n_oi_snapshots": 83,
+      "n_liquidations": 1
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "ws_ticker_last": {
+    "symbol": "BTCUSDT",
+    "bid1Price": "80818.10",
+    "bid1Size": "4.445"
+  },
+  "rest_tickers": {
+    "symbol": "BTCUSDT",
+    "lastPrice": "80840.50",
+    "indexPrice": "80866.84",
+    "markPrice": "80836.20",
+    "prevPrice24h": "79823.10",
+    "price24hPcnt": "0.012745",
+    "highPrice24h": "81999.00",
+    "lowPrice24h": "79190.50",
+    "prevPrice1h": "80560.00",
+    "openInterest": "52205.113",
+    "openInterestValue": "4220062955.49",
+    "turnover24h": "6401631281.9328",
+    "volume24h": "79197.6680",
+    "fundingRate": "-0.00002408",
+    "nextFundingTime": "1778832000000",
+    "predictedDeliveryPrice": "",
+    "basisRate": "",
+    "deliveryFeeRate": "",
+    "deliveryTime": "0",
+    "ask1Size": "1.479",
+    "bid1Price": "80840.50",
+    "ask1Price": "80840.60",
+    "bid1Size": "9.032",
+    "basis": "",
+    "preOpenPrice": "",
+    "preQty": "",
+    "curPreListingPhase": "",
+    "fundingIntervalHour": "8",
+    "basisRateYear": "",
+    "fundingCap": "0.005"
+  },
+  "fetched_at_utc": "2026-05-15T07:50:52.385800+00:00"
+}

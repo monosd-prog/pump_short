@@ -1,0 +1,40 @@
+{
+  "ws_ticker_last": {
+    "symbol": "DOGEUSDT",
+    "bid1Price": "0.11491",
+    "bid1Size": "16437"
+  },
+  "rest_tickers": {
+    "symbol": "DOGEUSDT",
+    "lastPrice": "0.11488",
+    "indexPrice": "0.11495",
+    "markPrice": "0.11488",
+    "prevPrice24h": "0.11386",
+    "price24hPcnt": "0.008958",
+    "highPrice24h": "0.11859",
+    "lowPrice24h": "0.11260",
+    "prevPrice1h": "0.11467",
+    "openInterest": "1525755187",
+    "openInterestValue": "175278755.88",
+    "turnover24h": "446240921.6364",
+    "volume24h": "3872924181.0000",
+    "fundingRate": "-0.0000515",
+    "nextFundingTime": "1778832000000",
+    "predictedDeliveryPrice": "",
+    "basisRate": "",
+    "deliveryFeeRate": "",
+    "deliveryTime": "0",
+    "ask1Size": "86140",
+    "bid1Price": "0.11488",
+    "ask1Price": "0.11489",
+    "bid1Size": "25631",
+    "basis": "",
+    "preOpenPrice": "",
+    "preQty": "",
+    "curPreListingPhase": "",
+    "fundingIntervalHour": "8",
+    "basisRateYear": "",
+    "fundingCap": "0.0058"
+  },
+  "fetched_at_utc": "2026-05-15T07:50:53.677033+00:00"
+}

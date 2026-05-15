@@ -1,0 +1,167 @@
+{
+  "oi_change_pct_1m": {
+    "v1_ref": "short_pump/features.py:oi_change_pct:73",
+    "params": {
+      "lookback_minutes": 1
+    },
+    "value": 0.0
+  },
+  "oi_change_pct_3m": {
+    "v1_ref": "short_pump/features.py:oi_change_pct:73",
+    "params": {
+      "lookback_minutes": 3
+    },
+    "value": 0.0
+  },
+  "oi_change_pct_5m": {
+    "v1_ref": "short_pump/features.py:oi_change_pct:73",
+    "params": {
+      "lookback_minutes": 5
+    },
+    "value": -0.057942
+  },
+  "oi_divergence_5m": {
+    "v1_ref": "short_pump/features.py:oi_divergence_5m:117",
+    "params": {
+      "oi_change_5m_pct": -0.057942,
+      "dist_to_peak_pct": 0.905719
+    },
+    "value": true
+  },
+  "delta_ratio_30s": {
+    "v1_ref": "short_pump/features.py:delta_ratio:15",
+    "params": {
+      "since_ts": "2026-05-15T07:50:24.088886+00:00"
+    },
+    "value": 0.0
+  },
+  "delta_ratio_1m": {
+    "v1_ref": "short_pump/features.py:delta_ratio:15",
+    "params": {
+      "since_ts": "2026-05-15T07:49:54.088886+00:00"
+    },
+    "value": 0.999474
+  },
+  "delta_ratio_3m": {
+    "v1_ref": "short_pump/features.py:delta_ratio:15",
+    "params": {
+      "since_ts": "2026-05-15T07:47:54.088886+00:00"
+    },
+    "value": 0.517063
+  },
+  "cvd_delta_ratio_30s": {
+    "v1_ref": "short_pump/features.py:cvd_delta_ratio:141",
+    "params": {
+      "since_ts": "2026-05-15T07:50:24.088886+00:00"
+    },
+    "value": null
+  },
+  "cvd_delta_ratio_1m": {
+    "v1_ref": "short_pump/features.py:cvd_delta_ratio:141",
+    "params": {
+      "since_ts": "2026-05-15T07:49:54.088886+00:00"
+    },
+    "value": 0.999474
+  },
+  "atr_pct_5m_14": {
+    "v1_ref": "short_pump/features.py:atr_pct:59",
+    "params": {
+      "period": 14
+    },
+    "value": 0.002991
+  },
+  "volume_zscore": {
+    "v1_ref": "short_pump/features.py:volume_zscore:8",
+    "params": {
+      "lookback": 50
+    },
+    "value": -1.157508
+  },
+  "cvd_5m": {
+    "value": 1766759.0,
+    "v1_ref": "common/market_features.py:cvd_5m:265",
+    "params": {
+      "now_ts_utc": "2026-05-15T07:50:54.088886+00:00"
+    },
+    "cvd_ratio_5m": 0.665218
+  },
+  "funding_snapshot": {
+    "value": {
+      "funding_rate": -5.1e-05,
+      "funding_rate_abs": 5.1e-05,
+      "ts_utc": "1778832000000"
+    },
+    "v1_ref": "common/market_features.py:normalize_funding:351",
+    "params": {
+      "payload": "see funding.json"
+    }
+  },
+  "pump_shape_5m": {
+    "value": {
+      "green_candles_5": 2.0,
+      "max_candle_body_pct_5": 0.209278,
+      "avg_candle_body_pct_5": 0.074951,
+      "upper_wick_ratio_last": 0.0,
+      "lower_wick_ratio_last": 0.333333,
+      "wick_body_ratio_last": 0.5
+    },
+    "v1_ref": "common/market_features.py:pump_shape_features_5m:98",
+    "params": {
+      "lookback": 5
+    }
+  },
+  "liquidation_rollups": {
+    "value": {
+      "long_count_30s": 0,
+      "long_usd_30s": 0.0,
+      "short_count_30s": 0,
+      "short_usd_30s": 0.0,
+      "long_count_60s": 0,
+      "long_usd_60s": 0.0,
+      "short_count_60s": 0,
+      "short_usd_60s": 0.0
+    },
+    "v1_ref": "pump_v2/tests/fixtures/_generate.py:liquidation_rollups_from_csv:205",
+    "params": {
+      "symbol": "DOGEUSDT",
+      "window_end": "2026-05-15T07:50:54.088886+00:00"
+    }
+  },
+  "structure_state": {
+    "value": {
+      "stage": 0,
+      "peak_price": 0.11593,
+      "low_after_peak": 0.11311,
+      "low_after_bounce": 0.11579,
+      "bounce_count": 0,
+      "armed_notified": false,
+      "armed_since_utc": ""
+    },
+    "v1_ref": "short_pump/context5m.py:update_structure:49",
+    "params": {}
+  },
+  "dist_to_fsm_peak_pct": {
+    "v1_ref": "short_pump/context5m.py:build_dbg5:170",
+    "params": {
+      "field": "dist_to_peak_pct"
+    },
+    "value": 0.905719
+  },
+  "dist_to_window_peak_pct": {
+    "value": 0.905719,
+    "v1_ref": "derived:window_high_vs_last_close",
+    "params": {}
+  },
+  "context_score_5m": {
+    "value": 0.45,
+    "parts": {
+      "stage": 0.0,
+      "near_top": 0.25,
+      "oi": 0.2,
+      "vol": 0.0,
+      "atr": 0.0
+    },
+    "v1_ref": "short_pump/context5m.py:compute_context_score_5m:249",
+    "params": {}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "symbol": "ETHUSDT",
+  "ts_snapshot_utc": "2026-05-15T07:50:54.088886+00:00",
+  "window_start_utc": "2026-05-15T07:05:03.450636+00:00",
+  "window_end_utc": "2026-05-15T07:50:54.088886+00:00",
+  "description": "Live WS+REST collection window (see live_collected/meta.json)",
+  "source": "live_collected"
+}
