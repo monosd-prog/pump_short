@@ -87,3 +87,53 @@
    liquidation features (вероятно false_pump).
 
 **Priority:** medium — не блокирует Phase 2, но обязательно учесть в Phase 3.
+
+### structure_state: FSM defaults, determinism, sort
+
+**Discovered:** при переносе structure_state (commit edf38b1)
+
+**Три зафиксированных нюанса:**
+
+1. **config.py vs update_structure defaults (единицы измерения):**
+
+   v1 production использует `update_structure` defaults (проценты).
+   `config.py` содержит ДОЛИ — видимо legacy или другое назначение.
+   v2 fixtures и `StructureStateIndicator` используют canon (3/1/2/0.8).
+
+   **Risk:** при чтении `config.py` кто-то может подумать что `0.03` = canon,
+   что сломает FSM (порог в 100 раз меньше).
+
+   **Action:** при переносе стратегий в Phase 3 — параметры FSM должны
+   браться из YAML `strategies.yaml`, не из `config.py`. Дефолты в YAML —
+   `3.0` / `1.0` / `2.0` / `0.8`.
+
+2. **`armed_since_utc` недетерминированно:**
+
+   v1 `update_structure` при входе в stage 4 ставит `datetime.now(UTC)`.
+   Это значит:
+   - Replay одной и той же истории даёт РАЗНЫЙ `armed_since_utc`
+   - Тесты не могут assert на это поле через `==`
+   - Backtest reproducibility страдает
+
+   **Решение в v2:** В будущем (когда стратегии будут использовать
+   `armed_since_utc`) — добавить параметр `now_fn: Callable[[], datetime]`
+   в `compute()`, чтобы можно было injection времени для детерминизма.
+
+   Сейчас в v2 повторяем v1 поведение (MIRRORS_V1).
+
+   **Priority:** разрешить в Phase 4 (backtest engine) — там
+   детерминизм критичен.
+
+3. **`structure_state` требует сортировку history по ts:**
+
+   В отличие от `atr_pct_5m_14` / `volume_zscore` (которые НЕ сортируют),
+   `structure_state` ОБЯЗАН сортировать — FSM зависит от порядка.
+
+   v1 production это не проблема (REST/WS даёт данные в порядке).
+   v2 replay через DataFeed может прийти неотсортированно — поэтому
+   индикатор сам сортирует.
+
+   **Implication:** Если в Phase 4 ETL обеспечит уже отсортированные
+   parquet — sort внутри FSM станет избыточным (но всё равно безопасным).
+
+**Priority:** medium для Phase 3, high для Phase 4 (backtest determinism).
