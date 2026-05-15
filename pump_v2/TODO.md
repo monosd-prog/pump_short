@@ -137,3 +137,39 @@
    parquet — sort внутри FSM станет избыточным (но всё равно безопасным).
 
 **Priority:** medium для Phase 3, high для Phase 4 (backtest determinism).
+
+### dist_to_window_peak_pct: три разных семантики peak
+
+**Discovered:** при переносе dist_to_*peak_pct (commit d8227b3)
+
+В v1 кодовой базе ТРИ разные реализации "dist to peak":
+
+1. **v1 production watcher** (`short_pump/watcher.py:_peak_price_5m`):
+   `max(close)` за последние 12 × 5m свечей = rolling 60min по close
+   Используется false_pump в production.
+
+2. **v1 fixture canon** (`pump_v2/tests/fixtures/_generate.py:replay_structure`):
+   `max(high)` по всем свечам префикса, без окна
+   Используется в expected_indicators.json.
+
+3. **v2 DistToWindowPeakPct**:
+   - При `window_minutes=None`: повторяет fixture canon (max(high) all)
+   - При `window_minutes=N`: окно `(ts-N, ts]` по high
+
+**Текущий статус v2 индикатора:** проходит parity с fixtures (canon #2), 
+но НЕ повторяет production false_pump (canon #1).
+
+**Action item для Phase 3/8 (когда переносим false_pump):**
+
+Добавить в DistToWindowPeakPct параметр `peak_source: Literal["close", "high"]`
+и `aggregation: Literal["max", "min"]` (по умолчанию max).
+
+Для false_pump production parity использовать:
+  DistToWindowPeakPct(window_minutes=60, peak_source="close")
+
+ИЛИ создать отдельный индикатор DistToCloseWindowPeakPct для production 
+семантики, оставить DistToWindowPeakPct как fixture canon.
+
+Решить в Phase 3 при первой стратегии что использует window peak.
+
+**Priority:** medium — не блокирует Phase 2, обязательно учесть в Phase 3.
