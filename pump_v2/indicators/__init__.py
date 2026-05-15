@@ -6,6 +6,7 @@ from pump_v2.indicators.cvd_delta_ratio import CVDDeltaRatio
 from pump_v2.indicators.delta_ratio import DeltaRatio
 from pump_v2.indicators.funding_snapshot import FundingSnapshot, FundingSnapshotIndicator
 from pump_v2.indicators.oi_change_pct import OIChangePct
+from pump_v2.indicators.pump_shape_5m import PumpShape5m, PumpShape5mIndicator
 from pump_v2.indicators.volume_zscore import VolumeZScore
 
 __all__ = [
@@ -16,5 +17,7 @@ __all__ = [
     "FundingSnapshot",
     "FundingSnapshotIndicator",
     "OIChangePct",
+    "PumpShape5m",
+    "PumpShape5mIndicator",
     "VolumeZScore",
 ]
