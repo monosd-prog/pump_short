@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
+
+from pump_v2.indicators.dbg5_builder import Dbg5Bundle
 
 
 @dataclass
@@ -14,3 +16,4 @@ class MarketContext:
     cvd: float = 0.0
     liquidations: list = field(default_factory=list)
     indicators: dict = field(default_factory=dict)  # extensible
+    dbg5: Optional[Dbg5Bundle] = None
