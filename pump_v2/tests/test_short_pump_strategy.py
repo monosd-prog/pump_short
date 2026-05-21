@@ -1,4 +1,4 @@
-"""Tests for pump_v2.strategies.short_pump — ShortPumpStrategy pilot (short_pump_mid)."""
+"""Tests for pump_v2.strategies.short_pump — ShortPumpStrategy (mid + funding_1R)."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -16,11 +16,13 @@ def _make_ctx(
     dist: float,
     ctx_score: float,
     close: float = 1.0,
+    funding: float = 0.0,
 ) -> MarketContext:
     ts = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     return MarketContext(
         symbol="BTCUSDT",
         ts_utc=ts,
+        funding=funding,
         dbg5=Dbg5Bundle(
             stage=stage,
             dist_to_peak_pct=dist,
@@ -84,3 +86,58 @@ def test_no_dbg5_returns_none(strategy: ShortPumpStrategy) -> None:
     ctx = _make_ctx(stage=4, dist=4.2, ctx_score=0.50)
     ctx.dbg5 = None
     assert strategy.check_signal(ctx) is None
+
+
+def test_funding_band1_signal_returned(strategy: ShortPumpStrategy) -> None:
+    sig = strategy.check_signal(
+        _make_ctx(stage=4, dist=4.2, ctx_score=0.50, funding=-0.0007)
+    )
+    assert sig is not None
+    assert sig.metadata["risk_profile"] == "short_pump_funding_1R"
+    assert sig.metadata["funding_rate_abs"] == pytest.approx(0.0007)
+    assert sig.notional_usd == 10.0
+    assert sig.leverage == 4
+
+
+def test_funding_band2_signal_returned(strategy: ShortPumpStrategy) -> None:
+    sig = strategy.check_signal(
+        _make_ctx(stage=4, dist=6.0, ctx_score=0.30, funding=0.007)
+    )
+    assert sig is not None
+    assert sig.metadata["risk_profile"] == "short_pump_funding_1R"
+    assert sig.metadata["funding_rate_abs"] == pytest.approx(0.007)
+
+
+def test_funding_before_mid(strategy: ShortPumpStrategy) -> None:
+    # mid-range dist/ctx but funding band → funding_1R wins
+    sig = strategy.check_signal(
+        _make_ctx(stage=4, dist=4.2, ctx_score=0.50, funding=0.0008)
+    )
+    assert sig is not None
+    assert sig.metadata["risk_profile"] == "short_pump_funding_1R"
+
+
+def test_funding_stage3_blocked_by_tradeable_gate(strategy: ShortPumpStrategy) -> None:
+    # F-fix: classify accepts stage 3, tradeable gate still stage == 4
+    sig = strategy.check_signal(
+        _make_ctx(stage=3, dist=4.2, ctx_score=0.50, funding=0.0008)
+    )
+    assert sig is None
+
+
+def test_funding_outside_bands_falls_through_to_mid(strategy: ShortPumpStrategy) -> None:
+    sig = strategy.check_signal(
+        _make_ctx(stage=4, dist=4.2, ctx_score=0.50, funding=0.002)
+    )
+    assert sig is not None
+    assert sig.metadata["risk_profile"] == "short_pump_mid"
+
+
+def test_funding_boundary_upper_excluded(strategy: ShortPumpStrategy) -> None:
+    # fr=0.001 / 0.01 not in [0.0005,0.001) nor [0.005,0.01) → mid when dist/ctx ok
+    for fr in (0.001, 0.01):
+        sig = strategy.check_signal(
+            _make_ctx(stage=4, dist=4.2, ctx_score=0.50, funding=fr)
+        )
+        assert sig is not None
+        assert sig.metadata["risk_profile"] == "short_pump_mid"

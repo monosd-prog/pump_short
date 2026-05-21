@@ -1,4 +1,4 @@
-"""Short pump strategy — pilot: short_pump_mid only (Step 3.1)."""
+"""Short pump strategy — short_pump_funding_1R + short_pump_mid (Step 3.1–3.3)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +15,8 @@ _TP_PCT_CONFIRM = 0.006
 _SL_PCT_CONFIRM = 0.004
 _SHORT_PUMP_MID_RISK_MULT = 0.7
 _TRADEABLE_DIST_MIN = 3.5
+_FUNDING_BAND_1 = (0.0005, 0.001)
+_FUNDING_BAND_2 = (0.005, 0.01)
 
 
 @dataclass
@@ -50,7 +52,14 @@ class ShortPumpStrategy(Strategy):
         if context_score is None:
             return None
 
-        profile = self._classify_profile(stage, dist_to_peak_pct, context_score)
+        funding_abs = abs(ctx.funding) if ctx.funding else None
+
+        profile = self._classify_profile(
+            stage,
+            dist_to_peak_pct,
+            context_score,
+            funding_rate_abs=funding_abs,
+        )
         if profile is None:
             return None
 
@@ -60,6 +69,16 @@ class ShortPumpStrategy(Strategy):
 
         tp_price = entry_price * (1.0 - profile.tp_pct)
         sl_price = entry_price * (1.0 + profile.sl_pct)
+
+        metadata: dict[str, Any] = {
+            "risk_profile": profile.name,
+            "stage": stage,
+            "dist_to_peak_pct": dist_to_peak_pct,
+            "context_score": context_score,
+            "risk_mult": profile.risk_mult,
+        }
+        if profile.name == "short_pump_funding_1R":
+            metadata["funding_rate_abs"] = funding_abs
 
         return Signal(
             strategy=self.name,
@@ -71,13 +90,7 @@ class ShortPumpStrategy(Strategy):
             notional_usd=profile.notional_usd,
             leverage=profile.leverage,
             ts_utc=ctx.ts_utc,
-            metadata={
-                "risk_profile": profile.name,
-                "stage": stage,
-                "dist_to_peak_pct": dist_to_peak_pct,
-                "context_score": context_score,
-                "risk_mult": profile.risk_mult,
-            },
+            metadata=metadata,
         )
 
     def _read_context_score(self, ctx: MarketContext) -> Optional[float]:
@@ -114,7 +127,26 @@ class ShortPumpStrategy(Strategy):
         stage: int,
         dist_to_peak_pct: float,
         context_score: float,
+        funding_rate_abs: Optional[float] = None,
     ) -> Optional[ShortPumpProfile]:
+        fr = funding_rate_abs
+        if (
+            stage in (3, 4)
+            and fr is not None
+            and (
+                (_FUNDING_BAND_1[0] <= fr < _FUNDING_BAND_1[1])
+                or (_FUNDING_BAND_2[0] <= fr < _FUNDING_BAND_2[1])
+            )
+        ):
+            return ShortPumpProfile(
+                name="short_pump_funding_1R",
+                notional_usd=_LIVE_FIXED_NOTIONAL_USD * 1.0,
+                leverage=_LIVE_LEVERAGE,
+                tp_pct=_TP_PCT_CONFIRM,
+                sl_pct=_SL_PCT_CONFIRM,
+                risk_mult=1.0,
+            )
+
         if (
             stage in (3, 4)
             and 3.5 <= dist_to_peak_pct < 5.0
