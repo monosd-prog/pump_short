@@ -17,8 +17,9 @@ def build_market_context_from_watcher(
     dbg5: Dict[str, Any],
     context_score: float,
     ctx_parts: Dict[str, float],
+    liq_features: Optional[Dict[str, Any]] = None,
+    trades_list: Optional[List[Dict[str, Any]]] = None,
 ) -> MarketContext:
-    _ = oi_dict
     oi_change = dbg5.get("oi_change_5m_pct")
     oi_change_5m_pct = float(oi_change) if oi_change is not None else None
 
@@ -42,4 +43,15 @@ def build_market_context_from_watcher(
         score=float(context_score),
         parts=dict(ctx_parts),
     )
+
+    if oi_dict is not None:
+        ctx.oi_history = oi_dict.get("oi_df")
+
+    if liq_features is not None:
+        ctx.indicators["liquidation_features"] = liq_features
+        ctx.indicators["liq_long_usd_30s"] = liq_features.get("liq_long_usd_30s")
+
+    if trades_list is not None:
+        ctx.indicators["recent_trades"] = trades_list
+
     return ctx

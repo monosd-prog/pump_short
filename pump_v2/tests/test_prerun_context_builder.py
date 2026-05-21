@@ -99,3 +99,89 @@ def test_log_none_signal_no_write(tmp_path, monkeypatch: pytest.MonkeyPatch) -> 
 
     signal_logger.log_prerun_signal(None, "BTCUSDT")
     assert not csv_path.exists()
+
+
+def test_liq_features_stored_in_indicators() -> None:
+    liq = {"liq_long_usd_30s": 45.0, "liq_short_usd_30s": 10.0}
+    ctx = build_market_context_from_watcher(
+        symbol="BTCUSDT",
+        candles_5m=[{"close": 1.0}],
+        oi_dict=None,
+        funding_rate=0.0,
+        dbg5={"stage": 4, "dist_to_peak_pct": 4.0},
+        context_score=0.5,
+        ctx_parts={},
+        liq_features=liq,
+    )
+    assert ctx.indicators["liquidation_features"]["liq_long_usd_30s"] == 45.0
+    assert ctx.indicators["liq_long_usd_30s"] == 45.0
+
+
+def test_liq_features_none_no_key() -> None:
+    ctx = build_market_context_from_watcher(
+        symbol="BTCUSDT",
+        candles_5m=[{"close": 1.0}],
+        oi_dict=None,
+        funding_rate=0.0,
+        dbg5={"stage": 4, "dist_to_peak_pct": 4.0},
+        context_score=0.5,
+        ctx_parts={},
+        liq_features=None,
+    )
+    assert "liquidation_features" not in ctx.indicators
+    assert "liq_long_usd_30s" not in ctx.indicators
+
+
+def test_oi_history_stored() -> None:
+    ctx = build_market_context_from_watcher(
+        symbol="BTCUSDT",
+        candles_5m=[{"close": 1.0}],
+        oi_dict={"oi_df": "mock_df"},
+        funding_rate=0.0,
+        dbg5={"stage": 4, "dist_to_peak_pct": 4.0},
+        context_score=0.5,
+        ctx_parts={},
+    )
+    assert ctx.oi_history == "mock_df"
+
+
+def test_oi_dict_none_leaves_oi_history_none() -> None:
+    ctx = build_market_context_from_watcher(
+        symbol="BTCUSDT",
+        candles_5m=[{"close": 1.0}],
+        oi_dict=None,
+        funding_rate=0.0,
+        dbg5={"stage": 4, "dist_to_peak_pct": 4.0},
+        context_score=0.5,
+        ctx_parts={},
+    )
+    assert ctx.oi_history is None
+
+
+def test_trades_stored() -> None:
+    trades = [{"price": 1.0, "qty": 10.0, "side": "Buy"}]
+    ctx = build_market_context_from_watcher(
+        symbol="BTCUSDT",
+        candles_5m=[{"close": 1.0}],
+        oi_dict=None,
+        funding_rate=0.0,
+        dbg5={"stage": 4, "dist_to_peak_pct": 4.0},
+        context_score=0.5,
+        ctx_parts={},
+        trades_list=trades,
+    )
+    assert ctx.indicators["recent_trades"] == trades
+
+
+def test_trades_none_no_key() -> None:
+    ctx = build_market_context_from_watcher(
+        symbol="BTCUSDT",
+        candles_5m=[{"close": 1.0}],
+        oi_dict=None,
+        funding_rate=0.0,
+        dbg5={"stage": 4, "dist_to_peak_pct": 4.0},
+        context_score=0.5,
+        ctx_parts={},
+        trades_list=None,
+    )
+    assert "recent_trades" not in ctx.indicators

@@ -915,6 +915,17 @@ def run_watch_for_symbol(
                         from pump_v2.prerun.signal_logger import log_prerun_signal
                         from pump_v2.strategies.short_pump import ShortPumpStrategy
 
+                        _liq_now = time.time()
+                        _liq = None
+                        try:
+                            _liq = liquidation_features(
+                                symbol=cfg.symbol,
+                                now_ts=_liq_now,
+                                get_liq_stats=get_liq_stats,
+                            )
+                        except Exception:
+                            _liq = None
+
                         _v2_ctx = build_market_context_from_watcher(
                             symbol=cfg.symbol,
                             candles_5m=candles_5m_list,
@@ -923,6 +934,8 @@ def run_watch_for_symbol(
                             dbg5=dbg5,
                             context_score=context_score,
                             ctx_parts=ctx_parts,
+                            liq_features=_liq,
+                            trades_list=trades_list,
                         )
                         _v2_sig = ShortPumpStrategy(params={}, risk={}).check_signal(_v2_ctx)
                         log_prerun_signal(_v2_sig, cfg.symbol)
