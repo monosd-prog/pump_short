@@ -908,6 +908,27 @@ def run_watch_for_symbol(
                 dbg5 = build_dbg5(cfg, candles_5m_list, oi_dict, trades_list, st)
                 context_score, ctx_parts = compute_context_score_5m(dbg5)
 
+                # pump_v2 pre-run hook (PUMP_V2_PRERUN_ENABLE=1 required)
+                if os.environ.get("PUMP_V2_PRERUN_ENABLE") == "1":
+                    try:
+                        from pump_v2.prerun.context_builder import build_market_context_from_watcher
+                        from pump_v2.prerun.signal_logger import log_prerun_signal
+                        from pump_v2.strategies.short_pump import ShortPumpStrategy
+
+                        _v2_ctx = build_market_context_from_watcher(
+                            symbol=cfg.symbol,
+                            candles_5m=candles_5m_list,
+                            oi_dict=oi_dict,
+                            funding_rate=float(funding_rate) if funding_rate is not None else 0.0,
+                            dbg5=dbg5,
+                            context_score=context_score,
+                            ctx_parts=ctx_parts,
+                        )
+                        _v2_sig = ShortPumpStrategy(params={}, risk={}).check_signal(_v2_ctx)
+                        log_prerun_signal(_v2_sig, cfg.symbol)
+                    except Exception as _v2_exc:
+                        logger.warning("pump_v2 prerun error: %s", _v2_exc)
+
                 candle_ts = pd.Timestamp(dbg5["time_utc"])
                 if candle_ts.tzinfo is None:
                     candle_ts = candle_ts.tz_localize("UTC")
