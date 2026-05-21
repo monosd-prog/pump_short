@@ -23,14 +23,15 @@ EVENTS_ROOT = ROOT / "datasets"
 
 EVENT_COLS = ["event_id", "stage", "dist_to_peak_pct", "context_score", "symbol"]
 
+# Negatives: must NOT classify as short_pump_mid (None from gate or another profile).
 NEG_CASES = [
-    {"label": "dist_too_low", "stage": 4, "dist": 2.9, "ctx": 0.50},
-    {"label": "dist_too_high", "stage": 4, "dist": 5.5, "ctx": 0.50},
-    {"label": "ctx_too_low", "stage": 4, "dist": 4.2, "ctx": 0.35},
-    {"label": "ctx_too_high", "stage": 4, "dist": 4.2, "ctx": 0.65},
-    {"label": "stage_1", "stage": 1, "dist": 4.2, "ctx": 0.50},
-    {"label": "dist_boundary", "stage": 4, "dist": 5.0, "ctx": 0.50},
-    {"label": "ctx_boundary", "stage": 4, "dist": 4.2, "ctx": 0.60},
+    {"label": "dist_below_tradeable_gate", "stage": 4, "dist": 2.9, "ctx": 0.50},
+    {"label": "dist_above_mid_range_goes_to_active", "stage": 4, "dist": 5.5, "ctx": 0.50},
+    {"label": "ctx_below_mid_goes_to_active", "stage": 4, "dist": 4.2, "ctx": 0.35},
+    {"label": "ctx_above_mid_goes_to_active", "stage": 4, "dist": 4.2, "ctx": 0.65},
+    {"label": "stage_below_tradeable_gate", "stage": 1, "dist": 4.2, "ctx": 0.50},
+    {"label": "dist_mid_upper_boundary_goes_to_active", "stage": 4, "dist": 5.0, "ctx": 0.50},
+    {"label": "ctx_mid_upper_boundary_goes_to_active", "stage": 4, "dist": 4.2, "ctx": 0.60},
 ]
 
 
@@ -151,15 +152,22 @@ def _run_negatives(strategy: ShortPumpStrategy) -> list[dict]:
     for case in NEG_CASES:
         ctx = _build_ctx_from_neg(case)
         sig = strategy.check_signal(ctx)
+        risk_profile = sig.metadata.get("risk_profile") if sig is not None else None
+        ok = sig is None or risk_profile != "short_pump_mid"
+        if sig is None:
+            got = "None"
+        else:
+            got = f"Signal:{risk_profile}"
         results.append(
             {
                 "label": case["label"],
                 "stage": case["stage"],
                 "dist": case["dist"],
                 "ctx_score": case["ctx"],
-                "expected": "None",
-                "got": "Signal" if sig is not None else "None",
-                "ok": sig is None,
+                "expected": "not short_pump_mid",
+                "got": got,
+                "ok": ok,
+                "risk_profile": risk_profile,
             }
         )
     return results
@@ -200,7 +208,8 @@ def main() -> int:
         print("FAILED:")
         for r in failed_neg:
             print(
-                f"  {r['label']}: stage={r['stage']} dist={r['dist']} ctx={r['ctx_score']} got={r['got']}"
+                f"  {r['label']}: stage={r['stage']} dist={r['dist']} ctx={r['ctx_score']} "
+                f"got={r['got']} expected={r['expected']}"
             )
 
     if failed_pos or failed_neg:
