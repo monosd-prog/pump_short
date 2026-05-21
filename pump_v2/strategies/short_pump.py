@@ -1,4 +1,4 @@
-"""Short pump strategy — short_pump_funding_1R + short_pump_mid (Step 3.1–3.3)."""
+"""Short pump strategy — funding_1R, deep, mid, active_1R (Step 3.1–3.3, Phase 4 Step B)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,13 +8,20 @@ from pump_v2.core.market_context import MarketContext
 from pump_v2.core.strategy_base import Signal, Strategy
 from pump_v2.indicators.context_score_5m import ContextScore5m
 
-# v1 defaults (trading/config.py LIVE_* + short_pump/config tp/sl confirm) — not imported
+# v1 defaults (trading/config LIVE_* + risk_profile env defaults) — not imported
 _LIVE_FIXED_NOTIONAL_USD = 10.0
 _LIVE_LEVERAGE = 4
 _TP_PCT_CONFIRM = 0.006
 _SL_PCT_CONFIRM = 0.004
 _SHORT_PUMP_MID_RISK_MULT = 0.7
+# risk_profile.py: SHORT_PUMP_DEEP_RISK_MULT env default 0.7; active_1R mult=1.0
+_DEEP_RISK_MULT = 0.7
+_ACTIVE_RISK_MULT = 1.0
 _TRADEABLE_DIST_MIN = 3.5
+_DEEP_DIST_MIN = 7.5
+_DEEP_DIST_MAX = 10.0
+_DEEP_LIQ_THRESHOLD = 100.0
+_ACTIVE_DIST_MIN = 3.5
 _FUNDING_BAND_1 = (0.0005, 0.001)
 _FUNDING_BAND_2 = (0.005, 0.01)
 
@@ -53,12 +60,14 @@ class ShortPumpStrategy(Strategy):
             return None
 
         funding_abs = abs(ctx.funding) if ctx.funding else None
+        liq_long = self._read_liq_long_usd_30s(ctx)
 
         profile = self._classify_profile(
             stage,
             dist_to_peak_pct,
             context_score,
             funding_rate_abs=funding_abs,
+            liq_long_usd_30s=liq_long,
         )
         if profile is None:
             return None
@@ -106,6 +115,15 @@ class ShortPumpStrategy(Strategy):
                 return None
         return None
 
+    def _read_liq_long_usd_30s(self, ctx: MarketContext) -> Optional[float]:
+        raw = ctx.indicators.get("liq_long_usd_30s")
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
     def _last_close_5m(self, ctx: MarketContext) -> Optional[float]:
         candles = ctx.candles.get("5m")
         if not candles:
@@ -128,6 +146,7 @@ class ShortPumpStrategy(Strategy):
         dist_to_peak_pct: float,
         context_score: float,
         funding_rate_abs: Optional[float] = None,
+        liq_long_usd_30s: Optional[float] = None,
     ) -> Optional[ShortPumpProfile]:
         fr = funding_rate_abs
         if (
@@ -148,6 +167,21 @@ class ShortPumpStrategy(Strategy):
             )
 
         if (
+            dist_to_peak_pct >= _DEEP_DIST_MIN
+            and dist_to_peak_pct < _DEEP_DIST_MAX
+            and 0.4 <= context_score < 0.6
+            and (liq_long_usd_30s is None or liq_long_usd_30s < _DEEP_LIQ_THRESHOLD)
+        ):
+            return ShortPumpProfile(
+                name="short_pump_deep",
+                notional_usd=_LIVE_FIXED_NOTIONAL_USD * _DEEP_RISK_MULT,
+                leverage=_LIVE_LEVERAGE,
+                tp_pct=_TP_PCT_CONFIRM,
+                sl_pct=_SL_PCT_CONFIRM,
+                risk_mult=_DEEP_RISK_MULT,
+            )
+
+        if (
             stage in (3, 4)
             and 3.5 <= dist_to_peak_pct < 5.0
             and 0.4 <= context_score < 0.6
@@ -161,10 +195,14 @@ class ShortPumpStrategy(Strategy):
                 risk_mult=_SHORT_PUMP_MID_RISK_MULT,
             )
 
-        if (
-            7.5 <= dist_to_peak_pct < 10.0
-            and 0.4 <= context_score < 0.6
-        ):
-            raise NotImplementedError("Phase 3.3+")
+        if stage in (3, 4) and dist_to_peak_pct >= _ACTIVE_DIST_MIN:
+            return ShortPumpProfile(
+                name="short_pump_active_1R",
+                notional_usd=_LIVE_FIXED_NOTIONAL_USD * _ACTIVE_RISK_MULT,
+                leverage=_LIVE_LEVERAGE,
+                tp_pct=_TP_PCT_CONFIRM,
+                sl_pct=_SL_PCT_CONFIRM,
+                risk_mult=_ACTIVE_RISK_MULT,
+            )
 
         return None
