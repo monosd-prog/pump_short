@@ -939,6 +939,10 @@ def run_watch_for_symbol(
                         )
                         _v2_sig = ShortPumpStrategy(params={}, risk={}).check_signal(_v2_ctx)
                         log_prerun_signal(_v2_sig, cfg.symbol)
+                        if _v2_sig is not None and os.environ.get("PUMP_V2_REPLACE") == "1":
+                            from pump_v2.execution.enqueuer import maybe_enqueue_v2_signal
+
+                            maybe_enqueue_v2_signal(_v2_sig, _v2_ctx)
                     except Exception as _v2_exc:
                         logger.warning("pump_v2 prerun error: %s", _v2_exc)
 
@@ -1928,8 +1932,20 @@ def run_watch_for_symbol(
                     try:
                         from trading.config import AUTO_TRADING_ENABLE
                         if AUTO_TRADING_ENABLE:
-                            from trading.queue import enqueue_signal
-                            enqueue_signal(sig)
+                            if os.environ.get("PUMP_V2_REPLACE") != "1":
+                                from trading.queue import enqueue_signal
+
+                                enqueue_signal(sig)
+                            else:
+                                log_info(
+                                    logger,
+                                    "pump_v2 REPLACE active — v1 enqueue skipped",
+                                    symbol=cfg.symbol,
+                                    run_id=run_id,
+                                    stage=st.stage,
+                                    step="TRADING_ENQUEUE",
+                                    extra={"event_id": str(event_id)},
+                                )
                     except Exception:
                         log_exception(logger, "TRADING_ENQUEUE failed for ENTRY_OK", symbol=cfg.symbol, run_id=run_id, stage=st.stage, step="TRADING_ENQUEUE")
                 except Exception as e:

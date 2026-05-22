@@ -31,6 +31,7 @@ def signal_to_dict(signal: Signal) -> dict[str, Any]:
         "volume_1m": getattr(signal, "volume_1m", None),
         "volume_sma_20": getattr(signal, "volume_sma_20", None),
         "volume_zscore_20": getattr(signal, "volume_zscore_20", None),
+        "funding_rate_abs": getattr(signal, "funding_rate_abs", None),
     }
 
 
@@ -58,5 +59,6 @@ def signal_from_dict(data: dict[str, Any]) -> Signal:
         volume_1m=float(data["volume_1m"]) if data.get("volume_1m") is not None else None,
         volume_sma_20=float(data["volume_sma_20"]) if data.get("volume_sma_20") is not None else None,
         volume_zscore_20=float(data["volume_zscore_20"]) if data.get("volume_zscore_20") is not None else None,
+        funding_rate_abs=float(data["funding_rate_abs"]) if data.get("funding_rate_abs") is not None else None,
         extras={},
     )
