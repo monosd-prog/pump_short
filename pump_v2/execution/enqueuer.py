@@ -25,9 +25,32 @@ def maybe_enqueue_v2_signal(
     if signal is None:
         return False
 
+    try:
+        from pump_v2.core.funnel import log_funnel_event
+
+        log_funnel_event(
+            strategy=signal.strategy,
+            symbol=signal.symbol,
+            stage="signal_generated",
+            blocked_reason="",
+        )
+    except Exception:
+        pass
+
     _gate = gate or get_default_gate()
 
     if not _gate.allow_and_record(signal.symbol):
+        try:
+            from pump_v2.core.funnel import log_funnel_event
+
+            log_funnel_event(
+                strategy=signal.strategy,
+                symbol=signal.symbol,
+                stage="risk_passed",
+                blocked_reason="cooldown",
+            )
+        except Exception:
+            pass
         logger.debug(
             "pump_v2 enqueue skipped (cooldown): symbol=%s profile=%s",
             signal.symbol,
@@ -40,6 +63,19 @@ def maybe_enqueue_v2_signal(
 
         q_dict = v2_signal_to_queue_dict(signal, ctx)
         enqueue_signal_dict(q_dict)
+
+        try:
+            from pump_v2.core.funnel import log_funnel_event
+
+            log_funnel_event(
+                strategy=signal.strategy,
+                symbol=signal.symbol,
+                stage="sent_to_exchange",
+                blocked_reason="",
+            )
+        except Exception:
+            pass
+
         logger.info(
             "pump_v2 ENQUEUED | symbol=%s profile=%s stage=%s dist=%.2f ctx=%.2f",
             signal.symbol,
