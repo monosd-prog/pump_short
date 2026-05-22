@@ -27,9 +27,19 @@ V1_EVENT_COLS = [
     "stage",
     "dist_to_peak_pct",
     "context_score",
+    "funding_rate_abs",
     "entry_ok",
     "payload_json",
 ]
+
+# Same thresholds as pump_v2/strategies/short_pump.py (autonomous; no import)
+_TRADEABLE_DIST_MIN = 3.5
+_DEEP_DIST_MIN = 7.5
+_DEEP_DIST_MAX = 10.0
+_DEEP_LIQ_THRESHOLD = 100.0
+_ACTIVE_DIST_MIN = 3.5
+_FUNDING_BAND_1 = (0.0005, 0.001)
+_FUNDING_BAND_2 = (0.005, 0.01)
 
 
 def _read_csv_robust(path: Path) -> pd.DataFrame:
@@ -57,6 +67,75 @@ def _strategy_mask(df: pd.DataFrame) -> pd.Series:
         return df["route_strategy"].astype(str) == "short_pump"
     warnings.warn("events_v3: no strategy/route_strategy column; skipping strategy filter")
     return pd.Series(True, index=df.index)
+
+
+def _to_float(val: Any) -> Optional[float]:
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def estimate_v1_profile(
+    stage: Any,
+    dist: Any,
+    ctx: Any,
+    funding_abs: Any = None,
+    liq_long_usd_30s: Any = None,
+) -> Optional[str]:
+    """Estimate v1 risk_profile from features (events_v3 does not store risk_profile)."""
+    stage_i = _to_float(stage)
+    dist_f = _to_float(dist)
+    ctx_f = _to_float(ctx)
+    if stage_i is None or dist_f is None or ctx_f is None:
+        return None
+    if int(stage_i) != 4 or dist_f < _TRADEABLE_DIST_MIN:
+        return None
+
+    fr = _to_float(funding_abs)
+    if fr is not None and (
+        (_FUNDING_BAND_1[0] <= fr < _FUNDING_BAND_1[1])
+        or (_FUNDING_BAND_2[0] <= fr < _FUNDING_BAND_2[1])
+    ):
+        return "short_pump_funding_1R"
+
+    liq = _to_float(liq_long_usd_30s)
+    if (
+        dist_f >= _DEEP_DIST_MIN
+        and dist_f < _DEEP_DIST_MAX
+        and 0.4 <= ctx_f < 0.6
+        and (liq is None or liq < _DEEP_LIQ_THRESHOLD)
+    ):
+        return "short_pump_deep"
+
+    if 3.5 <= dist_f < 5.0 and 0.4 <= ctx_f < 0.6:
+        return "short_pump_mid"
+
+    if dist_f >= _ACTIVE_DIST_MIN:
+        return "short_pump_active_1R"
+
+    return None
+
+
+def session_keys_from_df(df: pd.DataFrame) -> set[tuple[str, str]]:
+    """Session = (symbol, date) from ts_utc."""
+    if df.empty or "ts_utc" not in df.columns or "symbol" not in df.columns:
+        return set()
+    dates = pd.to_datetime(df["ts_utc"], utc=True).dt.strftime("%Y-%m-%d")
+    return set(zip(df["symbol"].astype(str), dates))
+
+
+def compute_session_overlap(
+    prerun: pd.DataFrame,
+    v1_events: pd.DataFrame,
+) -> tuple[int, int, int]:
+    """Return (n_v2_sessions, n_v1_sessions, n_overlap)."""
+    v2_sessions = session_keys_from_df(prerun)
+    v1_sessions = session_keys_from_df(v1_events)
+    overlap = len(v2_sessions & v1_sessions)
+    return len(v2_sessions), len(v1_sessions), overlap
 
 
 def _extract_risk_profile(row: pd.Series) -> Optional[str]:
@@ -185,6 +264,12 @@ def compare_prerun_to_v1(
         delta_min = (v2_ts - v1_ts).total_seconds() / 60.0
         v2_profile = v2_row.get("risk_profile")
         v1_profile = best.get("risk_profile")
+        estimated_v1_profile = estimate_v1_profile(
+            best.get("stage"),
+            best.get("dist_to_peak_pct"),
+            best.get("context_score"),
+            funding_abs=best.get("funding_rate_abs"),
+        )
         matches.append(
             {
                 "symbol": v2_row.get("symbol"),
@@ -192,6 +277,8 @@ def compare_prerun_to_v1(
                 "v1_ts": v1_ts,
                 "delta_minutes": delta_min,
                 "v2_profile": v2_profile,
+                "v1_profile": v1_profile,
+                "estimated_v1_profile": estimated_v1_profile,
                 "v2_stage": v2_row.get("stage"),
                 "v2_dist": v2_row.get("dist_to_peak_pct"),
                 "v2_ctx": v2_row.get("context_score"),
@@ -202,6 +289,11 @@ def compare_prerun_to_v1(
                     pd.notna(v2_profile)
                     and pd.notna(v1_profile)
                     and str(v2_profile) == str(v1_profile)
+                ),
+                "profile_match_estimated": (
+                    pd.notna(v2_profile)
+                    and estimated_v1_profile is not None
+                    and str(v2_profile) == str(estimated_v1_profile)
                 ),
             }
         )
@@ -248,12 +340,25 @@ def print_report(
     print(f"=== MATCHED (v2 ↔ v1 в окне ±{window_minutes}m): {n_matched} ===")
     if n_matched:
         n_profile_match = sum(1 for m in matches if m.get("profile_match"))
+        n_profile_est = sum(1 for m in matches if m.get("profile_match_estimated"))
         avg_delta = sum(abs(m["delta_minutes"]) for m in matches) / n_matched
         print(f"Profile match: {n_profile_match}/{n_matched}")
+        print(f"Profile match (estimated): {n_profile_est}/{n_matched}")
+        print("  (v1 risk_profile не пишется в events_v3; оценка по stage/dist/ctx)")
         print(f"Avg delta: {avg_delta:.1f} min")
     else:
         print("Profile match: 0/0")
+        print("Profile match (estimated): 0/0")
+        print("  (v1 risk_profile не пишется в events_v3; оценка по stage/dist/ctx)")
         print("Avg delta: 0.0 min")
+    print()
+
+    n_v2_sess, n_v1_sess, n_overlap = compute_session_overlap(prerun, v1_events)
+    pct_sess = (100.0 * n_overlap / n_v2_sess) if n_v2_sess else 0.0
+    print("=== SESSION-LEVEL MATCH (deduplicated) ===")
+    print(f"V2 sessions (unique symbol+date): {n_v2_sess}")
+    print(f"V1 ENTRY_OK sessions:             {n_v1_sess}")
+    print(f"Overlap (same symbol+date):        {n_overlap} ({pct_sess:.0f}%)")
     print()
 
     print(f"=== V2 UNMATCHED (v2 сигнал без v1 ENTRY_OK): {n_v2_unmatched} ===")

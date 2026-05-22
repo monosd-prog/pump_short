@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from pump_v2.validation.compare_prerun_vs_v1 import compare_prerun_to_v1, find_match
+from pump_v2.validation.compare_prerun_vs_v1 import (
+    compare_prerun_to_v1,
+    compute_session_overlap,
+    estimate_v1_profile,
+    find_match,
+    session_keys_from_df,
+)
 
 
 def _ts(ts: datetime) -> pd.Timestamp:
@@ -70,3 +76,45 @@ def test_empty_prerun_no_crash() -> None:
     assert matches == []
     assert v2_unmatched == []
     assert len(v1_unmatched) == 1
+
+
+def test_estimate_v1_profile_active() -> None:
+    assert estimate_v1_profile(4, 5.0, 0.70, funding_abs=None) == "short_pump_active_1R"
+
+
+def test_estimate_v1_profile_mid() -> None:
+    assert estimate_v1_profile(4, 4.2, 0.50, funding_abs=None) == "short_pump_mid"
+
+
+def test_estimate_v1_profile_funding() -> None:
+    assert estimate_v1_profile(4, 4.2, 0.50, funding_abs=0.0007) == "short_pump_funding_1R"
+
+
+def test_estimate_v1_profile_none() -> None:
+    assert estimate_v1_profile(4, 2.0, 0.50, funding_abs=None) is None
+
+
+def test_session_overlap() -> None:
+    v2_keys = {("AAA", "2026-05-22"), ("BBB", "2026-05-22")}
+    v1_keys = {("AAA", "2026-05-22"), ("CCC", "2026-05-22")}
+    assert len(v2_keys & v1_keys) == 1
+
+    t = datetime(2026, 5, 22, 12, 0, tzinfo=timezone.utc)
+    prerun = pd.DataFrame(
+        [
+            {"symbol": "AAA", "ts_utc": _ts(t)},
+            {"symbol": "BBB", "ts_utc": _ts(t)},
+        ]
+    )
+    v1 = pd.DataFrame(
+        [
+            {"symbol": "AAA", "ts_utc": _ts(t)},
+            {"symbol": "CCC", "ts_utc": _ts(t)},
+        ]
+    )
+    assert session_keys_from_df(prerun) == v2_keys
+    assert session_keys_from_df(v1) == v1_keys
+    n_v2, n_v1, overlap = compute_session_overlap(prerun, v1)
+    assert n_v2 == 2
+    assert n_v1 == 2
+    assert overlap == 1
