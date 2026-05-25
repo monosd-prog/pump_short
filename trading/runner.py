@@ -955,6 +955,24 @@ def _run_once_body(*, dry_run_live: bool = False) -> None:
             _finish_queue_processing(raw_lines)
             return
 
+        try:
+            from trading.reprice_tpsl import maybe_reprice_position_after_fill
+
+            maybe_reprice_position_after_fill(
+                signal,
+                position,
+                broker,
+                exec_mode=EXECUTION_MODE,
+                notional_usd=notional_usd,
+            )
+        except Exception:
+            logger.warning(
+                "REPRICE_TPSL failed | strategy=%s symbol=%s",
+                signal.strategy,
+                signal.symbol,
+                exc_info=True,
+            )
+
         position["risk_profile"] = risk_profile_name
         if EXECUTION_MODE == "live":
             position["margin_mode"] = LIVE_MARGIN_MODE
