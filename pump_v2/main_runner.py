@@ -4,12 +4,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+
+# Project root on sys.path (same layout as trading.runner / watcher via PYTHONPATH)
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from common.market_features import liquidation_features
 from pump_v2.execution.enqueuer import maybe_enqueue_v2_signal
@@ -30,6 +37,7 @@ from short_pump.context5m import (
 from short_pump.features import normalize_funding
 from short_pump.liquidations import (
     get_liq_stats,
+    get_liq_stats_usd,
     register_symbol,
     start_liquidation_listener,
     unregister_symbol,
@@ -42,7 +50,7 @@ CATEGORY = os.environ.get("CATEGORY", "linear")
 WATCH_MINUTES = int(os.environ.get("WATCH_MINUTES", "90"))
 POLL_SECONDS = int(os.environ.get("PUMP_V2_POLL_SECONDS", "60"))
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", "3"))
-PORT = int(os.environ.get("PUMP_V2_PORT", "8001"))
+PORT = int(os.environ.get("PUMP_V2_PORT", "8002"))
 PUMP_V2_REPLACE = os.environ.get("PUMP_V2_REPLACE", "0") == "1"
 
 # symbol → expires_at (UTC)
@@ -195,6 +203,7 @@ def _tick(symbol: str, strategy: ShortPumpStrategy, cfg: V2WatchConfig) -> None:
             symbol=symbol,
             now_ts=time.time(),
             get_liq_stats=get_liq_stats,
+            get_liq_stats_usd=get_liq_stats_usd,
         )
     except Exception:
         liq = None
