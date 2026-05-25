@@ -1,0 +1,16 @@
+[Unit]
+Description=Pump V2 Runner (standalone)
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/pump_short
+EnvironmentFile=/root/pump_short/.env
+ExecStart=/root/pump_short/venv/bin/python3 -u pump_v2/main_runner.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
