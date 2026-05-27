@@ -12,6 +12,8 @@ HORIZONS = [5, 15, 30, 60]
 COOLDOWN_MINUTES = 5
 TP_PCT = 0.006
 SL_PCT = 0.004
+JOIN_TOLERANCE_MINUTES = 5
+MIN_FILTER_SAMPLE = 20
 
 
 def load_liquidations(path: Path) -> pd.DataFrame:
@@ -118,6 +120,119 @@ def print_threshold_report(threshold: int, entries: pd.DataFrame, outcomes: pd.D
     print(table.to_string(index=False, justify="left", float_format=lambda x: f"{x:.4f}"))
 
 
+def load_events_v3() -> pd.DataFrame:
+    files = sorted(Path("datasets").rglob("events_v3.csv"))
+    if not files:
+        print("WARNING: no events_v3.csv files found; filtered analysis skipped.")
+        return pd.DataFrame()
+
+    sample = pd.read_csv(files[0], nrows=1)
+    ts_col = "time_utc" if "time_utc" in sample.columns else "wall_time_utc" if "wall_time_utc" in sample.columns else None
+    required = ["symbol", "stage", "dist_to_peak_pct", "context_score", "funding_rate", "oi_change_5m_pct", "liq_long_usd_30s"]
+    if ts_col is None:
+        print("WARNING: events_v3 missing time column (time_utc/wall_time_utc); filtered analysis skipped.")
+        return pd.DataFrame()
+    missing = [c for c in required if c not in sample.columns]
+    if missing:
+        print(f"WARNING: events_v3 missing required columns {missing}; filtered analysis skipped.")
+        return pd.DataFrame()
+
+    cols = [ts_col, *required]
+    chunks = []
+    for f in files:
+        try:
+            d = pd.read_csv(f, usecols=lambda c: c in cols)
+            d["event_ts"] = pd.to_datetime(d[ts_col], utc=True, errors="coerce")
+            d["symbol"] = d["symbol"].astype(str).str.upper()
+            chunks.append(d.drop(columns=[ts_col]))
+        except Exception:
+            continue
+    if not chunks:
+        print("WARNING: events_v3 load failed for all files; filtered analysis skipped.")
+        return pd.DataFrame()
+    out = pd.concat(chunks, ignore_index=True).dropna(subset=["event_ts", "symbol"])
+    return out.sort_values(["symbol", "event_ts"]).reset_index(drop=True)
+
+
+def join_entries_with_events(entries: pd.DataFrame, events: pd.DataFrame) -> pd.DataFrame:
+    if entries.empty or events.empty:
+        return pd.DataFrame()
+    left = entries.copy().sort_values(["ts", "symbol"]).reset_index(drop=True)
+    right = events.copy().sort_values(["event_ts", "symbol"]).reset_index(drop=True)
+    joined = pd.merge_asof(
+        left,
+        right,
+        left_on="ts",
+        right_on="event_ts",
+        by="symbol",
+        direction="nearest",
+        tolerance=pd.Timedelta(minutes=JOIN_TOLERANCE_MINUTES),
+    )
+    joined["join_matched"] = joined["event_ts"].notna()
+    return joined
+
+
+def print_filtered_analysis(entries_50k: pd.DataFrame, outcomes_50k: pd.DataFrame) -> None:
+    events = load_events_v3()
+    if events.empty:
+        return
+
+    joined = join_entries_with_events(entries_50k, events)
+    if joined.empty:
+        print("WARNING: no joined rows for filtered analysis.")
+        return
+
+    base = joined.merge(outcomes_50k[["symbol", "ts", "max_profit_5m", "max_loss_5m"]], on=["symbol", "ts"], how="left")
+    base = base.dropna(subset=["max_profit_5m", "max_loss_5m"])
+    base = base[base["join_matched"]]
+    if base.empty:
+        print("WARNING: filtered analysis has no matched rows with 5m outcomes.")
+        return
+
+    filters = {
+        "no_filter": lambda df: df,
+        "stage_4": lambda df: df[df["stage"] == 4],
+        "dist_gt5": lambda df: df[df["dist_to_peak_pct"] > 5.0],
+        "dist_gt10": lambda df: df[df["dist_to_peak_pct"] > 10.0],
+        "funding_pos": lambda df: df[df["funding_rate"] > 0],
+        "ctx_lt05": lambda df: df[df["context_score"] < 0.5],
+        "stage4_dist5_funding": lambda df: df[
+            (df["stage"] == 4) & (df["dist_to_peak_pct"] > 5.0) & (df["funding_rate"] > 0)
+        ],
+        "stage4_dist10": lambda df: df[(df["stage"] == 4) & (df["dist_to_peak_pct"] > 10.0)],
+    }
+
+    print("\n=== FILTERED ANALYSIS (threshold=$50k, horizon=5m, tp=0.6%, sl=0.4%) ===")
+    print(f"joined_rows={len(base)} tolerance={JOIN_TOLERANCE_MINUTES}m min_sample={MIN_FILTER_SAMPLE}")
+
+    rows = []
+    for name, fn in filters.items():
+        try:
+            d = fn(base).dropna(subset=["max_profit_5m", "max_loss_5m"])
+        except Exception:
+            continue
+        n = len(d)
+        if n < MIN_FILTER_SAMPLE:
+            print(f"skip {name}: n={n} < {MIN_FILTER_SAMPLE}")
+            continue
+        tp = float((d["max_profit_5m"] >= TP_PCT).mean())
+        sl = float((d["max_loss_5m"] >= SL_PCT).mean())
+        edge = tp - sl
+        rows.append({"filter": name, "N": n, "TP_hit": tp, "SL_hit": sl, "edge": edge})
+
+    if not rows:
+        print("No filters passed minimum sample.")
+        return
+
+    out = pd.DataFrame(rows).sort_values(["edge", "TP_hit", "N"], ascending=[False, False, False])
+    print(out.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+    best = out.iloc[0]
+    print(
+        f"BEST_FILTER {best['filter']} N={int(best['N'])} "
+        f"TP={best['TP_hit']:.2%} SL={best['SL_hit']:.2%} edge={best['edge']:.2%}"
+    )
+
+
 def main() -> None:
     liq_path = Path("datasets/liquidations.csv")
     liq = load_liquidations(liq_path)
@@ -133,6 +248,9 @@ def main() -> None:
     best = None
     all_stats = []
 
+    entries_50k = pd.DataFrame()
+    outcomes_50k = pd.DataFrame()
+
     for threshold in THRESHOLDS:
         entries = find_cascade_entries(liq_long, threshold, cooldown_minutes=COOLDOWN_MINUTES)
         if entries.empty:
@@ -144,6 +262,9 @@ def main() -> None:
         outcomes = pd.DataFrame(
             [measure_outcome(row, liq_long, horizons=HORIZONS) for _, row in entries.iterrows()]
         )
+        if threshold == 50_000:
+            entries_50k = entries.copy()
+            outcomes_50k = outcomes.copy()
         print_threshold_report(threshold, entries, outcomes)
 
         for h in [5, 15, 30]:
@@ -178,6 +299,8 @@ def main() -> None:
             f"n={best['n_valid']} tp_hit={best['tp_hit']:.2%} "
             f"sl_hit={best['sl_hit']:.2%} edge={best['edge']:.2%}"
         )
+    if not entries_50k.empty and not outcomes_50k.empty:
+        print_filtered_analysis(entries_50k, outcomes_50k)
 
 
 if __name__ == "__main__":
